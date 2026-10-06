@@ -122,17 +122,30 @@ test('a fresh key replaces a cloned one and the gateway restart is explicit', ()
 });
 
 test('named orbs stay distinct from hashed ones', () => {
-  const { frameOf } = require('../../mobile/pwa/thinking-orbs.cjs');
-  const { renderOrbPng } = require('../../mobile/pwa/orbs.cjs');
+  const { frameOf, holdOf } = require('../../mobile/pwa/thinking-orbs.cjs');
+  const { renderOrbPng, signatureOf } = require('../../mobile/pwa/orbs.cjs');
+  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '../../mobile/pwa/public/app.js'), 'utf8');
   assert.notEqual(hashHue('lumen'), hashHue('nimbus'));
   assert.equal(orbPalette('intelio').kind, 'named');
   assert.equal(orbPalette('lumen').kind, 'hash');
   assert.equal(orbPalette('Lumen').hue, hashHue('lumen'));
-  const listening = frameOf('listening', 64, 0.6);
-  const breathing = frameOf('breathing', 64, 0.6);
-  assert.equal(listening.dots.length > 20, true);
-  assert.equal(breathing.dots.length > 20, true);
-  assert.equal(listening.dots[0].x === breathing.dots[0].x && listening.dots.length === breathing.dots.length, false);
+  assert.equal(signatureOf('intelio'), 'connecting');
+  assert.equal(signatureOf('prc'), 'solving');
+  assert.equal(signatureOf('alignment'), 'searching');
+  assert.equal(signatureOf('hhp'), 'weaving');
+  assert.equal(signatureOf('kid-a'), 'composing');
+  assert.equal(signatureOf('Kid A'), 'composing');
+  const open = ['working', 'listening', 'breathing', 'shaping'];
+  assert.equal(open.includes(signatureOf('lumen')), true);
+  assert.equal(open.includes(signatureOf('nimbus')), true);
+  assert.notEqual(signatureOf('lumen'), signatureOf('nimbus'));
+  assert.match(app, /intelio: 'connecting'/);
+  assert.match(app, /prc: 'solving'/);
+  const connecting = frameOf('connecting', 64, holdOf('connecting'));
+  const solving = frameOf('solving', 64, holdOf('solving'));
+  assert.equal(connecting.lines.length > 20, true);
+  assert.equal(solving.dots.length > 20, true);
+  assert.equal(connecting.dots[0].x === solving.dots[0].x && connecting.dots.length === solving.dots.length, false);
   const png = renderOrbPng('intelio', 64);
   assert.equal(png[0], 0x89);
   assert.equal(png.length > 200, true);

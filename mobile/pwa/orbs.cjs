@@ -5,7 +5,18 @@
  * does not need a new image file.
  */
 const { encodePng } = require('../../desktop/src/intelio/png-icon.cjs');
-const { frameOf } = require('./thinking-orbs.cjs');
+const { frameOf, holdOf } = require('./thinking-orbs.cjs');
+
+const SIGNATURES = {
+  intelio: 'connecting',
+  prc: 'solving',
+  alignment: 'searching',
+  hhp: 'weaving',
+  'kid-a': 'composing',
+  'kid a': 'composing',
+  kida: 'composing',
+};
+const OPEN_TYPES = ['working', 'listening', 'breathing', 'shaping'];
 
 const NAMED = {
   intelio: ['#7a5cff', '#3de1ff'],
@@ -48,6 +59,15 @@ function hexRgb(hex) {
   return [parseInt(value.slice(0, 2), 16), parseInt(value.slice(2, 4), 16), parseInt(value.slice(4, 6), 16)];
 }
 
+function signatureOf(id) {
+  const key = String(id || 'intelio').trim().toLowerCase();
+  if (SIGNATURES[key]) return SIGNATURES[key];
+  let hash = 2166136261;
+  const text = key;
+  for (let i = 0; i < text.length; i += 1) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+  return OPEN_TYPES[(hash >>> 0) % OPEN_TYPES.length];
+}
+
 function orbPalette(id) {
   const key = String(id || 'intelio').trim().toLowerCase();
   if (NAMED[key]) return { kind: 'named', stops: NAMED[key].map(hexRgb) };
@@ -79,7 +99,8 @@ function stamp(pixels, size, x0, y0, radius, color, alpha) {
 function renderOrbPng(id, size = 256) {
   const accent = orbPalette(id).stops[0];
   const preset = 64;
-  const frame = frameOf('breathing', preset, 0.6);
+  const kind = signatureOf(id);
+  const frame = frameOf(kind, preset, holdOf(kind));
   const pixels = Buffer.alloc(size * size * 4);
   const bg = [16, 14, 40];
   const cx = (size - 1) / 2;
@@ -114,4 +135,4 @@ function renderOrbPng(id, size = 256) {
   return encodePng(size, size, pixels);
 }
 
-module.exports = { NAMED, hashHue, orbPalette, renderOrbPng };
+module.exports = { NAMED, hashHue, orbPalette, signatureOf, renderOrbPng };

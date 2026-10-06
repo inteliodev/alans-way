@@ -169,19 +169,39 @@
     return [`hsl(${hue} 78% 52%)`, `hsl(${(hue + 36) % 360} 85% 68%)`];
   }
 
+  const SIGNATURES = {
+    intelio: 'connecting',
+    prc: 'solving',
+    alignment: 'searching',
+    hhp: 'weaving',
+    'kid-a': 'composing',
+    'kid a': 'composing',
+    kida: 'composing',
+  };
+  const OPEN_TYPES = ['working', 'listening', 'breathing', 'shaping'];
+
+  function signatureOf(profile) {
+    const key = String(profile?.id || profile?.name || profile || 'intelio').trim().toLowerCase();
+    if (SIGNATURES[key]) return SIGNATURES[key];
+    let hash = 2166136261;
+    for (let i = 0; i < key.length; i += 1) hash = Math.imul(hash ^ key.charCodeAt(i), 16777619);
+    return OPEN_TYPES[(hash >>> 0) % OPEN_TYPES.length];
+  }
+
   const FACE_PX = { avatar: 72, 'avatar sm': 36, 'avatar lg': 148, face: 32, tile: 96, pip: 28, mark: 96 };
-  const CLIENT_VERSION = 'intelio-pwa-6';
+  const CLIENT_VERSION = 'intelio-pwa-7';
 
   function activityFor(id, still) {
-    if (still || id !== state.bot.id) return { state: 'breathing', paused: true };
-    if (state.connecting) return { state: 'connecting', paused: false };
+    const signature = signatureOf(id);
+    if (still || id !== state.bot.id) return { state: signature, paused: true, speed: 1 };
+    if (state.connecting) return { state: 'connecting', paused: false, speed: 1 };
     if (state.call.active && !state.call.paused) {
-      if (state.speaking) return { state: 'composing', paused: false };
-      if (state.listening || state.ptt) return { state: 'listening', paused: false };
+      if (state.speaking) return { state: 'composing', paused: false, speed: 1 };
+      if (state.listening || state.ptt) return { state: 'listening', paused: false, speed: 1 };
     }
-    if (state.searching) return { state: 'searching', paused: false };
-    if (state.thinking) return { state: 'working', paused: false };
-    return { state: 'breathing', paused: false };
+    if (state.searching) return { state: 'searching', paused: false, speed: 1 };
+    if (state.thinking) return { state: 'working', paused: false, speed: 1 };
+    return { state: signature, paused: false, speed: 0.42 };
   }
 
   function face(profile, className, options) {
@@ -207,8 +227,9 @@
       window.ThinkingOrbs.mount(canvas, {
         state: act.state,
         display: px,
-        size: px >= 48 ? 64 : 20,
+        size: 64,
         paused: act.paused,
+        speed: act.speed,
         accent: core,
       });
     }
@@ -250,8 +271,9 @@
       window.ThinkingOrbs.sync(node, {
         state: act.state,
         paused: act.paused,
+        speed: act.speed,
         display: px,
-        size: px >= 48 ? 64 : 20,
+        size: 64,
         accent: node.dataset.accent || '',
       });
     });
@@ -621,10 +643,9 @@
   function iconsView() {
     const wrap = el('div', 'icons');
     const names = [['Intelio', 'intelio'], ['PRC', 'prc'], ['Alignment', 'alignment'], ['HHP', 'hhp'], ['Kid A', 'kid-a'], ['Lumen', 'lumen'], ['Nimbus', 'nimbus']];
-    const show = ['breathing', 'working', 'searching', 'listening', 'composing', 'weaving', 'shaping'];
-    names.forEach(([label, id], index) => {
+    names.forEach(([label, id]) => {
       const figure = document.createElement('figure');
-      figure.append(face({ id }, 'tile', { state: show[index], paused: false, still: false, pinned: true }), el('figcaption', '', label));
+      figure.append(face({ id }, 'tile', { paused: true, still: true, pinned: true }), el('figcaption', '', label));
       wrap.append(figure);
     });
     return wrap;
@@ -998,7 +1019,7 @@
       preview.dataset.profile = slug;
       preview.dataset.accent = core;
       preview.style.setProperty('--orb', core);
-      if (window.ThinkingOrbs) window.ThinkingOrbs.sync(preview, { accent: core, state: 'breathing', paused: true, display: 36, size: 20 });
+      if (window.ThinkingOrbs) window.ThinkingOrbs.sync(preview, { accent: core, state: signatureOf(slug), paused: true, display: 36, size: 64 });
     });
     frag.append(name, description, select, save);
     frag.append(el('p', '', 'A new agent uses the shared Codex sign-in. Its route appears after the gateway restarts.'));
