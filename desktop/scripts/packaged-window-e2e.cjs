@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const KEYS = {
   intelio: 'i'.repeat(32),
@@ -71,10 +72,16 @@ function serverInit() {
 
 let desModule;
 function vncCipher(password, challenge) {
-  if (!desModule) desModule = import('@novnc/novnc/core/crypto/des.js');
+  // The package exports map blocks the crypto subpath. Load the file directly.
+  if (!desModule) {
+    const file = pathToFileURL(path.join(__dirname, '../node_modules/@novnc/novnc/core/crypto/des.js'));
+    desModule = import(file.href);
+  }
   return desModule.then(({ DESECBCipher }) => {
-    const chars = [...password].map((ch) => ch.charCodeAt(0));
-    return Buffer.from(DESECBCipher.importKey(chars).encrypt({ name: 'DES-ECB' }, challenge));
+    const chars = [...String(password)].map((ch) => ch.charCodeAt(0));
+    const out = DESECBCipher.importKey(chars).encrypt({ name: 'DES-ECB' }, challenge);
+    if (!out) throw new Error('desktop cipher check failed');
+    return Buffer.from(out);
   });
 }
 
@@ -102,7 +109,7 @@ function acceptDesktop(server, password, vnc) {
         wsSend(socket, challenge);
       }
       if (stage === 'response' && raw.length >= 16) {
-        const got = raw.subarray(0, 16);
+        const got = Buffer.from(raw.subarray(0, 16));
         raw = raw.subarray(16);
         stage = 'checking';
         vncCipher(password, challenge).then((expected) => {
@@ -112,7 +119,7 @@ function acceptDesktop(server, password, vnc) {
           wsSend(socket, Buffer.from([0, 0, 0, 0]));
           stage = 'client';
           consume();
-        }).catch(() => { vnc.rejected = true; });
+        }).catch(() => { vnc.cipherError = true; });
       }
       if (stage === 'client' && raw.length >= 1) {
         raw = raw.subarray(1);
@@ -162,7 +169,7 @@ function openCdp(url) {
 }
 
 function listen(vncPassword) {
-  const vnc = { ok: false, rejected: false, leaked: false };
+  const vnc = { ok: false, rejected: false, leaked: false, cipherError: false };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const auth = req.headers.authorization || '';
@@ -294,7 +301,7 @@ async function main() {
     while (Date.now() < until) {
       view = await read();
       const pin = String(view.pin || '');
-      if (view.agents === 4 && view.sessions >= 1 && /hermes-agent 0\.21\.5/.test(pin) && !/unavailable/i.test(pin) && vnc.ok && !vnc.leaked && !vnc.rejected) break;
+      if (view.agents === 4 && view.sessions >= 1 && /hermes-agent 0\.21\.5/.test(pin) && !/unavailable/i.test(pin) && (vnc.ok || vnc.rejected || vnc.leaked || vnc.cipherError)) break;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     const png = await cdp.send('Page.captureScreenshot', { format: 'png' });
@@ -309,6 +316,7 @@ async function main() {
     if (bad.test(status)) throw new Error(`status line: ${status}`);
     if (bad.test(pin) || !/hermes-agent 0\.21\.5/.test(pin)) throw new Error(`status line: ${pin}`);
     if (/not defined|Loading/i.test(profile)) throw new Error(`profile line: ${profile}`);
+    if (vnc.cipherError) throw new Error('desktop cipher check failed');
     if (vnc.leaked) throw new Error('desktop password was placed in the viewer URL');
     if (vnc.rejected) throw new Error('desktop password did not match');
     if (!vnc.ok) throw new Error('desktop did not send the stored password');
@@ -354,7 +362,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error && error.stack || error}\n`);
-  process.exit(1);
-});
+module.exports = { listen, vncCipher };
+
+if (require.main === module) {
+  main().catch((error) => {
+    process.stderr.write(`${error && error.stack || error}\n`);
+    process.exit(1);
+  });
+}
