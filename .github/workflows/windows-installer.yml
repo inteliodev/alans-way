@@ -7,9 +7,11 @@ on:
       - cursor/intelio-harness-layer-8db4
     tags:
       - "v*"
+    paths-ignore:
+      - ".github/workflows/**"
 
 concurrency:
-  group: intelio-desktop-0-3-6-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -18,6 +20,7 @@ permissions:
 jobs:
   nsis:
     runs-on: windows-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: desktop
@@ -86,6 +89,7 @@ jobs:
 
   mac-zip:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: desktop

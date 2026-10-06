@@ -5,12 +5,17 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   desktop:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: desktop
@@ -30,6 +35,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         python: ['3.11', '3.12']
+    timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
