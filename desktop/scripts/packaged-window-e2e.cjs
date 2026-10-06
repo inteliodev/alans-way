@@ -214,6 +214,13 @@ function listen(vncPassword) {
     if (url.pathname === '/api/home' || url.pathname === '/api/profiles') {
       if (auth !== `Bearer ${KEYS.intelio}`) { res.statusCode = 401; json({}); return; }
       json({ profiles: [
+        { name: 'underwriting' },
+        { name: 'intake' },
+        { name: 'research' },
+        { name: 'comps' },
+        { name: 'buyers' },
+        { name: 'critical-dates' },
+        { name: 'deal-tracking' },
         { id: 'intelio', name: 'Intelio' },
         { id: 'prc', name: 'PRC' },
         { id: 'alignment', name: 'Alignment' },
@@ -429,6 +436,13 @@ async function main() {
     const profile = String(view.profile || '').trim();
     const bad = /unavailable|not defined|unreachable|HTTP |No key|No API|failed|error/i;
     process.stdout.write(`e2e agents=${view.agents} sessions=${view.sessions} status=${JSON.stringify(status)} pin=${JSON.stringify(pin)} profile=${JSON.stringify(profile)}\n`);
+    const names = await cdp.send('Runtime.evaluate', {
+      expression: '[...document.querySelectorAll("#bot-list .bot-name")].map((node) => node.textContent || "").join("|")',
+      returnByValue: true,
+    });
+    const listedNames = String(names.result && names.result.value || '');
+    if (/underwriting|intake|comps|buyers|deal-tracking/i.test(listedNames)) throw new Error('local catalog replaced the harness profiles');
+    if (!/Intelio/.test(listedNames) || !/\bPRC\b/.test(listedNames) || !/Alignment/.test(listedNames) || !/\bHHP\b/.test(listedNames)) throw new Error(`harness profiles missing from the agents list: ${listedNames}`);
     if (view.agents !== 4) throw new Error(`expected 4 agents, saw ${view.agents}`);
     if (view.sessions < 1) throw new Error(`expected a session, saw ${view.sessions}`);
     if (bad.test(status)) throw new Error(`status line: ${status}`);

@@ -85,6 +85,25 @@ function agentsFromKeys(names, profile = 'intelio') {
   return [decorate(row)];
 }
 
+const HARNESS_IDS = new Set(NAMED_AGENTS.map((agent) => agent.id));
+
+/**
+ * The Agents list is the VPS harness (intelio, prc, alignment, hhp).
+ * A gateway catalog of other profiles — a laptop's local Alignment bots —
+ * must not replace or sit beside those four.
+ */
+function selectHarnessAgents(parsed, stored, profile = 'intelio') {
+  const allow = HARNESS_IDS;
+  const fromServer = (parsed || []).filter((agent) => allow.has(agent.id));
+  const byId = new Map(fromServer.map((agent) => [agent.id, agent]));
+  const storedSet = new Set((stored || []).map((name) => String(name || '').trim().toLowerCase()).filter((name) => allow.has(name)));
+  const ordered = NAMED_AGENTS.filter((agent) => byId.has(agent.id) || storedSet.has(agent.id)).map((agent) => byId.get(agent.id) || decorate(agent));
+  if (ordered.length) return ordered;
+  const foreign = (parsed || []).some((agent) => agent?.id && !allow.has(agent.id));
+  if (foreign) return NAMED_AGENTS.map(decorate);
+  return agentsFromKeys(stored, profile);
+}
+
 function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = globalThis.fetch, probeTimeoutMs = 3000, sessionFor, net } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('fetch is unavailable');
   const client = createRemoteHermesClient({ getConfig, getKey, fetchImpl, sessionFor, net });
@@ -148,12 +167,12 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
         const root = origin || `http://${host}:${config.port}`;
         for (const path of ['/api/home', '/api/profiles']) {
           const found = await probe(`${root}${path}`, key, raw);
-          if (found) return found;
+          if (found) return { ...found, agents: selectHarnessAgents(found.agents, stored, config.profile || 'intelio') };
         }
       }
     }
 
-    return { agents: agentsFromKeys(stored, config.profile || 'intelio'), sample: false, label: '' };
+    return { agents: selectHarnessAgents(null, stored, config.profile || 'intelio'), sample: false, label: '' };
   }
 
   async function listSessions(profile, { source, limit = 100, offset = 0 } = {}) {
@@ -190,4 +209,4 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
   };
 }
 
-module.exports = { NAMED_AGENTS, sourceLabel, agentsFromKeys, sessionTime, byNewest, createRemoteMain };
+module.exports = { NAMED_AGENTS, sourceLabel, agentsFromKeys, selectHarnessAgents, sessionTime, byNewest, createRemoteMain };

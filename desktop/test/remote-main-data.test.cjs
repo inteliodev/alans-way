@@ -2,8 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { signatureOf } = require('../../mobile/pwa/orbs.cjs');
-const { createRemoteMain } = require('../src/intelio/remote-main-data.cjs');
-const { signatureOf: uiSignature, switcherRows, SAMPLE } = require('../src/remote-main.js');
+const { createRemoteMain, selectHarnessAgents } = require('../src/intelio/remote-main-data.cjs');
+const { signatureOf: uiSignature, switcherRows, chooseSidebar, SAMPLE } = require('../src/remote-main.js');
 
 const KEYS = {
   intelio: 'i'.repeat(32),
@@ -166,6 +166,43 @@ test('a missing key never calls fetch, and config is the last fallback', async (
   const home = await main.listAgents();
   assert.deepEqual(home.agents.map((agent) => [agent.id, agent.orb]), [['alignment', 'searching']]);
   assert.equal(calls, 0);
+});
+
+test('a local Alignment catalog does not replace the four VPS harness profiles', async () => {
+  const local = ['underwriting', 'intake', 'research', 'comps', 'buyers', 'critical-dates', 'deal-tracking'].map((id) => ({ name: id }));
+  const { server, port } = await listen((req, res) => {
+    if (req.url === '/api/home' || req.url === '/api/profiles') {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ profiles: [...local, { id: 'intelio', name: 'Intelio' }, { name: 'prc' }, { name: 'alignment' }, { name: 'hhp' }] }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end('{}');
+  });
+  try {
+    const main = createRemoteMain({
+      getConfig: () => ({ enabled: true, host: '127.0.0.1', port, profile: 'intelio' }),
+      getKey: async (profile) => KEYS[profile] || '',
+      keyNames: () => Object.keys(KEYS),
+    });
+    const home = await main.listAgents();
+    assert.deepEqual(home.agents.map((agent) => agent.id), ['intelio', 'prc', 'alignment', 'hhp']);
+    assert.equal(home.agents.some((agent) => /underwriting|intake|comps|buyers|deal-tracking/i.test(agent.id)), false);
+  } finally { server.close(); }
+
+  const onlyLocal = selectHarnessAgents(local.map((item) => ({ id: item.name, name: item.name })), Object.keys(KEYS), 'intelio');
+  assert.deepEqual(onlyLocal.map((agent) => agent.id), ['intelio', 'prc', 'alignment', 'hhp']);
+  const foreignOnly = selectHarnessAgents(local.map((item) => ({ id: item.name, name: item.name })), [], 'intelio');
+  assert.deepEqual(foreignOnly.map((agent) => agent.id), ['intelio', 'prc', 'alignment', 'hhp']);
+
+  const sidebar = chooseSidebar({
+    remote: { enabled: true, host: 'intelio-vps.tail9c1007.ts.net', profilesWithKeys: Object.keys(KEYS) },
+    localBots: local.map((item) => ({ id: item.name, name: item.name })),
+    remoteAgents: onlyLocal,
+  });
+  assert.equal(sidebar.source, 'remote');
+  assert.deepEqual(sidebar.agents.map((agent) => agent.id), ['intelio', 'prc', 'alignment', 'hhp']);
+  assert.equal(chooseSidebar({ remote: null, localBots: [{ id: 'underwriting', name: 'Underwriting' }] }).source, 'local');
 });
 
 test('the profile switcher uses the PWA orb types', () => {

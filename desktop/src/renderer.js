@@ -165,7 +165,8 @@ function showExtensions() {
 }
 function remoteActive(next = state) {
   const remote = next?.remoteHermes;
-  return Boolean(remote?.enabled && remote?.host);
+  if (window.IntelioRemote?.remoteConfigured) return window.IntelioRemote.remoteConfigured(remote);
+  return Boolean(remote?.enabled && remote?.host) || Boolean(remote?.profilesWithKeys?.length);
 }
 function render(next) {
   const wasRemote = remoteActive(state);

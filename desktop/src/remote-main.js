@@ -133,6 +133,29 @@
     const host = $('intelio-profile');
     if (host && text) host.textContent = text;
   }
+  const HARNESS = [
+    { id: 'intelio', name: 'Intelio' },
+    { id: 'prc', name: 'PRC' },
+    { id: 'alignment', name: 'Alignment' },
+    { id: 'hhp', name: 'HHP' },
+  ];
+
+  function remoteConfigured(remote) {
+    if (!remote || typeof remote !== 'object') return false;
+    if (remote.enabled && remote.host) return true;
+    if (Array.isArray(remote.profilesWithKeys) && remote.profilesWithKeys.length > 0) return true;
+    if (remote.activeMode === 'cloud' || remote.activeMode === 'tailscale') return true;
+    return false;
+  }
+
+  /** Remote mode owns the Agents list. Local Telegram / Alignment bots stay off it. */
+  function chooseSidebar({ remote, localBots = [], remoteAgents = [] } = {}) {
+    if (!remoteConfigured(remote)) return { source: 'local', agents: localBots.slice() };
+    const live = new Map((remoteAgents || []).filter((agent) => HARNESS.some((row) => row.id === agent.id)).map((agent) => [agent.id, agent]));
+    const agents = HARNESS.map((agent) => live.get(agent.id) || { id: agent.id, name: agent.name, orb: signatureOf(agent.id) });
+    return { source: 'remote', agents };
+  }
+
   function seedAgents(names, profile) {
     const stored = [...new Set((names || []).map((name) => String(name || '').trim().toLowerCase()).filter(Boolean))];
     const named = [
@@ -402,7 +425,8 @@
     if (ui.sample || !root.remoteHermes) return;
     try {
       const home = await root.remoteHermes.request('agents');
-      ui.agents = home?.agents || [];
+      const listed = home?.agents || [];
+      ui.agents = chooseSidebar({ remote: { enabled: true, host: 'vps', profilesWithKeys: ui.keys }, remoteAgents: listed }).agents;
       ui.sample = Boolean(home?.sample);
       ui.label = home?.label || '';
       paintBanner();
@@ -478,7 +502,7 @@
     const search = $('bot-search');
     ui.query = search && !search.classList.contains('hidden') ? search.value : ui.query;
     if (!ui.agents.length) {
-      if (ui.keys.length) ui.agents = seedAgents(ui.keys, remote.profile);
+      if (remoteConfigured(remote)) ui.agents = chooseSidebar({ remote, remoteAgents: [] }).agents;
       else if (!remote.needsSignIn) {
         setStatus('No API keys saved for the VPS.');
         showProfileError('No API keys saved for the VPS.');
@@ -511,5 +535,5 @@
     return selectAgent(agent);
   }
 
-  return { signatureOf, accentOf, switcherRows, seedAgents, sessionAt, sessionRows, SAMPLE, sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => selectedAgent()?.name || '' };
+  return { signatureOf, accentOf, switcherRows, seedAgents, remoteConfigured, chooseSidebar, sessionAt, sessionRows, SAMPLE, sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => selectedAgent()?.name || '' };
 });
