@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, dialog, clipboard, shell, nativeTheme, screen, nativeImage, session } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, dialog, clipboard, shell, nativeTheme, screen, nativeImage, session, safeStorage } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -18,6 +18,7 @@ const { applyLinuxDemo, rendererSandbox } = require('./intelio/linux-demo.cjs');
 const { agentNavigationDecision } = require('./intelio/safety.cjs');
 const { loadIntelio, publicIntelioState, pngIcon } = require('./intelio/bridge.cjs');
 const { agents, agentsSetup } = require('./intelio/forks.cjs');
+const { setupRemoteHermes } = require('./intelio/remote-hermes-main.cjs');
 
 if (!applyLinuxDemo(app)) app.enableSandbox();
 app.setName("alans-way-localapp");
@@ -44,6 +45,7 @@ const API_TOKEN = crypto.randomBytes(32).toString('hex');
 const BATCH_BUDGET_MS = 50000;
 let isQuitting = false;
 let intelioSession = null;
+let remoteHermes = null; // Remote Hermes (VPS) client mode, see src/intelio/remote-hermes*.cjs
 let backgroundCaptureQueue = Promise.resolve();
 const avatarStore = createAvatarStore({ root: ROOT, nativeImage, dialog, getWindow: () => win, getPreferences: () => prefs });
 const agentInput = createAgentInput({ command: browserCommand,
@@ -65,7 +67,7 @@ const sitePermissions = createSitePermissions({ getPreferences: () => prefs, sav
 let pointerTimer, activityTimer, idleTimer;
 
 function readPreferences() {
-  const defaults = { bots: [], order: [], hidden: [], selectedBotId: '', accountId: '', remoteUrl: '', chatWidth: 490, preview: true, previewPos: null, showBots: true, showBrowser: true, savedTabs: [], avatarLibrary: [], avatarPreferences: {}, locationDefault: 'approximate', sitePermissions: {}, browserExtensions: [], vpsBrowser: {}, agentIdleMinutes: 15, agentLastTabs: {}, handoffs: [],
+  const defaults = { bots: [], order: [], hidden: [], selectedBotId: '', accountId: '', remoteUrl: '', chatWidth: 490, preview: true, previewPos: null, showBots: true, showBrowser: true, savedTabs: [], avatarLibrary: [], avatarPreferences: {}, locationDefault: 'approximate', sitePermissions: {}, browserExtensions: [], vpsBrowser: {}, remoteHermes: { enabled: false, host: '', port: 8642, profile: 'intelio' }, agentIdleMinutes: 15, agentLastTabs: {}, handoffs: [],
     overseerBots: String(process.env.HERMES_OVERSEER_BOTS || '').split(',').map((id) => id.trim()).filter((id) => id && id.length <= 100) };
   const file = path.join(app.getPath('userData'), 'preferences.json');
   let text;
@@ -421,11 +423,14 @@ async function openBot(id) {
   }
 }
 function registerIpc() {
+  remoteHermes.register();
   ipcMain.handle('workspace:get', (event) => { trustSender(event); return getState(); });
   ipcMain.on('workspace:layout', (event, value) => { try { trustSender(event); layout = value || {}; applyLayout(); } catch {} });
   ipcMain.handle('workspace:command', async (event, command, value = {}) => {
     trustSender(event);
     switch (command) {
+      case 'remote-hermes-state': case 'remote-hermes-config': case 'remote-hermes-key': case 'remote-hermes-test': case 'open-remote-hermes':
+        return remoteHermes.command(command, value);
       case 'create-tab': return describeTab(createTab({ url: value.url || 'about:blank' }));
       case 'close-tab':
         if (isVpsTab(value.id)) { if(activeTabId===value.id)prefs.remoteControl=false; await vpsBrowser.request(`/v1/tabs/${value.id}`,'DELETE',undefined,{human:true}); vpsTabs.delete(value.id); if(activeTabId===value.id)activeTabId='home'; applyLayout(); } else closeTab(value.id); break;
@@ -1092,7 +1097,7 @@ function createWindow() {
     { label: 'File', submenu: [{ label: 'New Browser Tab', accelerator: 'CmdOrCtrl+T', click: () => createTab({}) }, { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => extensionPopup?.browserWindow?.isFocused() ? extensionPopup.destroy() : closeTab(activeTabId) }] },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     { label: 'View', submenu: [{ label: 'Reload Page', accelerator: 'CmdOrCtrl+R', click: () => tabs.get(activeTabId)?.view.webContents.reload() }, { role: 'togglefullscreen' }, ...(app.isPackaged ? [] : [{ label: 'App Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => win.webContents.toggleDevTools() }])] },
-    { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { role: 'front' }] },
+    { label: 'Window', submenu: [{ label: 'Remote Hermes (VPS)', accelerator: 'CmdOrCtrl+Shift+H', click: () => remoteHermes.open() }, { type: 'separator' }, { role: 'minimize' }, { role: 'zoom' }, { role: 'front' }] },
   ]));
   startApi();
   // Read the real pointer position, even over native child views or another app.
@@ -1121,6 +1126,8 @@ else {
   app.whenReady().then(async () => {
     app.setAccessibilitySupportEnabled(true); prefs = readPreferences(); prefs.remoteControl = false;
     intelioSession = loadIntelio({ argv: process.argv, prefs });
+    remoteHermes = setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, getPrefs: () => prefs, savePreferences, root: ROOT, rendererSandbox,
+      icon: nativeImage.createFromBuffer(pngIcon()), background: intelioSession?.public?.brand?.tokens?.background });
     try { parseRemoteUrl(prefs.remoteUrl); } catch { prefs.remoteUrl = ''; }
     fs.mkdirSync(app.getPath('userData'), { recursive: true });
     const browserSession = session.fromPartition('persist:browser');

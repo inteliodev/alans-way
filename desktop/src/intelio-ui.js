@@ -64,6 +64,46 @@
       if (result?.intelio) toast(result.intelio.hermes?.summary || result.intelio.error || 'Hermes pin rechecked.');
     };
     body.append(field, load, recheck, element('hr', 'section-divider'));
+    appendRemoteHermes(body, { element, command, toast });
+  }
+
+  /** Remote Hermes (VPS): this app as a client of the single Hermes on the VPS, over Tailscale only. */
+  function appendRemoteHermes(body, { element, command, toast }) {
+    body.append(element('h3', '', 'Remote Hermes (VPS)'));
+    body.append(element('p', 'settings-note', 'Chat with the VPS Hermes over Tailscale. Same sessions and memory as Telegram. The host must be a tailnet address (100.x or *.ts.net) or 127.0.0.1 for an SSH tunnel; the key is the profile\'s API_SERVER_KEY and is stored in the macOS keychain-backed safe storage, never shown again.'));
+    const status = element('p', 'settings-note', 'Loading…');
+    const make = (id, labelText, value, type = 'text') => {
+      const field = element('div', 'field');
+      const label = element('label', '', labelText); label.htmlFor = id;
+      const input = element('input'); input.id = id; input.type = type; input.value = value ?? ''; input.spellcheck = false; input.autocomplete = 'off';
+      field.append(label, input); body.append(field); return input;
+    };
+    const host = make('remote-hermes-host', 'VPS host (Tailscale)', '');
+    const port = make('remote-hermes-port', 'Port', '8642');
+    const profile = make('remote-hermes-profile', 'Hermes profile', 'intelio');
+    const key = make('remote-hermes-key', 'API key for this profile (write-only)', '', 'password');
+    key.placeholder = 'unchanged';
+    const show = (s) => {
+      host.value = s.host || ''; port.value = s.port || 8642; profile.value = s.profile || 'default';
+      status.textContent = s.error || `${s.hasKey ? 'Key saved' : 'No key saved'} for profile ${s.profile || 'default'}.${s.encryptionAvailable ? '' : ' OS encryption unavailable: keys cannot be saved.'}`;
+    };
+    command('remote-hermes-state', {}).then(show).catch((e) => { status.textContent = e.message; });
+    const save = element('button', 'secondary-button', 'Save');
+    save.onclick = async () => {
+      try {
+        let s = await command('remote-hermes-config', { host: host.value.trim(), port: Number(port.value), profile: profile.value.trim(), enabled: true });
+        if (key.value) { s = await command('remote-hermes-key', { key: key.value, profile: s.profile }); key.value = ''; }
+        show(s); toast('Remote Hermes settings saved.');
+      } catch (e) { status.textContent = e.message; }
+    };
+    const test = element('button', 'secondary-button', 'Test connection');
+    test.onclick = async () => {
+      try { const r = await command('remote-hermes-test', {}); status.textContent = `Reachable (HTTP ${r.health?.status}). Session chat streaming: ${r.sessionChat ? 'yes' : 'no'}.`; }
+      catch (e) { status.textContent = e.message; }
+    };
+    const open = element('button', 'secondary-button', 'Open Remote Hermes');
+    open.onclick = () => command('open-remote-hermes', {}).catch((e) => { status.textContent = e.message; });
+    body.append(status, save, test, open, element('hr', 'section-divider'));
   }
 
   window.IntelioUI = { apply, appendSettings };

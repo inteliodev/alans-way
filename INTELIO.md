@@ -48,6 +48,10 @@ INTELIO_LINUX_DEMO=1 HERMES_WORKSPACE_DATA=/tmp/intelio-alans-way-demo npm start
 
 `INTELIO_LINUX_DEMO=1` is Linux-only. It turns off the Electron sandbox (including per-view `sandbox`, which this VM's Chromium zygote needs or the shell renderer exits 5), `/dev/shm`, and GPU switches so the shell can open under Xvfb. It does not change the Mac path, and it does not relax tab ownership, the browsing zone, or the safety defaults.
 
+## Remote Hermes (VPS)
+
+The VPS runs the single Hermes brain; this app is a client of it over Tailscale through the Hermes API server (same sessions and memory as Telegram). Configure host, port, profile and key under Settings → Remote Hermes (VPS), then open Window → Remote Hermes (VPS). Details, security model and VPS setup: [docs/intelio-remote-hermes.md](docs/intelio-remote-hermes.md).
+
 ## Safety defaults
 
 These are on for every profile the shell loads. A sidecar that sets `yolo: true` or a consequential mode other than `ask` is refused. `INTELIO_YOLO` is ignored. Those keys are not part of the harness schema.
@@ -84,7 +88,7 @@ cd desktop && npm run check
 ## Not wired
 
 - A git submodule for `inteliodev/intelio-harness`. This checkout vendors commit `996267ba526254310a029e3c63825561e470c654` because the private repo was not cloneable from here. The files are that commit's export.
-- Spawning a Hermes gateway or TUI. The app only probes `hermes --version`.
+- Spawning a local Hermes gateway or TUI. The app only probes `hermes --version`. For chat it is a client of the VPS Hermes instead: see [Remote Hermes (VPS) mode](docs/intelio-remote-hermes.md).
 - Installing profile `skills` into Hermes, or hiding panes based on `panels`. Both are shown in Settings.
 - The companion Mac file server (`hermes_companion.mac_server`) still uses its own `--workspace` and still refuses non-Darwin hosts. Call `alans_way.files.bind_folders` before pointing it at a folder if you want the profile bound there.
 - Telegram sign-in, a live VPS, and noVNC. Those stay empty or disconnected until you sign in and paste a viewer URL.
