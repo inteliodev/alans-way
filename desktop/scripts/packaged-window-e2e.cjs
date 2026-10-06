@@ -175,15 +175,38 @@ function openCdp(url) {
   };
 }
 
+function hasSession(req) {
+  return /(?:^|;\s*)CF_Authorization=/.test(String(req.headers.cookie || ''));
+}
+
 function listen(vncPassword) {
   const vnc = { ok: false, rejected: false, leaked: false, cipherError: false };
+  const seen = { bootstrap: 0 };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const auth = req.headers.authorization || '';
     const json = (body) => {
       res.setHeader('content-type', 'application/json');
+      res.setHeader('cache-control', 'no-store');
       res.end(JSON.stringify(body));
     };
+    if (url.pathname === '/access/login') {
+      res.setHeader('content-type', 'text/html');
+      res.end('<!doctype html><title>Sign in</title><p>Sign in to Intelio</p><button id="allow" type="button">Allow</button><script>document.getElementById("allow").onclick=function(){document.cookie="CF_Authorization=e2e-session; Path=/";location.href="/health";};</script>');
+      return;
+    }
+    if (!hasSession(req)) {
+      res.statusCode = 302;
+      res.setHeader('location', '/access/login');
+      res.end('');
+      return;
+    }
+    if (url.pathname === '/intelio/bootstrap') {
+      seen.bootstrap += 1;
+      json({ ...KEYS, vnc: vncPassword });
+      if (seen.bootstrap === 1) process.stdout.write('e2e bootstrap=ok\n');
+      return;
+    }
     if (url.pathname === '/health') {
       json({ status: 'ok', platform: 'hermes-agent', version: '0.21.5' });
       return;
@@ -223,7 +246,7 @@ function listen(vncPassword) {
   acceptDesktop(server, vncPassword, vnc);
   server.on('clientError', (_err, socket) => socket.destroy());
   server.on('error', () => {});
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, vnc })));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, vnc, seen })));
 }
 
 async function main() {
@@ -233,15 +256,19 @@ async function main() {
   const sessionsShot = path.resolve('dist/e2e-sessions-tab.png');
   const shot = path.resolve('dist/e2e-main-window.png');
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-e2e-'));
-  const { server, vnc } = await listen(VNC_PASSWORD);
+  const { server, vnc, seen } = await listen(VNC_PASSWORD);
   const port = server.address().port;
+  const closed = http.createServer();
+  await new Promise((resolve) => closed.listen(0, '127.0.0.1', resolve));
+  const closedPort = closed.address().port;
+  await new Promise((resolve) => closed.close(resolve));
+  const origin = `http://127.0.0.1:${port}`;
   fs.writeFileSync(path.join(userData, 'preferences.json'), JSON.stringify({
     preview: false,
     savedTabs: [],
-    remoteUrl: `http://127.0.0.1:${port}/vnc.html`,
-    remoteHermes: { enabled: true, host: '127.0.0.1', port, profile: 'intelio' },
+    remoteUrl: '',
+    remoteHermes: { enabled: true, host: '127.0.0.1', port: closedPort, profile: 'intelio', connection: 'auto' },
   }));
-  fs.writeFileSync(path.join(userData, 'remote-hermes-key.import'), `${Object.entries(KEYS).map(([name, key]) => `${name}=${key}`).join('\n')}\nvnc=${VNC_PASSWORD}\n`);
 
   const child = spawn(exe, ['--remote-debugging-port=0', '--disable-gpu'], {
     cwd: path.dirname(exe),
@@ -249,6 +276,8 @@ async function main() {
       ...process.env,
       HERMES_WORKSPACE_DATA: userData,
       INTELIO_E2E: '1',
+      INTELIO_CLOUD_API: origin,
+      INTELIO_CLOUD_DESKTOP: `${origin}/vnc.html`,
       INTELIO_PYTHON: 'intelio-no-python',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -310,6 +339,45 @@ async function main() {
       }
       return result.result.value;
     };
+    let signedIn = false;
+    const signUntil = Date.now() + 30000;
+    while (Date.now() < signUntil) {
+      const gate = await cdp.send('Runtime.evaluate', {
+        expression: `(() => {
+          const node = document.getElementById('cloud-signin');
+          return Boolean(node && !node.classList.contains('hidden'));
+        })()`,
+        returnByValue: true,
+      });
+      if (!gate.exceptionDetails && gate.result && gate.result.value) { signedIn = true; break; }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!signedIn) throw new Error('sign-in screen did not appear');
+    let loginCdp;
+    const loginUntil = Date.now() + 20000;
+    try {
+      while (Date.now() < loginUntil) {
+        const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+        const login = pages.find((item) => item.type === 'page' && /access\/login/.test(item.url || '') && item.webSocketDebuggerUrl);
+        if (login) {
+          if (!loginCdp) {
+            loginCdp = openCdp(login.webSocketDebuggerUrl);
+            await loginCdp.send('Runtime.enable');
+          }
+          const ready = await loginCdp.send('Runtime.evaluate', {
+            expression: 'Boolean(document.getElementById("allow"))',
+            returnByValue: true,
+          });
+          if (!ready.result || !ready.result.value) { await new Promise((resolve) => setTimeout(resolve, 250)); continue; }
+          await loginCdp.send('Runtime.evaluate', { expression: 'document.getElementById("allow").click()' });
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    } finally {
+      if (loginCdp) loginCdp.close();
+    }
+    if (!loginCdp) throw new Error('cloud sign-in page did not open');
     let view = { agents: 0, sessions: 0, status: '', pin: '', profile: '' };
     const until = Date.now() + 30000;
     while (Date.now() < until) {
@@ -364,8 +432,12 @@ async function main() {
     if (view.agents !== 4) throw new Error(`expected 4 agents, saw ${view.agents}`);
     if (view.sessions < 1) throw new Error(`expected a session, saw ${view.sessions}`);
     if (bad.test(status)) throw new Error(`status line: ${status}`);
-    if (bad.test(pin) || !/hermes-agent 0\.21\.5/.test(pin)) throw new Error(`status line: ${pin}`);
-    if (/not defined|Loading/i.test(profile)) throw new Error(`profile line: ${profile}`);
+    if (bad.test(pin) || !/hermes-agent 0\.21\.5/.test(pin) || !/· Cloud/.test(pin)) throw new Error(`status line: ${pin}`);
+    if (/not defined|Loading/i.test(profile) || !/Cloud/.test(profile)) throw new Error(`profile line: ${profile}`);
+    if (!seen.bootstrap) throw new Error('bootstrap did not run');
+    const storedKeys = fs.readFileSync(path.join(userData, 'remote-hermes-keys.json'), 'utf8');
+    if (storedKeys.includes(KEYS.intelio) || storedKeys.includes(VNC_PASSWORD)) throw new Error('bootstrap stored a raw secret');
+    process.stdout.write('e2e mode=cloud\n');
     if (vnc.cipherError) throw new Error('desktop cipher check failed');
     if (vnc.leaked) throw new Error('desktop password was placed in the viewer URL');
     if (vnc.rejected) throw new Error('desktop password did not match');

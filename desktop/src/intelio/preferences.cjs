@@ -6,6 +6,7 @@
  */
 const { remoteHermesDefaults, normalizeRemoteConfig, VNC_URL } = require('./remote-hermes.cjs');
 const { agentsFromKeys } = require('./remote-main-data.cjs');
+const { normalizeConnectionMode } = require('./cloud-connection.cjs');
 
 function mergeRemote(defaults, saved) {
   if (saved == null || typeof saved !== 'object' || Array.isArray(saved)) return { ...defaults };
@@ -13,7 +14,8 @@ function mergeRemote(defaults, saved) {
   const host = String(saved.host ?? '').trim() || (enabled ? defaults.host : '');
   const port = saved.port ?? defaults.port;
   const profile = String(saved.profile ?? '').trim() || defaults.profile;
-  return { enabled, host, port, profile };
+  const connection = normalizeConnectionMode(saved.connection == null || saved.connection === '' ? defaults.connection : saved.connection);
+  return { enabled, host, port, profile, connection };
 }
 
 /** A saved viewer URL wins. Otherwise remote mode uses the VPS noVNC page. */

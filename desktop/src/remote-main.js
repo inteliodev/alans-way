@@ -474,12 +474,12 @@
     const remote = next?.remoteHermes || {};
     ui.keys = remote.profilesWithKeys || [];
     ui.keyless = ui.keys.length === 0;
-    const stamp = `${remote.host}|${remote.port}|${[...ui.keys].sort().join(',')}`;
+    const stamp = `${remote.host}|${remote.port}|${remote.activeMode || ''}|${remote.needsSignIn ? 1 : 0}|${[...ui.keys].sort().join(',')}`;
     const search = $('bot-search');
     ui.query = search && !search.classList.contains('hidden') ? search.value : ui.query;
     if (!ui.agents.length) {
       if (ui.keys.length) ui.agents = seedAgents(ui.keys, remote.profile);
-      else {
+      else if (!remote.needsSignIn) {
         setStatus('No API keys saved for the VPS.');
         showProfileError('No API keys saved for the VPS.');
       }

@@ -4,7 +4,7 @@ if (process.argv.includes('--smoke-test')) {
     process.exit(1);
   });
 }
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, dialog, clipboard, shell, nativeTheme, screen, nativeImage, session, safeStorage } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, dialog, clipboard, shell, nativeTheme, screen, nativeImage, session, safeStorage, net } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -155,7 +155,7 @@ function applyIntelioChrome() {
 }
 function getState() {
   return { name: app.getName(), version: app.getVersion(), intelio: publicIntelioState(intelioSession), bots: prefs.bots.map(bot => ({ ...bot, activity: activity.get(bot.id), hue: botAccent(bot.id).hue })), order: prefs.order, hidden: prefs.hidden,
-    selectedBotId: prefs.selectedBotId, chatWidth: prefs.chatWidth, preview: prefs.preview, previewPos: prefs.previewPos, showBots: prefs.showBots, showBrowser: prefs.showBrowser, remoteUrl: prefs.remoteUrl,
+    selectedBotId: prefs.selectedBotId, chatWidth: prefs.chatWidth, preview: prefs.preview, previewPos: prefs.previewPos, showBots: prefs.showBots, showBrowser: prefs.showBrowser, remoteUrl: typeof remoteHermes?.viewerUrl === 'function' ? remoteHermes.viewerUrl() : prefs.remoteUrl,
     remoteStatus, remoteControl: prefs.remoteControl === true, telegramStatus, tabs: [...tabs.values()].map(describeTab),
     vpsBrowser: prefs.vpsBrowser, vpsBrowserStatus, handoffs: prefs.handoffs, macSshHost: prefs.macSshHost || '',
     primaryBotId: prefs.primaryBotId || (prefs.overseerBots || [])[0] || '', primaryBotPref: prefs.primaryBotId || '', overseerBots: prefs.overseerBots || [],
@@ -440,8 +440,11 @@ function registerIpc() {
   ipcMain.handle('workspace:command', async (event, command, value = {}) => {
     trustSender(event);
     switch (command) {
-      case 'remote-hermes-state': case 'remote-hermes-config': case 'remote-hermes-key': case 'remote-hermes-test': case 'open-remote-hermes':
-        return remoteHermes.command(command, value);
+      case 'remote-hermes-state': case 'remote-hermes-config': case 'remote-hermes-key': case 'remote-hermes-test': case 'open-remote-hermes': case 'remote-hermes-sign-in': {
+        const result = await remoteHermes.command(command, value);
+        if (command === 'remote-hermes-config' || command === 'remote-hermes-key' || command === 'remote-hermes-sign-in') broadcast();
+        return result;
+      }
       case 'create-tab': return describeTab(createTab({ url: value.url || 'about:blank' }));
       case 'close-tab':
         if (isVpsTab(value.id)) { if(activeTabId===value.id)prefs.remoteControl=false; await vpsBrowser.request(`/v1/tabs/${value.id}`,'DELETE',undefined,{human:true}); vpsTabs.delete(value.id); if(activeTabId===value.id)activeTabId='home'; applyLayout(); } else closeTab(value.id); break;
@@ -1089,7 +1092,7 @@ function createWindow() {
   telegramView.webContents.on('render-process-gone', () => { telegramStatus = 'offline'; activity.clear(); broadcast(); });
   telegramView.webContents.on('did-fail-load', (_e, code, _desc, _url, main) => { if (main && code !== -3) { telegramStatus = 'offline'; activity.clear(); broadcast(); } });
   win.contentView.addChildView(telegramView);
-  remoteView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } });
+  remoteView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), partition: 'persist:intelio-cloud', contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } });
   remoteView.setBackgroundColor('#101011');
   remoteView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   remoteView.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -1164,7 +1167,7 @@ else {
       intelioSession = loadIntelio({ argv: process.argv, prefs });
     }
     remoteHermes = setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs: () => prefs, savePreferences, getMainWindow: () => win, root: ROOT, rendererSandbox,
-      icon: nativeImage.createFromBuffer(pngIcon()), background: intelioSession?.public?.brand?.tokens?.background });
+      icon: nativeImage.createFromBuffer(pngIcon()), background: intelioSession?.public?.brand?.tokens?.background, session, net });
     remoteHermes.watchVersion(() => broadcast());
     try { parseRemoteUrl(prefs.remoteUrl); } catch { prefs.remoteUrl = ''; }
     fs.mkdirSync(app.getPath('userData'), { recursive: true });

@@ -15,6 +15,7 @@ test('only tailnet or loopback hosts are accepted', () => {
     assert.equal(isTailnetOrLoopbackHost(host), false, host);
   }
   assert.throws(() => normalizeRemoteConfig({ host: ip(192, 0, 2, 1) }), /Tailscale/);
+  assert.throws(() => normalizeRemoteConfig({ host: 'os.intelio-ai.com' }), /Tailscale/);
 });
 
 test('config normalizes profile and builds the /p/<profile> prefix', () => {
@@ -27,8 +28,8 @@ test('config normalizes profile and builds the /p/<profile> prefix', () => {
 });
 
 test('windows first launch defaults to the VPS; other platforms stay opt-in', () => {
-  assert.deepEqual(remoteHermesDefaults('win32'), { enabled: true, host: VPS_HOST, port: 8642, profile: 'intelio' });
-  assert.deepEqual(remoteHermesDefaults('darwin'), { enabled: false, host: '', port: 8642, profile: 'intelio' });
+  assert.deepEqual(remoteHermesDefaults('win32'), { enabled: true, host: VPS_HOST, port: 8642, profile: 'intelio', connection: 'auto' });
+  assert.deepEqual(remoteHermesDefaults('darwin'), { enabled: false, host: '', port: 8642, profile: 'intelio', connection: 'auto' });
   assert.equal(VPS_HOST, 'intelio-vps.tail9c1007.ts.net');
   assert.equal(VNC_URL, 'http://intelio-vps.tail9c1007.ts.net:6080/vnc.html');
 });

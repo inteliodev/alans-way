@@ -60,8 +60,9 @@ function normalizeRemoteConfig(input = {}) {
 
 /** Windows first launch has no preferences file and starts as a VPS client. Other platforms stay opt-in. */
 function remoteHermesDefaults(platform = process.platform) {
-  if (platform === 'win32') return { enabled: true, host: VPS_HOST, port: DEFAULT_PORT, profile: 'intelio' };
-  return { enabled: false, host: '', port: DEFAULT_PORT, profile: 'intelio' };
+  const connection = 'auto';
+  if (platform === 'win32') return { enabled: true, host: VPS_HOST, port: DEFAULT_PORT, profile: 'intelio', connection };
+  return { enabled: false, host: '', port: DEFAULT_PORT, profile: 'intelio', connection };
 }
 
 function baseUrl(config) {
@@ -80,9 +81,39 @@ function resolveProfile(config, override) {
 }
 
 function profileBase(config, profileName) {
-  const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
   const prefix = profileName && profileName !== 'default' ? `/p/${profileName}` : '';
+  const origin = String(config.origin || '').replace(/\/$/, '');
+  if (origin) return `${origin}${prefix}`;
+  const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
   return `http://${host}:${config.port}${prefix}`;
+}
+
+function selectFetch(config, { fetchImpl, sessionFor, net } = {}) {
+  if (config && config.partition && typeof sessionFor === 'function') {
+    const ses = sessionFor(config.partition);
+    if (ses && net && typeof net.fetch === 'function') {
+      return (url, init = {}) => net.fetch(url, { ...init, session: ses });
+    }
+    if (ses && typeof ses.fetch === 'function') {
+      return (url, init = {}) => ses.fetch(url, init);
+    }
+  }
+  return fetchImpl;
+}
+
+async function readConfig(getConfig) {
+  const raw = await Promise.resolve(typeof getConfig === 'function' ? getConfig() : {});
+  const normalized = normalizeRemoteConfig(raw || {});
+  return {
+    ...normalized,
+    origin: String(raw?.origin || '').replace(/\/$/, ''),
+    partition: String(raw?.partition || ''),
+    activeMode: raw?.activeMode || '',
+  };
+}
+
+function cloudMode(config) {
+  return Boolean(config.origin || config.partition || config.activeMode === 'cloud');
 }
 
 /** Status line for remote mode: `hermes-agent 0.21.5`, plus a short pin when the remote sends one. */
@@ -133,11 +164,16 @@ function createSseParser(onEvent) {
   };
 }
 
-function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fetch, timeoutMs = 15000 } = {}) {
+function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fetch, timeoutMs = 15000, sessionFor, net } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('fetch is unavailable');
 
+  function throwIfAccess(response, text) {
+    const { isAccessResponse, accessError } = require('./cloud-connection.cjs');
+    if (isAccessResponse(response, text)) throw accessError();
+  }
+
   async function request(method, path, { body, query, stream = false, signal, profile } = {}) {
-    const config = normalizeRemoteConfig(getConfig());
+    const config = await readConfig(getConfig);
     const profileName = resolveProfile(config, profile);
     const key = await getKey(profileName);
     if (!key) throw new Error(`No API key saved for Hermes profile "${profileName}".`);
@@ -146,43 +182,54 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
     const controller = new AbortController();
     const timer = stream ? null : setTimeout(() => controller.abort(), timeoutMs);
     if (signal) signal.addEventListener('abort', () => controller.abort(), { once: true });
+    const cloud = cloudMode(config);
+    const doFetch = selectFetch(config, { fetchImpl, sessionFor, net });
     let response;
     try {
-      response = await fetchImpl(url, {
+      response = await doFetch(url, {
         method,
         headers: { Authorization: `Bearer ${key}`, Accept: stream ? 'text/event-stream' : 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
-        redirect: 'error',
+        redirect: cloud ? 'manual' : 'error',
       });
     } catch (error) {
       if (timer) clearTimeout(timer);
+      if (error?.code === 'CLOUD_ACCESS') throw error;
       throw new Error(`Remote Hermes unreachable at ${url.host}: ${redactKey(error?.cause?.code || error?.message, key)}`);
     }
     if (timer && !stream) clearTimeout(timer);
+    if (cloud && throwIfAccess(response)) return undefined;
     if (!response.ok) {
       const text = await response.text().catch(() => '');
+      if (cloud) throwIfAccess(response, text);
       const hint = response.status === 401 ? ' (wrong key for this profile — each profile has its own API_SERVER_KEY)' : '';
       throw Object.assign(new Error(`Remote Hermes ${method} ${path} → HTTP ${response.status}${hint}: ${redactKey(text, key)}`), { status: response.status });
     }
     if (stream) return response;
     const text = await response.text();
+    if (cloud) throwIfAccess(response, text);
     try { return JSON.parse(text); } catch { return text; }
   }
 
   return {
     health: async () => {
-      const config = normalizeRemoteConfig(getConfig());
+      const config = await readConfig(getConfig);
       const host = config.host.includes(':') ? `[${config.host}]` : config.host;
+      const endpoint = config.origin ? `${config.origin}/health` : `http://${host}:${config.port}/health`;
+      const cloud = cloudMode(config);
+      const doFetch = selectFetch(config, { fetchImpl, sessionFor, net });
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5000);
       let response;
       try {
-        response = await fetchImpl(`http://${host}:${config.port}/health`, { redirect: 'error', signal: controller.signal });
+        response = await doFetch(endpoint, { redirect: cloud ? 'manual' : 'error', signal: controller.signal });
       } finally {
         clearTimeout(timer);
       }
+      if (cloud) throwIfAccess(response);
       const text = await response.text();
+      if (cloud) throwIfAccess(response, text);
       let body = {};
       try { body = JSON.parse(text); } catch { body = {}; }
       if (!remoteVersionLabel(body) && /^hermes-agent\s+\S+/.test(String(text).trim())) {
@@ -215,7 +262,16 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
         onEvent(evt);
       });
       const decoder = new TextDecoder();
-      for await (const chunk of response.body) feed(decoder.decode(chunk, { stream: true }));
+      if (response.body && typeof response.body.getReader === 'function') {
+        const reader = response.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) feed(decoder.decode(value, { stream: true }));
+        }
+      } else if (response.body) {
+        for await (const chunk of response.body) feed(decoder.decode(chunk, { stream: true }));
+      }
       feed(decoder.decode());
       if (failed) throw new Error(`Hermes run failed: ${String(failed.error || failed.message || 'unknown error').slice(0, 300)}`);
       return finalText;
@@ -223,4 +279,4 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
   };
 }
 
-module.exports = { DEFAULT_PORT, PROFILE_RE, VPS_HOST, VNC_URL, remoteHermesDefaults, remoteVersionLabel, isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient };
+module.exports = { DEFAULT_PORT, PROFILE_RE, VPS_HOST, VNC_URL, remoteHermesDefaults, remoteVersionLabel, isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient, selectFetch, profileBase };

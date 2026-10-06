@@ -69,7 +69,19 @@
   /** Remote Hermes (VPS): this app as a client of the single Hermes on the VPS, over Tailscale only. */
   function appendRemoteHermes(body, { element, command, toast }) {
     body.append(element('h3', '', 'Remote Hermes (VPS)'));
-    body.append(element('p', 'settings-note', 'When Remote Hermes is on, the main window lists each profile and chats through that profile’s VPS sessions. The host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The import file remote-hermes-key.import can hold several lines, one profile=key per line. A legacy API_SERVER_KEY= line, or a single raw key, is the intelio key. A vnc= line is the VPS desktop password, stored the same way and sent when the desktop asks. It is not a profile, and it is not put in the viewer URL. Each profile only accepts its own key. Intelio encrypts them and deletes that file. You do not type the keys or the desktop password.'));
+    body.append(element('p', 'settings-note', 'When Remote Hermes is on, the main window lists each profile and chats through that profile’s VPS sessions. Connection is Auto, Tailscale, or Intelio Cloud. Auto uses Tailscale when that host answers, and otherwise Intelio Cloud. Intelio Cloud asks you to sign in once; that sign-in covers agents and the desktop. The Tailscale host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The import file remote-hermes-key.import can hold several lines, one profile=key per line. A legacy API_SERVER_KEY= line, or a single raw key, is the intelio key. A vnc= line is the VPS desktop password, stored the same way and sent when the desktop asks. It is not a profile, and it is not put in the viewer URL. Each profile only accepts its own key. Intelio encrypts them and deletes that file. You do not type the keys or the desktop password. A new machine can receive the same keys after Intelio Cloud sign-in.'));
+    const modeField = element('div', 'field');
+    const modeLabel = element('label', '', 'Connection');
+    modeLabel.htmlFor = 'remote-hermes-connection';
+    const mode = element('select');
+    mode.id = 'remote-hermes-connection';
+    for (const [value, text] of [['auto', 'Auto'], ['tailscale', 'Tailscale'], ['cloud', 'Intelio Cloud']]) {
+      const option = element('option', '', text);
+      option.value = value;
+      mode.append(option);
+    }
+    modeField.append(modeLabel, mode);
+    body.append(modeField);
     const status = element('p', 'settings-note', 'Loading…');
     const tail = element('p', 'settings-note', 'Checking Tailscale…');
     tail.id = 'remote-hermes-tailscale';
@@ -89,6 +101,7 @@
     install.onclick = () => command('remote-hermes-install-tailscale', {}).catch((e) => { status.textContent = e.message; });
     const show = (s) => {
       host.value = s.host || ''; port.value = s.port || 8642; profile.value = s.profile || 'default';
+      mode.value = s.connection === 'tailscale' || s.connection === 'cloud' ? s.connection : 'auto';
       status.textContent = s.error || `${s.hasKey ? 'Key saved' : 'No key saved'} for profile ${s.profile || 'default'}.${s.encryptionAvailable ? '' : ' OS encryption unavailable: keys cannot be saved.'}`;
       if (s.tailscale) {
         tail.textContent = s.tailscale.detail || '';
@@ -100,7 +113,7 @@
     const save = element('button', 'secondary-button', 'Save');
     save.onclick = async () => {
       try {
-        let s = await command('remote-hermes-config', { host: host.value.trim(), port: Number(port.value), profile: profile.value.trim(), enabled: true });
+        let s = await command('remote-hermes-config', { host: host.value.trim(), port: Number(port.value), profile: profile.value.trim(), enabled: true, connection: mode.value });
         if (key.value) { s = await command('remote-hermes-key', { key: key.value, profile: s.profile }); key.value = ''; }
         show(s); toast('Remote Hermes settings saved.');
       } catch (e) { status.textContent = e.message; }

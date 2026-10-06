@@ -38,5 +38,9 @@ body:not(.remote-main) #agent-caption-actions { display: flex !important; }
 .remote-composer button { border-radius: 8px; padding: 8px 12px; background: #24242c; }
 .remote-status { min-height: 18px; margin: 0; padding: 0 12px 8px; color: #9a9aa6; font-size: 12px; }
 .bot-row canvas.orb, #chat-avatar canvas.orb { display: block; border-radius: 50%; }
+.cloud-signin { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 32px; text-align: center; background: rgba(9, 9, 10, 0.94); color: #f4f4f8; }
+.cloud-signin h2 { margin: 0; font-size: 22px; font-weight: 650; }
+.cloud-signin p { margin: 0; max-width: 420px; color: #b7b7c2; }
+.cloud-signin button { margin-top: 8px; background: #f4f4f8; color: #111114; border-radius: 999px; padding: 8px 16px; font-weight: 650; }
 .bot-row .avatar { width: 36px; height: 36px; }
 #chat-avatar canvas.orb { width: 28px; height: 28px; }

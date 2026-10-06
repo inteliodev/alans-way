@@ -6,7 +6,7 @@
  * Each profile is called with that profile's own API key.
  */
 const { signatureOf } = require('./orb-signature.cjs');
-const { createRemoteHermesClient, normalizeRemoteConfig, PROFILE_RE } = require('./remote-hermes.cjs');
+const { createRemoteHermesClient, normalizeRemoteConfig, selectFetch, PROFILE_RE } = require('./remote-hermes.cjs');
 
 const NAMED_AGENTS = [
   { id: 'intelio', name: 'Intelio' },
@@ -85,46 +85,59 @@ function agentsFromKeys(names, profile = 'intelio') {
   return [decorate(row)];
 }
 
-function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = globalThis.fetch, probeTimeoutMs = 3000 } = {}) {
+function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = globalThis.fetch, probeTimeoutMs = 3000, sessionFor, net } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('fetch is unavailable');
-  const client = createRemoteHermesClient({ getConfig, getKey, fetchImpl });
+  const client = createRemoteHermesClient({ getConfig, getKey, fetchImpl, sessionFor, net });
 
   function storedNames() {
     const names = typeof keyNames === 'function' ? keyNames() : keyNames;
     return [...new Set((names || []).map((name) => String(name || '').trim().toLowerCase()).filter(Boolean))];
   }
 
-  async function probe(url, key) {
+  async function probe(url, key, raw) {
+    const cloud = Boolean(raw?.origin || raw?.partition || raw?.activeMode === 'cloud');
+    const doFetch = selectFetch(raw, { fetchImpl, sessionFor, net });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), probeTimeoutMs);
     try {
-      const response = await fetchImpl(url, {
+      const response = await doFetch(url, {
         headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
-        redirect: 'error',
+        redirect: cloud ? 'manual' : 'error',
         signal: controller.signal,
       });
+      const { isAccessResponse, accessError } = require('./cloud-connection.cjs');
+      if (cloud && isAccessResponse(response)) throw accessError();
       if (!response?.ok) return null;
+      const text = await response.text();
+      if (cloud && isAccessResponse(response, text)) throw accessError();
       let json;
-      try { json = await response.json(); } catch { return null; }
+      try { json = JSON.parse(text); } catch { return null; }
       const agents = parseProfiles(json);
       if (!agents) return null;
       return { agents, sample: Boolean(json?.sample), label: json?.sample ? (json.label || 'SAMPLE DATA') : '' };
-    } catch {
+    } catch (error) {
+      if (error?.code === 'CLOUD_ACCESS') throw error;
       return null;
     } finally {
       clearTimeout(timer);
     }
   }
 
+  async function rawConfig() {
+    return Promise.resolve(typeof getConfig === 'function' ? getConfig() : {});
+  }
+
   async function listAgents() {
-    const config = normalizeRemoteConfig(getConfig());
+    const raw = await rawConfig();
+    const config = normalizeRemoteConfig(raw || {});
     const stored = storedNames();
     const order = [];
     if (stored.includes('intelio')) order.push('intelio');
     for (const name of stored) if (!order.includes(name)) order.push(name);
     if (!order.length && config.profile) order.push(config.profile);
 
-    if (config.host) {
+    const origin = String(raw?.origin || '').replace(/\/$/, '');
+    if (origin || config.host) {
       let key = '';
       for (const name of order) {
         key = await getKey(name);
@@ -132,9 +145,9 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
       }
       if (key) {
         const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
-        const root = `http://${host}:${config.port}`;
+        const root = origin || `http://${host}:${config.port}`;
         for (const path of ['/api/home', '/api/profiles']) {
-          const found = await probe(`${root}${path}`, key);
+          const found = await probe(`${root}${path}`, key, raw);
           if (found) return found;
         }
       }
@@ -146,7 +159,8 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
   async function listSessions(profile, { source, limit = 100, offset = 0 } = {}) {
     const result = await client.listSessions({ source, limit, offset, ...(profile ? { profile } : {}) });
     const rows = Array.isArray(result?.data) ? result.data : [];
-    const profileId = profile || normalizeRemoteConfig(getConfig()).profile || 'default';
+    const raw = await rawConfig();
+    const profileId = profile || normalizeRemoteConfig(raw || {}).profile || 'default';
     return rows.map((session) => decorateSession(session, profileId));
   }
 
@@ -157,7 +171,10 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
     const named = NAMED_AGENTS.map((agent) => agent.id).filter((id) => ids.includes(id));
     const targets = named.length ? named : ids;
     const groups = await Promise.all(targets.map(async (profile) => {
-      try { return await listSessions(profile, { limit: 100 }); } catch { return []; }
+      try { return await listSessions(profile, { limit: 100 }); } catch (error) {
+        if (error?.code === 'CLOUD_ACCESS') throw error;
+        return [];
+      }
     }));
     return byNewest(groups.flat());
   }

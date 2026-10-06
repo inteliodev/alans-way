@@ -9,6 +9,7 @@ const path = require('node:path');
 const { normalizeRemoteConfig, createRemoteHermesClient, redactKey, PROFILE_RE } = require('./remote-hermes.cjs');
 const { createRemoteMain } = require('./remote-main-data.cjs');
 const { checkTailscale, assertInstallUrl, installUrl } = require('./tailscale.cjs');
+const { normalizeConnectionMode, chooseConnection, labelWithMode, allowedSignInUrl, CLOUD_PARTITION } = require('./cloud-connection.cjs');
 
 function unquote(value) {
   return String(value || '').trim().replace(/^['"]|['"]$/g, '');
@@ -85,7 +86,19 @@ function importRemoteHermesKey({ file, profile, safeStorage, readKeys, writeKeys
   return { imported: true, profiles: names, vnc: Boolean(parsed[VNC_KEY]), notice: 'Connected to VPS Hermes', profile: profile || names[0] };
 }
 
-function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs, savePreferences, getMainWindow, root, rendererSandbox, icon, background }) {
+function secretsFromBootstrap(body) {
+  const parsed = {};
+  if (!body || typeof body !== 'object') return parsed;
+  for (const name of ['intelio', 'prc', 'alignment', 'hhp']) {
+    const value = String(body[name] || '').trim();
+    if (value.length >= 16 && value.length <= 4096) parsed[name] = value;
+  }
+  const vnc = String(body.vnc || '').trim();
+  if (vnc.length >= 1 && vnc.length <= 256) parsed[VNC_KEY] = vnc;
+  return parsed;
+}
+
+function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs, savePreferences, getMainWindow, root, rendererSandbox, icon, background, session, net }) {
   let chatWindow = null;
   const keyFile = () => path.join(app.getPath('userData'), 'remote-hermes-keys.json');
   const inflight = new Map();
@@ -104,26 +117,189 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     if (!stored || !safeStorage.isEncryptionAvailable()) return '';
     try { return safeStorage.decryptString(Buffer.from(stored, 'base64')); } catch { return ''; }
   }
-  function config() {
+  const sessionFor = (partition) => (session && typeof session.fromPartition === 'function' ? session.fromPartition(partition) : null);
+  let resolved = null;
+  let needsSignIn = false;
+  let generation = 0;
+  let notify = () => {};
+  let signInWindow = null;
+  let signInTimer = null;
+  let finishingSignIn = false;
+
+  function savedConnection() {
+    return normalizeConnectionMode(getPrefs().remoteHermes?.connection);
+  }
+  async function baseConfig() {
     const prefs = getPrefs();
     return normalizeRemoteConfig(prefs.remoteHermes || {});
   }
-  const client = createRemoteHermesClient({ getConfig: config, getKey });
-  const mainData = createRemoteMain({ getConfig: config, getKey, keyNames: () => profileNames(readKeys()) });
+  async function config() {
+    const base = await baseConfig();
+    if (!resolved) await refreshConnection();
+    const connection = savedConnection();
+    if (resolved?.mode === 'cloud') {
+      return { ...base, origin: resolved.origin, partition: resolved.partition || CLOUD_PARTITION, activeMode: 'cloud', connection };
+    }
+    return { ...base, origin: '', partition: '', activeMode: 'tailscale', connection };
+  }
+  const client = createRemoteHermesClient({ getConfig: config, getKey, sessionFor, net });
+  const mainData = createRemoteMain({ getConfig: config, getKey, keyNames: () => profileNames(readKeys()), sessionFor, net });
   let versionLabel = '';
-  function watchVersion(onUpdate) {
-    const run = () => {
-      let cfg;
-      try { cfg = config(); } catch { return; }
-      if (!cfg.enabled || !cfg.host) return;
-      client.health().then((health) => {
-        const next = health.label || '';
-        if (!next || next === versionLabel) return;
-        versionLabel = next;
-        if (typeof onUpdate === 'function') onUpdate();
-      }).catch(() => {});
+
+  async function hasCloudCookie(origin) {
+    const ses = sessionFor(CLOUD_PARTITION);
+    if (!ses || !origin) return false;
+    try {
+      const cookies = await ses.cookies.get({ url: origin, name: 'CF_Authorization' });
+      return Array.isArray(cookies) && cookies.some((cookie) => cookie && cookie.value);
+    } catch {
+      return false;
+    }
+  }
+
+  async function maybeBootstrap() {
+    if (!resolved || resolved.mode !== 'cloud') return;
+    if (profileNames(readKeys()).length) return;
+    if (!(await hasCloudCookie(resolved.origin))) return;
+    if (!safeStorage || !safeStorage.isEncryptionAvailable()) return;
+    const ses = sessionFor(CLOUD_PARTITION);
+    if (!ses) return;
+    const url = `${resolved.origin}/intelio/bootstrap`;
+    const doFetch = net && typeof net.fetch === 'function'
+      ? (target, init) => net.fetch(target, { ...init, session: ses })
+      : (target, init) => ses.fetch(target, init);
+    let response;
+    try {
+      response = await doFetch(url, { redirect: 'manual', headers: { Accept: 'application/json' } });
+    } catch {
+      process.stderr.write('Intelio Cloud key bootstrap failed.\n');
+      return;
+    }
+    if (!response || !response.ok) return;
+    let body;
+    try { body = await response.json(); } catch { return; }
+    const parsed = secretsFromBootstrap(body);
+    if (!profileNames(parsed).length) return;
+    const keys = readKeys();
+    for (const name of Object.keys(parsed)) keys[name] = safeStorage.encryptString(parsed[name]).toString('base64');
+    writeKeys(keys);
+  }
+
+  function closeSignInPoll() {
+    if (signInTimer) clearInterval(signInTimer);
+    signInTimer = null;
+  }
+
+  async function finishSignIn() {
+    if (finishingSignIn) return;
+    finishingSignIn = true;
+    try {
+      needsSignIn = false;
+      await maybeBootstrap();
+      await publishVersion();
+      notify();
+    } finally {
+      finishingSignIn = false;
+    }
+  }
+
+  function openSignIn() {
+    if (!BrowserWindow || !resolved || resolved.mode !== 'cloud') return;
+    if (signInWindow && !signInWindow.isDestroyed()) {
+      signInWindow.show();
+      signInWindow.focus();
+      return;
+    }
+    const ses = sessionFor(CLOUD_PARTITION);
+    if (!ses) return;
+    signInWindow = new BrowserWindow({
+      width: 480,
+      height: 720,
+      title: 'Sign in to Intelio',
+      backgroundColor: background || '#0a0a0a',
+      autoHideMenuBar: true,
+      webPreferences: { session: ses, contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    const guard = (event, url) => { if (!allowedSignInUrl(url)) event.preventDefault(); };
+    signInWindow.webContents.on('will-navigate', guard);
+    signInWindow.webContents.on('will-redirect', guard);
+    signInWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (allowedSignInUrl(url) && signInWindow && !signInWindow.isDestroyed()) signInWindow.loadURL(url).catch(() => {});
+      return { action: 'deny' };
+    });
+    signInWindow.on('closed', () => { closeSignInPoll(); signInWindow = null; });
+    const origin = resolved.origin;
+    signInWindow.loadURL(`${origin}/health`).catch(() => {});
+    closeSignInPoll();
+    let claimed = false;
+    const poll = async () => {
+      if (claimed || !signInWindow || signInWindow.isDestroyed()) return;
+      if (!(await hasCloudCookie(origin))) return;
+      if (claimed) return;
+      claimed = true;
+      closeSignInPoll();
+      const desktop = resolved?.desktop;
+      if (desktop && allowedSignInUrl(desktop) && signInWindow && !signInWindow.isDestroyed()) {
+        try {
+          await Promise.race([
+            signInWindow.loadURL(desktop),
+            new Promise((resolve) => setTimeout(resolve, 8000)),
+          ]);
+        } catch { /* SSO warm-up is best-effort */ }
+      }
+      if (signInWindow && !signInWindow.isDestroyed()) signInWindow.close();
+      await finishSignIn();
     };
-    run();
+    signInTimer = setInterval(() => { poll().catch(() => {}); }, 400);
+  }
+
+  async function refreshConnection() {
+    const gen = ++generation;
+    let cfg;
+    try { cfg = await baseConfig(); } catch { cfg = { enabled: false, host: '', port: 8642, profile: 'intelio' }; }
+    const choice = await chooseConnection({ mode: savedConnection(), host: cfg.host, port: cfg.port, env: process.env });
+    if (gen !== generation) return resolved;
+    resolved = choice;
+    if (choice.mode === 'cloud') {
+      needsSignIn = !(await hasCloudCookie(choice.origin));
+      if (gen !== generation) return resolved;
+      if (!needsSignIn) await maybeBootstrap();
+      else openSignIn();
+    } else {
+      needsSignIn = false;
+    }
+    return resolved;
+  }
+
+  async function publishVersion() {
+    if (!resolved) await refreshConnection();
+    if (needsSignIn) return;
+    let cfg;
+    try { cfg = await config(); } catch { return; }
+    if (!cfg.enabled || (!cfg.host && !cfg.origin)) return;
+    try {
+      const health = await client.health();
+      const next = labelWithMode(health.label || '', resolved?.mode || cfg.activeMode);
+      if (!next || next === versionLabel) return;
+      versionLabel = next;
+      notify();
+    } catch (error) {
+      if (error?.code === 'CLOUD_ACCESS') {
+        needsSignIn = true;
+        versionLabel = '';
+        openSignIn();
+        notify();
+      }
+    }
+  }
+
+  function watchVersion(onUpdate) {
+    notify = typeof onUpdate === 'function' ? onUpdate : () => {};
+    const run = () => { publishVersion().catch(() => {}); };
+    refreshConnection().then(() => {
+      if (needsSignIn) notify();
+      else return publishVersion();
+    }).catch(() => {});
     const timer = setInterval(run, 60000);
     if (typeof timer.unref === 'function') timer.unref();
   }
@@ -131,7 +307,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   try {
     const imported = importRemoteHermesKey({
       file: path.join(app.getPath('userData'), 'remote-hermes-key.import'),
-      profile: (() => { try { return config().profile || 'default'; } catch { return 'default'; } })(),
+      profile: (() => { try { return normalizeRemoteConfig(getPrefs().remoteHermes || {}).profile || 'default'; } catch { return 'default'; } })(),
       safeStorage,
       readKeys,
       writeKeys,
@@ -151,11 +327,28 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   function publicState() {
     let cfg;
     let error = '';
-    try { cfg = config(); } catch (e) { cfg = { ...(getPrefs().remoteHermes || {}) }; error = e.message; }
+    try { cfg = normalizeRemoteConfig(getPrefs().remoteHermes || {}); } catch (e) { cfg = { ...(getPrefs().remoteHermes || {}) }; error = e.message; }
     const keys = readKeys();
     let encryptionAvailable = false;
     try { encryptionAvailable = safeStorage.isEncryptionAvailable(); } catch (e) { error = error || e.message; }
-    return { ...cfg, hasKey: Boolean(keys[cfg.profile || 'default']), profilesWithKeys: profileNames(keys), hasVncPassword: Boolean(keys[VNC_KEY]), encryptionAvailable, error, versionLabel };
+    return {
+      ...cfg,
+      connection: savedConnection(),
+      activeMode: resolved?.mode || '',
+      needsSignIn: Boolean(needsSignIn && resolved?.mode === 'cloud'),
+      hasKey: Boolean(keys[cfg.profile || 'default']),
+      profilesWithKeys: profileNames(keys),
+      hasVncPassword: Boolean(keys[VNC_KEY]),
+      encryptionAvailable,
+      error,
+      versionLabel,
+    };
+  }
+
+  function viewerUrl() {
+    const prefs = getPrefs();
+    if (resolved?.mode === 'cloud') return needsSignIn ? '' : (resolved.desktop || '');
+    return prefs.remoteUrl || '';
   }
 
   function trusted(event) {
@@ -171,9 +364,21 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     switch (name) {
       case 'remote-hermes-state': return { ...publicState(), tailscale: await tailscaleStatus() };
       case 'remote-hermes-config': {
-        const next = normalizeRemoteConfig({ ...(prefs.remoteHermes || {}), ...value });
+        const connection = normalizeConnectionMode(value.connection ?? prefs.remoteHermes?.connection);
+        const next = { ...normalizeRemoteConfig({ ...(prefs.remoteHermes || {}), ...value }), connection };
         prefs.remoteHermes = next;
         savePreferences();
+        resolved = null;
+        await refreshConnection();
+        if (!needsSignIn) await publishVersion();
+        else notify();
+        return publicState();
+      }
+      case 'remote-hermes-sign-in': {
+        if (!resolved) await refreshConnection();
+        needsSignIn = resolved?.mode === 'cloud' ? !(await hasCloudCookie(resolved.origin)) : false;
+        if (needsSignIn) openSignIn();
+        else if (resolved?.mode === 'cloud') await finishSignIn();
         return publicState();
       }
       case 'remote-hermes-key': {
@@ -206,7 +411,13 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   function register() {
     ipcMain.handle('remote-hermes', async (event, name, value = {}) => {
       trusted(event);
-      const profileHint = value.profile ? String(value.profile) : (config().profile || 'default');
+      if (!resolved) await refreshConnection();
+      if (needsSignIn && name !== 'state') {
+        const error = new Error('Sign in to Intelio');
+        error.code = 'CLOUD_ACCESS';
+        throw error;
+      }
+      const profileHint = value.profile ? String(value.profile) : ((await config()).profile || 'default');
       const key = await getKey(profileHint).catch(() => '');
       try {
         switch (name) {
@@ -239,7 +450,14 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
           default: throw new Error(`Unknown Remote Hermes request: ${name}`);
         }
       } catch (error) {
-        throw new Error(redactKey(error?.message || String(error), key));
+        if (error?.code === 'CLOUD_ACCESS') {
+          needsSignIn = true;
+          openSignIn();
+          notify();
+        }
+        const wrapped = new Error(redactKey(error?.message || String(error), key));
+        if (error?.code) wrapped.code = error.code;
+        throw wrapped;
       }
     });
   }
@@ -266,7 +484,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
-  return { register, command, open, publicState, watchVersion, vncPassword, startupNotice: () => startupNotice };
+  return { register, command, open, publicState, watchVersion, viewerUrl, vncPassword, startupNotice: () => startupNotice };
 }
 
 module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, keysFromImport, profileNames, secureDelete, VNC_KEY };
