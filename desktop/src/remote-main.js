@@ -195,6 +195,12 @@
     }
   }
 
+  function statusLine(id) {
+    const pool = ui.allSessions.length ? ui.allSessions : (ui.selected === id ? ui.sessions : []);
+    const latest = pool.filter((session) => !session.profileId || session.profileId === id).slice().sort((a, b) => sessionAt(b) - sessionAt(a))[0];
+    return latest?.preview || latest?.title || '';
+  }
+
   function paintAgents() {
     const list = $('bot-list');
     if (!list) return;
@@ -211,7 +217,7 @@
       mountOrb(canvas, row.id, row.orb, 36, true);
       avatar.append(canvas);
       const copy = el('span', 'bot-copy');
-      copy.append(el('div', 'bot-name', row.name), el('div', 'bot-preview', row.subtitle));
+      copy.append(el('div', 'bot-name', row.name), el('div', 'bot-preview', statusLine(row.id)));
       node.append(avatar, copy);
       node.onclick = () => selectAgent(row.id);
       node.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectAgent(row.id); } };
@@ -230,10 +236,8 @@
     paintHeader();
   }
 
-  function paintSessions() {
-    const list = $('remote-sessions');
+  function fillSessionList(list, mine) {
     if (!list) return;
-    const mine = ui.sessions.filter((session) => !session.profileId || session.profileId === ui.selected);
     list.replaceChildren();
     for (const session of mine) {
       const item = el('li', `session-item${session.id === ui.sessionId ? ' active' : ''}`);
@@ -245,6 +249,12 @@
       list.append(item);
     }
     if (!mine.length) list.append(el('li', 'session-empty', 'No sessions yet.'));
+  }
+
+  function paintSessions() {
+    const mine = ui.sessions.filter((session) => !session.profileId || session.profileId === ui.selected);
+    fillSessionList($('remote-sessions'), mine);
+    fillSessionList($('sidebar-threads'), mine);
   }
 
   function paintMessages() {
@@ -376,6 +386,7 @@
       const result = await root.remoteHermes.request('all-sessions', {});
       ui.allSessions = Array.isArray(result?.data) ? result.data.slice().sort((a, b) => sessionAt(b) - sessionAt(a)) : [];
       paintAllSessions();
+      paintAgents();
     } catch (error) {
       if (ui.sidebar === 'sessions') setStatus(error.message);
     }
@@ -406,6 +417,7 @@
     setStatus('');
     if (ui.sample) {
       ui.sessions = SAMPLE.sessions.filter((session) => session.profileId === id);
+      paintAgents();
       paintSessions();
       const sampleTarget = sessionId && ui.sessions.some((session) => session.id === sessionId) ? sessionId : ui.sessions[0]?.id;
       if (sampleTarget) await openSession(sampleTarget);
@@ -414,6 +426,7 @@
     try {
       const result = await root.remoteHermes.request('sessions', { profile: id, limit: 100 });
       ui.sessions = Array.isArray(result?.data) ? result.data : [];
+      paintAgents();
       paintSessions();
       const target = sessionId && ui.sessions.some((session) => session.id === sessionId) ? sessionId : ui.sessions[0]?.id;
       if (target) await openSession(target);
@@ -494,7 +507,8 @@
   function sync(next) {
     if (!root.document) return;
     wire();
-    if (!ui.tabChosen) setSidebar(next?.sidebarTab === 'sessions' ? 'sessions' : 'agents', { persist: false });
+    if (!ui.tabChosen) setSidebar('agents', { persist: false });
+    $('sidebar-threads-wrap')?.classList.remove('hidden');
     const remote = next?.remoteHermes || {};
     ui.keys = remote.profilesWithKeys || [];
     ui.keyless = ui.keys.length === 0;

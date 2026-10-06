@@ -114,7 +114,7 @@ test('the main window factory receives root and renders the agent list', async (
   assert.equal(globalThis.IntelioRemote, api);
 });
 
-test('the sessions tab lists every profile newest first, filters, and opens that profile', async () => {
+test('threads for the selected agent sit under the agents, and the sessions list still filters', async () => {
   delete require.cache[require.resolve('../src/remote-main.js')];
   const { byId, calls } = installDom();
   const saved = [];
@@ -133,14 +133,24 @@ test('the sessions tab lists every profile newest first, filters, and opens that
     },
   });
   const deadline = Date.now() + 1000;
-  let rows = [];
+  let threads = [];
   while (Date.now() < deadline) {
-    rows = sessionItems(byId);
-    if (api.sidebar() === 'sessions' && rows.length >= 2) break;
+    threads = byId('sidebar-threads').children.filter((node) => String(node.className).includes('session-item'));
+    if (api.sidebar() === 'agents' && byId('bot-list').children.length === 4 && threads.length >= 1) break;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  assert.equal(api.sidebar(), 'sessions');
+  assert.equal(api.sidebar(), 'agents');
+  assert.equal(byId('bot-list').classList.hidden, false);
+  assert.ok(threads.length >= 1);
   assert.equal(saved.some((entry) => entry.value?.sidebarTab === 'sessions'), false);
+  api.setSidebar('sessions');
+  let rows = [];
+  const listedUntil = Date.now() + 1000;
+  while (Date.now() < listedUntil) {
+    rows = sessionItems(byId);
+    if (rows.length >= 2) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   assert.ok(rows.length >= 2);
   assert.equal(rows[0].dataset.profile, 'prc');
   assert.deepEqual([...new Set(rows.map((row) => row.dataset.profile))].sort(), ['alignment', 'hhp', 'intelio', 'prc']);

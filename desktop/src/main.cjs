@@ -26,6 +26,7 @@ const { loadIntelio, publicIntelioState, pngIcon } = require('./intelio/bridge.c
 const { agents, agentsSetup } = require('./intelio/forks.cjs');
 const { setupRemoteHermes } = require('./intelio/remote-hermes-main.cjs');
 const { loadPreferences } = require('./intelio/preferences.cjs');
+const { normalizeTheme } = require('./intelio/theme.cjs');
 const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
 
 if (!applyLinuxDemo(app)) app.enableSandbox();
@@ -146,11 +147,22 @@ function intelioTitle() {
   const profile = intelioSession?.public?.profileName;
   return profile ? `${title} — ${profile}` : title;
 }
+function currentTheme() { return normalizeTheme(prefs?.theme); }
+let pushedTelegramTheme = '';
+function applyThemeChrome() {
+  const theme = currentTheme();
+  nativeTheme.themeSource = theme;
+  const background = theme === 'light' ? '#f6f6f8' : (intelioSession?.public?.brand?.tokens?.background || '#0a0a0a');
+  if (win && !win.isDestroyed()) win.setBackgroundColor(background);
+  if (remoteView && !remoteView.webContents.isDestroyed()) remoteView.setBackgroundColor(theme === 'light' ? '#f3f3f6' : '#101011');
+  if (theme === pushedTelegramTheme) return;
+  pushedTelegramTheme = theme;
+  if (telegramView && !telegramView.webContents.isDestroyed()) telegramView.webContents.send('workspace:theme', theme);
+}
 function applyIntelioChrome() {
   if (!win || win.isDestroyed()) return;
   win.setTitle(intelioTitle());
-  const background = intelioSession?.public?.brand?.tokens?.background;
-  if (background) win.setBackgroundColor(background);
+  applyThemeChrome();
   try { win.setIcon(nativeImage.createFromBuffer(pngIcon())); } catch { /* icon is cosmetic; the profile report still stands */ }
 }
 function getState() {
@@ -166,7 +178,8 @@ function getState() {
     fullscreen: win?.isFullScreen() || false, api: { url: apiPort ? `http://127.0.0.1:${apiPort}` : '', ready: !!apiPort, error: apiError },
     remoteHermesNotice: remoteHermes?.startupNotice?.() || '',
     remoteHermes: remoteHermes?.publicState?.() || null,
-    sidebarTab: prefs.sidebarTab === 'sessions' ? 'sessions' : 'agents' };
+    sidebarTab: prefs.sidebarTab === 'sessions' ? 'sessions' : 'agents',
+    theme: currentTheme() };
 }
 let lastBotWorkSignature = '';
 // Bots with agent tabs that are dispatching, navigating, or recently acted
@@ -435,6 +448,7 @@ async function openBot(id) {
 }
 function registerIpc() {
   remoteHermes.register();
+  ipcMain.on('workspace:theme-sync', (event) => { event.returnValue = currentTheme(); });
   ipcMain.handle('workspace:get', (event) => { trustSender(event); return getState(); });
   ipcMain.on('workspace:layout', (event, value) => { try { trustSender(event); layout = value || {}; applyLayout(); } catch {} });
   ipcMain.handle('workspace:command', async (event, command, value = {}) => {
@@ -588,8 +602,9 @@ function registerIpc() {
         if (typeof value.intelioProfile === 'string') prefs.intelioProfile = value.intelioProfile.trim();
         if (['ask', 'block', 'approximate'].includes(value.locationDefault)) prefs.locationDefault = value.locationDefault;
         if (value.sidebarTab === 'agents' || value.sidebarTab === 'sessions') prefs.sidebarTab = value.sidebarTab;
+        if (value.theme === 'light' || value.theme === 'dark') prefs.theme = value.theme;
         if (Number.isFinite(value.chatWidth)) prefs.chatWidth = Math.max(320, Math.min(680, value.chatWidth));
-        savePreferences(); applyLayout(); break;
+        savePreferences(); applyThemeChrome(); applyLayout(); break;
       case 'preview-move': {
         // The mini VM window floats anywhere inside the workspace pane.
         const x = Number(value.x), y = Number(value.y);
@@ -1080,8 +1095,9 @@ function startApi() {
   });
 }
 function createWindow() {
-  nativeTheme.themeSource = 'dark';
-  const windowOptions = { width: 1550, height: 980, minWidth: 1120, minHeight: 680, backgroundColor: intelioSession?.public?.brand?.tokens?.background || '#0a0a0a', title: intelioTitle(), icon: nativeImage.createFromBuffer(pngIcon()),
+  const bootTheme = currentTheme();
+  nativeTheme.themeSource = bootTheme;
+  const windowOptions = { width: 1550, height: 980, minWidth: 1120, minHeight: 680, backgroundColor: bootTheme === 'light' ? '#f6f6f8' : (intelioSession?.public?.brand?.tokens?.background || '#0a0a0a'), title: intelioTitle(), icon: nativeImage.createFromBuffer(pngIcon()),
     webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } };
   if (process.platform === 'darwin') { windowOptions.titleBarStyle = 'hiddenInset'; windowOptions.trafficLightPosition = { x: 18, y: 18 }; }
   win = new BrowserWindow(windowOptions);
@@ -1089,6 +1105,7 @@ function createWindow() {
   telegramView.setBackgroundColor('#09090a');
   configureContents(telegramView.webContents, true);
   telegramView.webContents.on('did-start-loading', () => { lastBotWorkSignature = ''; activity.clear(); broadcast(); });
+  telegramView.webContents.on('did-finish-load', () => { pushedTelegramTheme = ''; applyThemeChrome(); });
   telegramView.webContents.on('render-process-gone', () => { telegramStatus = 'offline'; activity.clear(); broadcast(); });
   telegramView.webContents.on('did-fail-load', (_e, code, _desc, _url, main) => { if (main && code !== -3) { telegramStatus = 'offline'; activity.clear(); broadcast(); } });
   win.contentView.addChildView(telegramView);

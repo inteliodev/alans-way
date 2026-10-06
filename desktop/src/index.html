@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: crx:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
-  <title>Intelio</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="intelio.css"><link rel="stylesheet" href="avatars.css"><link rel="stylesheet" href="remote-main.css">
+  <title>Intelio</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="intelio.css"><link rel="stylesheet" href="avatars.css"><link rel="stylesheet" href="remote-main.css"><link rel="stylesheet" href="theme-light.css">
 </head>
 <body>
   <div id="shell">
@@ -21,10 +21,15 @@
       <input id="bot-search" class="search-input hidden" placeholder="Search your bots" aria-label="Search bots">
       <div id="session-tools" class="session-tools hidden"><input id="session-search" class="search-input" placeholder="Search sessions" aria-label="Search sessions"><select id="session-agent" aria-label="Filter by agent"></select></div>
       <div id="bot-list" class="bot-list"></div>
+      <div id="sidebar-threads-wrap" class="sidebar-threads-wrap hidden">
+        <div class="side-caption threads-caption">THREADS</div>
+        <ul id="sidebar-threads" class="sidebar-threads"></ul>
+      </div>
       <ul id="all-sessions" class="all-sessions hidden"></ul>
       <div id="empty-bots" class="empty-bots"><span class="outline-mark">◔</span><h3>Your agents, together.</h3><p>Loading agents…</p><p class="muted">Drag to sort. Hide any bot.</p></div>
       <div id="agent-presence" class="agent-presence hidden"><button id="presence-avatar" class="presence-avatar" aria-label="Customize selected bot avatar"></button><div id="presence-name" class="presence-name"></div><div id="presence-status" class="presence-status"></div><button id="settings-button" class="icon-button presence-gear no-drag" title="Workspace settings" aria-label="Workspace settings"><span class="settings-glyph">⚙</span><span class="status-dot bridge-dot"></span></button></div>
       <div class="side-bottom"><button id="settings-fallback" class="icon-button no-drag" title="Workspace settings" aria-label="Workspace settings"><span class="settings-glyph">⚙</span><span class="status-dot bridge-dot"></span></button></div>
+      <div class="theme-row"><button id="theme-toggle" class="theme-toggle no-drag" type="button" aria-pressed="false">Dark</button></div>
     </aside>
     <section class="chat-pane">
       <header class="chat-header drag"><div id="chat-pill" class="chat-pill"><span id="chat-avatar" class="small-avatar no-drag" role="button" tabindex="0" aria-label="Customize bot avatar">◔</span><span id="chat-title">Telegram</span></div><button id="bots-toggle" class="icon-button" title="Hide agent list" aria-label="Toggle agent list" aria-pressed="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button></header>

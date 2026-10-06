@@ -191,6 +191,17 @@ const CSS = `
     animation: hwOrbit 2.7s linear infinite; filter: drop-shadow(0 0 7px rgba(168,233,204,.5)); }
   @keyframes hwOrbit { to { --hw-oa: 360deg; } }
 `;
+const LIGHT_CSS = `
+  html.intelio-light, html.intelio-light body { color-scheme: light !important; --color-background: #f6f6f8 !important; --color-background-secondary: #ffffff !important; --color-background-secondary-accent: #ececf1 !important; --color-text: #1c1c21 !important; --color-text-secondary: #5e5e68 !important; }
+  html.intelio-light, html.intelio-light body, html.intelio-light #root, html.intelio-light #Main, html.intelio-light .MiddleColumn, html.intelio-light .messages-layout, html.intelio-light .messages-container, html.intelio-light .MessageList { background-color: #f6f6f8 !important; }
+  html.intelio-light .Message .message-content { background: #ffffff !important; color: #1c1c21 !important; }
+  html.intelio-light .Message.own .message-content { background: #e4e4ea !important; }
+  html.intelio-light .Composer .composer-wrapper, html.intelio-light .Composer .message-input-wrapper, html.intelio-light .Composer .input-message-input, html.intelio-light .Composer .input-message-container { background: #ffffff !important; color: #1c1c21 !important; }
+`;
+function applyTelegramTheme(theme) {
+  document.documentElement.classList.toggle('intelio-light', theme === 'light');
+}
+try { applyTelegramTheme(ipcRenderer.sendSync('workspace:theme-sync')); } catch { /* dark until the window publishes a theme */ }
 let busy = false, db, previous = '', timer, dbDiag = 'init';
 function readDatabase() {
   return new Promise((resolve) => {
@@ -268,10 +279,11 @@ async function sync() {
   } catch {} finally { busy = false; }
 }
 window.addEventListener('DOMContentLoaded', () => {
-  const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
+  const style = document.createElement('style'); style.textContent = CSS + LIGHT_CSS; document.head.appendChild(style);
   sync(); timer = setInterval(sync, 2500);
 });
 ipcRenderer.on('telegram:sync', sync);
+ipcRenderer.on('workspace:theme', (_event, theme) => applyTelegramTheme(theme));
 ipcRenderer.on('workspace:bot-activity', (_event, working) => { workActivity = working && typeof working === 'object' ? working : {}; renderAgentBubble(); });
 ipcRenderer.send('workspace:bot-activity-pull');
 window.addEventListener('hashchange', renderAgentBubble);

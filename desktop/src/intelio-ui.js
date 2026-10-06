@@ -63,12 +63,18 @@
       if (result?.intelio) toast(result.intelio.hermes?.summary || result.intelio.error || 'Hermes pin rechecked.');
     };
     body.append(field, load, recheck, element('hr', 'section-divider'));
-    appendRemoteHermes(body, { element, command, toast });
+    appendRemoteHermes(body, { element, command, toast, state });
   }
 
   /** Remote Hermes (VPS): this app as a client of the single Hermes on the VPS, over Tailscale only. */
-  function appendRemoteHermes(body, { element, command, toast }) {
+  function appendRemoteHermes(body, { element, command, toast, state }) {
     body.append(element('h3', '', 'Remote Hermes (VPS)'));
+    const remote = state?.remoteHermes;
+    if (remote && (remote.host || remote.versionLabel || remote.activeMode)) {
+      const mode = remote.activeMode === 'cloud' ? 'Cloud' : remote.activeMode === 'tailscale' ? 'Tailscale' : '';
+      const host = remote.host ? `${remote.host}:${remote.port || 8642}` : '';
+      body.append(element('p', 'settings-note', ['VPS Hermes', host, remote.versionLabel || '', mode].filter(Boolean).join(' · ')));
+    }
     body.append(element('p', 'settings-note', 'When Remote Hermes is on, the main window lists each profile and chats through that profile’s VPS sessions. Connection is Auto, Tailscale, or Intelio Cloud. Auto uses Tailscale when that host answers, and otherwise Intelio Cloud. Intelio Cloud asks you to sign in once; that sign-in covers agents and the desktop. The Tailscale host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The import file remote-hermes-key.import can hold several lines, one profile=key per line. A legacy API_SERVER_KEY= line, or a single raw key, is the intelio key. A vnc= line is the VPS desktop password, stored the same way and sent when the desktop asks. It is not a profile, and it is not put in the viewer URL. Each profile only accepts its own key. Intelio encrypts them and deletes that file. You do not type the keys or the desktop password. A new machine can receive the same keys after Intelio Cloud sign-in.'));
     const modeField = element('div', 'field');
     const modeLabel = element('label', '', 'Connection');

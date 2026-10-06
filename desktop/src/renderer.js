@@ -163,6 +163,19 @@ function showExtensions() {
   body.append(element('p', 'settings-note', 'This browser is Chromium, not Chrome — Google sync and Chrome’s built-in password manager are not included. For passwords and passkeys, install your manager’s extension from the Web Store and sign in inside it.'));
   renderExtensions();
 }
+function applyTheme(theme) {
+  const next = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  document.documentElement.style.colorScheme = next;
+  if (next === 'light') {
+    for (const key of ['--bg', '--text', '--line', '--muted', '--intelio-surface']) document.documentElement.style.removeProperty(key);
+  }
+  const button = $('theme-toggle');
+  if (!button) return;
+  button.textContent = next === 'light' ? 'Light' : 'Dark';
+  button.title = next === 'light' ? 'Switch to Dark' : 'Switch to Light';
+  button.setAttribute('aria-pressed', String(next === 'light'));
+}
 function remoteActive(next = state) {
   const remote = next?.remoteHermes;
   if (window.IntelioRemote?.remoteConfigured) return window.IntelioRemote.remoteConfigured(remote);
@@ -204,11 +217,21 @@ function render(next) {
   }
   renderTabs(); renderSettingsBots(); renderSitePermissions(); renderExtensions();
   window.IntelioUI?.apply(state);
+  applyTheme(state.theme);
+  $('sidebar-threads-wrap')?.classList.toggle('hidden', !nowRemote);
   if (nowRemote) {
     const cloud = state.remoteHermes.activeMode === 'cloud';
-    $('intelio-profile').textContent = cloud ? 'VPS Hermes · Cloud' : `VPS Hermes · ${state.remoteHermes.host}:${state.remoteHermes.port}`;
+    const profile = $('intelio-profile');
+    profile.textContent = cloud ? 'VPS Hermes · Cloud' : `VPS Hermes · ${state.remoteHermes.host}:${state.remoteHermes.port}`;
+    profile.classList.add('hidden');
     const pin = $('hermes-pin');
-    if (pin) pin.textContent = state.remoteHermes.versionLabel || 'VPS Hermes';
+    if (pin) {
+      pin.textContent = state.remoteHermes.versionLabel || 'VPS Hermes';
+      pin.classList.add('hidden');
+    }
+  } else {
+    $('intelio-profile')?.classList.remove('hidden');
+    $('hermes-pin')?.classList.remove('hidden');
   }
   const signIn = $('cloud-signin');
   if (signIn) signIn.classList.toggle('hidden', !state.remoteHermes?.needsSignIn);
@@ -395,6 +418,12 @@ async function showCookieSettings(body) {
 function showSettings() {
   openModal('Workspace settings');
   const body = $('modal-body'), field = element('div', 'field');
+  const themeRow = element('div', 'setting-row');
+  themeRow.append(element('span', '', 'Appearance'));
+  const themeButton = element('button', 'secondary-button', state.theme === 'light' ? 'Light' : 'Dark');
+  themeButton.onclick = () => command('settings', { theme: state.theme === 'light' ? 'dark' : 'light' });
+  themeRow.append(themeButton);
+  body.append(themeRow, element('hr', 'section-divider'));
   window.IntelioUI?.appendSettings(body, { element, command, state, toast });
   const extensions = element('button', 'secondary-button', 'Manage browser extensions'); extensions.onclick = showExtensions;
   body.append(extensions, element('hr', 'section-divider'));
@@ -481,6 +510,7 @@ $('bot-search').oninput = () => { if (remoteActive()) window.IntelioRemote?.filt
 $('add-bot').onclick = showAddBot;
 $('settings-button').onclick = showSettings;
 $('settings-fallback').onclick = showSettings;
+$('theme-toggle').onclick = () => command('settings', { theme: document.documentElement.dataset.theme === 'light' ? 'dark' : 'light' });
 $('browser-collapse').onclick = () => { if (focusMode) { focusMode = false; $('shell').classList.remove('focus-workspace'); } command('settings', { showBrowser: state?.showBrowser === false }); };
 $('bots-toggle').onclick = () => command('settings', { showBots: state.showBots === false });
 $('sort-bots').onclick = (event) => {

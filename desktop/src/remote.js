@@ -24,7 +24,11 @@ function connect(value) {
   showEmpty('Connecting…', 'Opening your VPS desktop through its existing viewer.', 'Connection settings'); status('connecting');
   try {
     rfb = new RFB($('screen'), toSocket(value));
-    rfb.scaleViewport = true; rfb.resizeSession = false; rfb.focusOnClick = true; rfb.viewOnly = !state?.remoteControl; rfb.background = '#070708';
+    rfb.scaleViewport = true; rfb.resizeSession = false; rfb.clipViewport = false; rfb.focusOnClick = true; rfb.viewOnly = !state?.remoteControl; rfb.background = '#070708';
+    if (!connect.fit) {
+      connect.fit = new ResizeObserver(() => { if (rfb) rfb.scaleViewport = true; });
+      connect.fit.observe($('screen'));
+    }
     rfb.addEventListener('connect', () => {
       if (version !== connectionVersion) return;
       connected = true; $('remote-empty').classList.add('hidden'); $('connection-dot').classList.add('connected'); status('connected'); render(state);
@@ -47,9 +51,15 @@ function connect(value) {
     rfb.addEventListener('securityfailure', () => { if (version === connectionVersion) { showEmpty('Connection needs attention', 'The desktop rejected the connection. Check the viewer URL and credentials.', 'Connection settings'); status('authentication failed'); } });
   } catch (error) { showEmpty('Unable to connect', error.message, 'Connection settings'); status('disconnected'); }
 }
+function applyTheme(theme) {
+  const next = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  document.documentElement.style.colorScheme = next;
+}
 function render(next) {
   if (!next) return;
   state = next;
+  applyTheme(state.theme);
   if (state.remoteUrl !== currentUrl) connect(state.remoteUrl);
   if (rfb) { rfb.viewOnly = !state.remoteControl; if(!state.remoteControl)rfb.blur(); }
   $('control').textContent = state.remoteControl ? 'Stop control' : 'Take control'; $('control').classList.toggle('controlling', state.remoteControl);

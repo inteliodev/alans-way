@@ -5,6 +5,7 @@
  * enabled:false stays off.
  */
 const { remoteHermesDefaults, normalizeRemoteConfig, VNC_URL } = require('./remote-hermes.cjs');
+const { normalizeTheme } = require('./theme.cjs');
 const { agentsFromKeys } = require('./remote-main-data.cjs');
 const { normalizeConnectionMode } = require('./cloud-connection.cjs');
 
@@ -53,6 +54,7 @@ function loadPreferences({ text = null, platform = 'darwin', env = {} } = {}) {
     handoffs: [],
     overseerBots: String(env.HERMES_OVERSEER_BOTS || '').split(',').map((id) => id.trim()).filter((id) => id && id.length <= 100),
     sidebarTab: 'agents',
+    theme: 'dark',
   };
   const desktop = (prefs, saved) => resolveDesktopUrl(prefs.remoteHermes, saved, env);
   if (text == null) {
@@ -75,6 +77,7 @@ function loadPreferences({ text = null, platform = 'darwin', env = {} } = {}) {
   };
   prefs.remoteUrl = desktop(prefs, typeof parsed.remoteUrl === 'string' ? parsed.remoteUrl : undefined);
   prefs.sidebarTab = prefs.sidebarTab === 'sessions' ? 'sessions' : 'agents';
+  prefs.theme = normalizeTheme(prefs.theme);
   return { prefs, missing: false, corrupt: false };
 }
 

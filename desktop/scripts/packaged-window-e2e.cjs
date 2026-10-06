@@ -331,7 +331,7 @@ async function main() {
       const result = await cdp.send('Runtime.evaluate', {
         expression: `(() => ({
           agents: document.querySelectorAll('#bot-list .bot-row').length,
-          sessions: document.querySelectorAll('#remote-sessions .session-item').length,
+          sessions: document.querySelectorAll('#sidebar-threads .session-item').length,
           status: (document.getElementById('remote-status') || {}).textContent || '',
           pin: (document.getElementById('hermes-pin') || {}).textContent || '',
           profile: (document.getElementById('intelio-profile') || {}).textContent || '',
@@ -408,29 +408,33 @@ async function main() {
     await assertNoAlan();
     await capture(agentsShot);
     await capture(shot);
-    await cdp.send('Runtime.evaluate', { expression: 'document.getElementById("tab-sessions") && document.getElementById("tab-sessions").click()' });
-    let listed = { count: 0, profiles: [], first: '', open: false };
+    let listed = { count: 0, open: false, agentsOpen: false, title: '' };
     const sessionsUntil = Date.now() + 15000;
     while (Date.now() < sessionsUntil) {
       const result = await cdp.send('Runtime.evaluate', {
         expression: `(() => {
-          const list = document.getElementById('all-sessions');
-          const rows = list ? [...list.querySelectorAll('.all-session')] : [];
-          const profiles = [...new Set(rows.map((row) => row.dataset.profile || '').filter(Boolean))];
-          return { count: rows.length, profiles, first: rows[0] ? (rows[0].dataset.profile || '') : '', open: Boolean(list && !list.classList.contains('hidden')) };
+          const list = document.getElementById('sidebar-threads');
+          const wrap = document.getElementById('sidebar-threads-wrap');
+          const agents = document.getElementById('bot-list');
+          const rows = list ? [...list.querySelectorAll('.session-item')] : [];
+          return {
+            count: rows.length,
+            open: Boolean(wrap && !wrap.classList.contains('hidden')),
+            agentsOpen: Boolean(agents && !agents.classList.contains('hidden') && agents.querySelectorAll('.bot-row').length === 4),
+            title: rows[0] ? (rows[0].textContent || '') : '',
+          };
         })()`,
         returnByValue: true,
       });
-      if (result.exceptionDetails) throw new Error('sessions tab check failed');
+      if (result.exceptionDetails) throw new Error('sidebar threads check failed');
       listed = result.result.value;
-      if (listed.open && listed.profiles.length >= 2) break;
+      if (listed.open && listed.agentsOpen && listed.count >= 1) break;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     await assertNoAlan();
     await capture(sessionsShot);
-    process.stdout.write(`e2e sessionsProfiles=${listed.profiles.join(',')} first=${listed.first} count=${listed.count}\n`);
-    if (!listed.open || listed.profiles.length < 2) throw new Error(`expected sessions from at least 2 profiles, saw ${listed.profiles.length}`);
-    if (listed.first !== 'prc') throw new Error('expected the newest session first');
+    process.stdout.write(`e2e sidebarThreads=${listed.count} open=${listed.open} agentsOpen=${listed.agentsOpen} title=${JSON.stringify(listed.title)}\n`);
+    if (!listed.open || !listed.agentsOpen || listed.count < 1) throw new Error(`expected the selected agent's threads under the agents, saw ${listed.count}`);
     const status = String(view.status || '').trim();
     const pin = String(view.pin || '').trim();
     const profile = String(view.profile || '').trim();
