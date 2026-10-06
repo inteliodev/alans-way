@@ -116,6 +116,43 @@ test('profiles endpoint and key names are the fallback when /api/home is missing
   } finally { missing.close(); }
 });
 
+test('all sessions merge the named profiles newest first and keep each key', async () => {
+  const rows = {
+    intelio: [{ id: 's-intelio', source: 'telegram', title: 'Friday', preview: 'Need your yes.', updated_at: '2026-10-06T12:00:00Z' }],
+    prc: [{ id: 's-prc', source: 'photon', title: 'Outreach', preview: 'Drafted intros.', updated_at: '2026-10-06T15:00:00Z' }],
+    alignment: [{ id: 's-alignment', source: 'api_server', title: 'Launch', preview: 'Checkout is clean.', updated_at: '2026-10-06T14:00:00Z' }],
+    hhp: [{ id: 's-hhp', source: 'oneshot', title: 'Acme', preview: 'Thursday check-in.', updated_at: '2026-10-06T13:00:00Z' }],
+  };
+  const { server, seen, port } = await listen((req, res) => {
+    const match = req.url.match(/^\/p\/([a-z0-9_-]+)\/api\/sessions(?:\?|$)/);
+    if (req.method === 'GET' && match && rows[match[1]]) {
+      const auth = req.headers.authorization || '';
+      if (auth !== `Bearer ${KEYS[match[1]]}`) { res.statusCode = 401; res.end('{}'); return; }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ data: rows[match[1]] }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end('{}');
+  });
+  try {
+    const main = createRemoteMain({
+      getConfig: () => ({ enabled: true, host: '127.0.0.1', port, profile: 'intelio' }),
+      getKey: async (profile) => KEYS[profile] || '',
+      keyNames: () => [...Object.keys(KEYS), 'vnc'],
+    });
+    const all = await main.listAllSessions();
+    assert.deepEqual(all.map((session) => session.profileId), ['prc', 'alignment', 'hhp', 'intelio']);
+    assert.deepEqual(all.map((session) => session.sourceLabel), ['photon/iMessage', 'API', 'One-shot', 'Telegram']);
+    assert.ok(all.every((session) => session.preview && session.at && session.timeLabel));
+    assert.equal(seen.some((hit) => hit.url.startsWith('/p/vnc/')), false);
+    for (const id of Object.keys(KEYS)) {
+      const hit = seen.find((item) => item.url.startsWith(`/p/${id}/api/sessions`));
+      assert.equal(hit.auth, `Bearer ${KEYS[id]}`);
+    }
+  } finally { server.close(); }
+});
+
 test('a missing key never calls fetch, and config is the last fallback', async () => {
   let calls = 0;
   const fetchImpl = async () => { calls += 1; throw new Error('should not fetch'); };

@@ -10,6 +10,24 @@
 .source-pill { display: inline-block; font-size: 10px; line-height: 1.4; border: 1px solid #3a3a44; border-radius: 999px; padding: 0 6px; color: #c5c5d0; }
 .session-title { font-size: 13px; }
 .session-preview, .session-empty { color: #8d8d98; font-size: 12px; margin-top: 3px; }
+body:not(.remote-main) #tab-sessions,
+body:not(.remote-main) #session-tools,
+body:not(.remote-main) #all-sessions { display: none !important; }
+body:not(.remote-main) #bot-list { display: block !important; }
+body:not(.remote-main) #agent-caption-actions { display: flex !important; }
+.side-switch { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.side-tab { padding: 0; color: #6f6f78; font-size: 11px; font-weight: 650; letter-spacing: .06em; }
+.side-tab[aria-selected="true"] { color: #d7d7de; }
+.session-tools { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 8px; }
+.session-tools select { width: 100%; background: #17171b; color: inherit; border: 1px solid #2c2c32; border-radius: 8px; padding: 6px 8px; }
+.all-sessions { list-style: none; margin: 0; padding: 0 8px 8px; overflow: auto; flex: 1; min-height: 0; }
+.all-session { display: flex; gap: 8px; padding: 8px; border-radius: 10px; cursor: pointer; }
+.all-session.active { background: #1c1c22; }
+.all-session .avatar { width: 28px; height: 28px; flex: none; }
+.all-session-copy { min-width: 0; flex: 1; }
+.all-session-top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.all-session .agent-name { font-size: 11px; font-weight: 650; }
+.session-time { margin-left: auto; color: #8d8d98; font-size: 10px; }
 .remote-thread { display: flex; flex-direction: column; min-height: 0; }
 .remote-messages { flex: 1; overflow: auto; padding: 14px 16px; }
 .msg { margin: 0 0 12px; white-space: pre-wrap; line-height: 1.45; }

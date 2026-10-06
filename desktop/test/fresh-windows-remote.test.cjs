@@ -66,6 +66,11 @@ test('an incomplete remoteHermes object does not wipe the Windows host, and enab
   assert.equal(missingField.prefs.remoteHermes.enabled, true);
   assert.equal(missingField.prefs.chatWidth, 400);
   assert.equal(missingField.prefs.remoteUrl, VNC_URL);
+  assert.equal(missingField.prefs.sidebarTab, 'agents');
+  const remembered = loadPreferences({ text: JSON.stringify({ sidebarTab: 'sessions' }), platform: 'win32' });
+  assert.equal(remembered.prefs.sidebarTab, 'sessions');
+  const junk = loadPreferences({ text: JSON.stringify({ sidebarTab: 'other' }), platform: 'win32' });
+  assert.equal(junk.prefs.sidebarTab, 'agents');
 
   const custom = loadPreferences({
     text: JSON.stringify({ remoteUrl: 'http://127.0.0.1:6080/vnc.html', remoteHermes: { enabled: true } }),

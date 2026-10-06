@@ -29,7 +29,7 @@ const { loadPreferences } = require('./intelio/preferences.cjs');
 const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
 
 if (!applyLinuxDemo(app)) app.enableSandbox();
-app.setName("alans-way-localapp");
+app.setName('Intelio');
 // Keep existing sessions and connector discovery stable when the product name changes.
 app.setPath('userData', process.env.HERMES_WORKSPACE_DATA
   ? path.resolve(process.env.HERMES_WORKSPACE_DATA)
@@ -165,7 +165,8 @@ function getState() {
     locationDefault: prefs.locationDefault, sitePermissions: prefs.sitePermissions, extensions: extensionStore?.list() || [],
     fullscreen: win?.isFullScreen() || false, api: { url: apiPort ? `http://127.0.0.1:${apiPort}` : '', ready: !!apiPort, error: apiError },
     remoteHermesNotice: remoteHermes?.startupNotice?.() || '',
-    remoteHermes: remoteHermes?.publicState?.() || null };
+    remoteHermes: remoteHermes?.publicState?.() || null,
+    sidebarTab: prefs.sidebarTab === 'sessions' ? 'sessions' : 'agents' };
 }
 let lastBotWorkSignature = '';
 // Bots with agent tabs that are dispatching, navigating, or recently acted
@@ -583,6 +584,7 @@ function registerIpc() {
         if (typeof value.primaryBotId === 'string') prefs.primaryBotId = prefs.bots.some((bot) => bot.id === value.primaryBotId) || value.primaryBotId === '' ? value.primaryBotId : prefs.primaryBotId;
         if (typeof value.intelioProfile === 'string') prefs.intelioProfile = value.intelioProfile.trim();
         if (['ask', 'block', 'approximate'].includes(value.locationDefault)) prefs.locationDefault = value.locationDefault;
+        if (value.sidebarTab === 'agents' || value.sidebarTab === 'sessions') prefs.sidebarTab = value.sidebarTab;
         if (Number.isFinite(value.chatWidth)) prefs.chatWidth = Math.max(320, Math.min(680, value.chatWidth));
         savePreferences(); applyLayout(); break;
       case 'preview-move': {
@@ -616,7 +618,7 @@ function registerIpc() {
         const macSsh = (prefs.macSshHost || '').trim();
         const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
         clipboard.writeText([
-          "# Alan's Way setup — paste into a terminal on the host running your Hermes gateway",
+          "# Intelio setup — paste into a terminal on the host running your Hermes gateway",
           `curl -fsSL ${agentsSetup} | bash -s -- --bot-id ${q(botId)}${bot ? ` --bot-name ${q(bot.name.replace(/'/g, ''))}` : ''}${macSsh ? ` --mac-ssh ${q(macSsh)}` : ''} --restart`,
           '# The bootstrap installs the plugin + hook, configures the browser connector,',
           '# offers to bind the primary route, restarts the gateway, and verifies itself.',
@@ -626,7 +628,7 @@ function registerIpc() {
       case 'agent-prompt': {
         const botId = String(value?.botId || prefs.selectedBotId || '').replace(/[^0-9A-Za-z_-]/g, '');
         const macSsh = (prefs.macSshHost || '').trim();
-        clipboard.writeText(`Set up Alan's Way on this machine and connect it to my Mac.
+        clipboard.writeText(`Set up Intelio on this machine and connect it to my Mac.
 1. If Tailscale isn't installed or connected here, install it (tailscaled + \`tailscale up\`). Tell me this machine's tailnet name/IP when done. My Mac's SSH address is: ${macSsh || '<my-mac-tailscale>'}.
 2. Fetch the bootstrap: git clone ${agents} (or \`git -C alans-way-agents pull\` if already cloned).
 3. Run: ./alans-way-agents/setup.sh --bot-id '${botId || '<telegram-bot-id>'}' --mac-ssh '${macSsh || '<my-mac-tailscale>'}' --restart — answer its prompts; if it asks to bind a primary route, pick the bot matching this chat.
@@ -1107,7 +1109,7 @@ function createWindow() {
   win.on('enter-full-screen', broadcast); win.on('leave-full-screen', broadcast);
   win.on('close', (event) => { if (!isQuitting) { event.preventDefault(); win.hide(); } });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: intelioSession?.public?.brand?.windowTitle || 'Intelio', submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: intelioSession?.public?.brand?.windowTitle || 'Intelio', submenu: [{ label: 'About Intelio', click: () => dialog.showMessageBox(win, { type: 'info', title: 'About Intelio', message: `Intelio ${app.getVersion()}`, detail: "Alan's Way by Alex Hansen (MIT). Hermes Agent by Nous Research." }) }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { label: 'File', submenu: [{ label: 'New Browser Tab', accelerator: 'CmdOrCtrl+T', click: () => createTab({}) }, { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => extensionPopup?.browserWindow?.isFocused() ? extensionPopup.destroy() : closeTab(activeTabId) }] },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     { label: 'View', submenu: [{ label: 'Reload Page', accelerator: 'CmdOrCtrl+R', click: () => tabs.get(activeTabId)?.view.webContents.reload() }, { role: 'togglefullscreen' }, ...(app.isPackaged ? [] : [{ label: 'App Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => win.webContents.toggleDevTools() }])] },

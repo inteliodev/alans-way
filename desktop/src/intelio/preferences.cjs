@@ -50,6 +50,7 @@ function loadPreferences({ text = null, platform = 'darwin', env = {} } = {}) {
     agentLastTabs: {},
     handoffs: [],
     overseerBots: String(env.HERMES_OVERSEER_BOTS || '').split(',').map((id) => id.trim()).filter((id) => id && id.length <= 100),
+    sidebarTab: 'agents',
   };
   const desktop = (prefs, saved) => resolveDesktopUrl(prefs.remoteHermes, saved, env);
   if (text == null) {
@@ -71,6 +72,7 @@ function loadPreferences({ text = null, platform = 'darwin', env = {} } = {}) {
     remoteHermes: mergeRemote(defaults.remoteHermes, parsed.remoteHermes),
   };
   prefs.remoteUrl = desktop(prefs, typeof parsed.remoteUrl === 'string' ? parsed.remoteUrl : undefined);
+  prefs.sidebarTab = prefs.sidebarTab === 'sessions' ? 'sessions' : 'agents';
   return { prefs, missing: false, corrupt: false };
 }
 

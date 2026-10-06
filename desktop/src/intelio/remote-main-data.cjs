@@ -31,6 +31,33 @@ function titleCase(name) {
   return raw.slice(0, 1).toUpperCase() + raw.slice(1);
 }
 
+function sessionTime(session) {
+  const raw = session?.updated_at || session?.updatedAt || session?.created_at || session?.createdAt || session?.started_at || session?.startedAt || '';
+  const time = Date.parse(raw);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function timeLabel(at) {
+  if (!at) return '';
+  return new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function decorateSession(session, profileId) {
+  const at = sessionTime(session);
+  return {
+    ...session,
+    profileId: session.profileId || profileId,
+    sourceLabel: sourceLabel(session.source),
+    preview: String(session.preview || session.last_message || '').slice(0, 180),
+    at,
+    timeLabel: timeLabel(at),
+  };
+}
+
+function byNewest(rows) {
+  return rows.slice().sort((a, b) => sessionTime(b) - sessionTime(a) || String(a.id || '').localeCompare(String(b.id || '')));
+}
+
 function decorate(agent) {
   const id = String(agent.id || '').trim().toLowerCase();
   return { id, name: agent.name || titleCase(id), orb: signatureOf(id), color: agent.color || '' };
@@ -120,12 +147,25 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
     const result = await client.listSessions({ source, limit, offset, ...(profile ? { profile } : {}) });
     const rows = Array.isArray(result?.data) ? result.data : [];
     const profileId = profile || normalizeRemoteConfig(getConfig()).profile || 'default';
-    return rows.map((session) => ({ ...session, profileId, sourceLabel: sourceLabel(session.source) }));
+    return rows.map((session) => decorateSession(session, profileId));
+  }
+
+  async function listAllSessions(profiles) {
+    const stored = storedNames();
+    const requested = Array.isArray(profiles) && profiles.length ? profiles : stored;
+    const ids = [...new Set(requested.map((name) => String(name || '').trim().toLowerCase()).filter((name) => name && name !== 'vnc'))];
+    const named = NAMED_AGENTS.map((agent) => agent.id).filter((id) => ids.includes(id));
+    const targets = named.length ? named : ids;
+    const groups = await Promise.all(targets.map(async (profile) => {
+      try { return await listSessions(profile, { limit: 100 }); } catch { return []; }
+    }));
+    return byNewest(groups.flat());
   }
 
   return {
     listAgents,
     listSessions,
+    listAllSessions,
     messages: (id, profile) => client.messages(id, { profile }),
     createSession: (title, profile) => client.createSession(title, { profile }),
     chat: (id, input, options = {}) => client.chat(id, input, options),
@@ -133,4 +173,4 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
   };
 }
 
-module.exports = { NAMED_AGENTS, sourceLabel, agentsFromKeys, createRemoteMain };
+module.exports = { NAMED_AGENTS, sourceLabel, agentsFromKeys, sessionTime, byNewest, createRemoteMain };

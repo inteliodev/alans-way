@@ -37,7 +37,7 @@ npm run build:preload
 npm start
 ```
 
-The app loads `intelio/profiles/example` unless you pass `--profile <dir>`, set `INTELIO_PROFILE`, or save a directory under Settings → Intelio profile. The window title and sidebar use `brand/window-title.txt` (`Intelio`) plus the profile name, and the icon and Geist files from `brand/`. Alan's Way stays credited in the sidebar.
+The app loads `intelio/profiles/example` unless you pass `--profile <dir>`, set `INTELIO_PROFILE`, or save a directory under Settings → Intelio profile. The window title and sidebar use `brand/window-title.txt` (`Intelio`) plus the profile name, and the icon and Geist files from `brand/`. The About box is the only in-app credits line for Alan's Way (MIT) and Hermes.
 
 On Linux, including this demo VM, the upstream app targets an Apple Silicon Mac and the Electron sandbox needs a flag that Mac launches do not use:
 

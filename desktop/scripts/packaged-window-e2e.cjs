@@ -18,6 +18,12 @@ const KEYS = {
   hhp: 'h'.repeat(32),
 };
 const VNC_PASSWORD = 'e2e-vnc';
+const SESSION_ROWS = {
+  intelio: [{ id: 's-intelio', source: 'telegram', title: 'Friday notes', preview: 'Need your yes.', updated_at: '2026-10-06T12:00:00Z' }],
+  prc: [{ id: 's-prc', source: 'photon', title: 'Outreach', preview: 'Drafted intros.', updated_at: '2026-10-06T15:00:00Z' }],
+  alignment: [{ id: 's-alignment', source: 'api_server', title: 'Launch', preview: 'Checkout is clean.', updated_at: '2026-10-06T14:00:00Z' }],
+  hhp: [{ id: 's-hhp', source: 'oneshot', title: 'Acme', preview: 'Thursday check-in.', updated_at: '2026-10-06T13:00:00Z' }],
+};
 
 function wsSend(socket, data, opcode = 0x2) {
   const payload = Buffer.isBuffer(data) ? data : Buffer.from(data);
@@ -196,7 +202,7 @@ function listen(vncPassword) {
     if (req.method === 'GET' && sessions) {
       const profile = sessions[1];
       if (auth !== `Bearer ${KEYS[profile] || ''}`) { res.statusCode = 401; json({}); return; }
-      json({ data: [{ id: 's1', source: 'telegram', title: 'Friday notes', preview: 'Need your yes.' }] });
+      json({ data: SESSION_ROWS[profile] || [] });
       return;
     }
     const messages = url.pathname.match(/^\/p\/([a-z0-9_-]+)\/api\/sessions\/([^/]+)\/messages$/);
@@ -223,6 +229,8 @@ function listen(vncPassword) {
 async function main() {
   const exe = path.resolve('dist/win-unpacked/Intelio.exe');
   if (!fs.existsSync(exe)) throw new Error(`packaged exe missing: ${exe}`);
+  const agentsShot = path.resolve('dist/e2e-agents-tab.png');
+  const sessionsShot = path.resolve('dist/e2e-sessions-tab.png');
   const shot = path.resolve('dist/e2e-main-window.png');
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-e2e-'));
   const { server, vnc } = await listen(VNC_PASSWORD);
@@ -310,8 +318,44 @@ async function main() {
       if (view.agents === 4 && view.sessions >= 1 && /hermes-agent 0\.21\.5/.test(pin) && !/unavailable/i.test(pin) && (vnc.ok || vnc.rejected || vnc.leaked || vnc.cipherError)) break;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    const png = await cdp.send('Page.captureScreenshot', { format: 'png' });
-    fs.writeFileSync(shot, Buffer.from(png.data, 'base64'));
+    const capture = async (file) => {
+      const png = await cdp.send('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(file, Buffer.from(png.data, 'base64'));
+    };
+    const assertNoAlan = async () => {
+      const visible = await cdp.send('Runtime.evaluate', {
+        expression: '(() => /alan/i.test(((document.body && document.body.innerText) || "") + "\\n" + (document.title || "")))()',
+        returnByValue: true,
+      });
+      if (visible.exceptionDetails) throw new Error('visible text check failed');
+      if (visible.result && visible.result.value) throw new Error('visible Alan text');
+    };
+    await assertNoAlan();
+    await capture(agentsShot);
+    await capture(shot);
+    await cdp.send('Runtime.evaluate', { expression: 'document.getElementById("tab-sessions") && document.getElementById("tab-sessions").click()' });
+    let listed = { count: 0, profiles: [], first: '', open: false };
+    const sessionsUntil = Date.now() + 15000;
+    while (Date.now() < sessionsUntil) {
+      const result = await cdp.send('Runtime.evaluate', {
+        expression: `(() => {
+          const list = document.getElementById('all-sessions');
+          const rows = list ? [...list.querySelectorAll('.all-session')] : [];
+          const profiles = [...new Set(rows.map((row) => row.dataset.profile || '').filter(Boolean))];
+          return { count: rows.length, profiles, first: rows[0] ? (rows[0].dataset.profile || '') : '', open: Boolean(list && !list.classList.contains('hidden')) };
+        })()`,
+        returnByValue: true,
+      });
+      if (result.exceptionDetails) throw new Error('sessions tab check failed');
+      listed = result.result.value;
+      if (listed.open && listed.profiles.length >= 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    await assertNoAlan();
+    await capture(sessionsShot);
+    process.stdout.write(`e2e sessionsProfiles=${listed.profiles.join(',')} first=${listed.first} count=${listed.count}\n`);
+    if (!listed.open || listed.profiles.length < 2) throw new Error(`expected sessions from at least 2 profiles, saw ${listed.profiles.length}`);
+    if (listed.first !== 'prc') throw new Error('expected the newest session first');
     const status = String(view.status || '').trim();
     const pin = String(view.pin || '').trim();
     const profile = String(view.profile || '').trim();

@@ -216,6 +216,10 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
             const rows = await mainData.listSessions(value.profile ? String(value.profile) : undefined, { source: value.source, limit: Math.min(Number(value.limit) || 50, 200), offset: Number(value.offset) || 0 });
             return { data: rows };
           }
+          case 'all-sessions': {
+            const rows = await mainData.listAllSessions(Array.isArray(value.profiles) ? value.profiles : undefined);
+            return { data: rows };
+          }
           case 'messages': return await client.messages(String(value.id), { profile: value.profile });
           case 'create-session': return await client.createSession(value.title, { profile: value.profile });
           case 'skills': return await client.skills();

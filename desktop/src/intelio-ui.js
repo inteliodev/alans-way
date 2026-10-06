@@ -42,7 +42,6 @@
       `Allowed folders: ${intelio.allowedFolders?.length ? intelio.allowedFolders.join(', ') : 'none'}`,
       intelio.panels?.length ? `Panels: ${intelio.panels.join(', ')}` : '',
       intelio.skills?.length ? `Skills: ${intelio.skills.join(', ')}` : 'Skills are listed on the profile and are not installed into Hermes from this app.',
-      intelio.attribution || '',
     ].filter(Boolean);
     for (const line of lines) body.append(element('p', 'settings-note', line));
     const field = element('div', 'field');

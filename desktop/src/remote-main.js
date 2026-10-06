@@ -60,10 +60,10 @@
       { id: 'hhp', name: 'HHP', orb: 'weaving' },
     ],
     sessions: [
-      { id: 'sample-photon', profileId: 'intelio', source: 'photon', sourceLabel: 'photon/iMessage', title: 'Friday notes', preview: 'SAMPLE DATA · Need your yes on the Friday all-hands deck.' },
-      { id: 'sample-telegram', profileId: 'prc', source: 'telegram', sourceLabel: 'Telegram', title: 'Outreach', preview: 'SAMPLE DATA · 8 intros drafted — sitting in the CRM.' },
-      { id: 'sample-api', profileId: 'alignment', source: 'api_server', sourceLabel: 'API', title: 'Website launch', preview: 'SAMPLE DATA · Checkout is clean on staging.' },
-      { id: 'sample-once', profileId: 'hhp', source: 'oneshot', sourceLabel: 'One-shot', title: 'Acme check-in', preview: 'SAMPLE DATA · Drafted a Thursday check-in.' },
+      { id: 'sample-photon', profileId: 'intelio', source: 'photon', sourceLabel: 'photon/iMessage', title: 'Friday notes', preview: 'SAMPLE DATA · Need your yes on the Friday all-hands deck.', updated_at: '2026-10-06T16:00:00Z' },
+      { id: 'sample-telegram', profileId: 'prc', source: 'telegram', sourceLabel: 'Telegram', title: 'Outreach', preview: 'SAMPLE DATA · 8 intros drafted — sitting in the CRM.', updated_at: '2026-10-06T18:00:00Z' },
+      { id: 'sample-api', profileId: 'alignment', source: 'api_server', sourceLabel: 'API', title: 'Website launch', preview: 'SAMPLE DATA · Checkout is clean on staging.', updated_at: '2026-10-06T17:00:00Z' },
+      { id: 'sample-once', profileId: 'hhp', source: 'oneshot', sourceLabel: 'One-shot', title: 'Acme check-in', preview: 'SAMPLE DATA · Drafted a Thursday check-in.', updated_at: '2026-10-06T15:00:00Z' },
     ],
     messages: {
       'sample-photon': [
@@ -92,6 +92,11 @@
     selected: '',
     sessionId: '',
     query: '',
+    sidebar: 'agents',
+    tabChosen: false,
+    allSessions: [],
+    sessionQuery: '',
+    sessionAgent: '',
     stamp: '',
     sample: false,
     label: '',
@@ -111,6 +116,17 @@
     if (typeof content === 'string') return content;
     if (Array.isArray(content)) return content.map((part) => (typeof part === 'string' ? part : part?.text || '')).filter(Boolean).join('\n');
     return content == null ? '' : JSON.stringify(content);
+  }
+  function sessionAt(session) {
+    const raw = session?.updated_at || session?.updatedAt || session?.created_at || session?.createdAt || session?.started_at || session?.startedAt || '';
+    const time = Date.parse(raw);
+    if (Number.isFinite(time)) return time;
+    return Number(session?.at) || 0;
+  }
+  function sessionWhen(session) {
+    if (session?.timeLabel) return session.timeLabel;
+    const at = sessionAt(session);
+    return at ? new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
   }
   function setStatus(text) { const node = $('remote-status'); if (node) node.textContent = text || ''; }
   function showProfileError(text) {
@@ -182,7 +198,7 @@
     if (count) count.textContent = String(rows.length);
     const empty = $('empty-bots');
     if (empty) {
-      empty.classList.toggle('hidden', rows.length > 0);
+      empty.classList.toggle('hidden', ui.sidebar !== 'agents' || rows.length > 0);
       const heading = empty.querySelector('h3');
       const note = empty.querySelector('p');
       if (heading) heading.textContent = 'Agents on the VPS';
@@ -252,7 +268,103 @@
     try { await loadMessages(id); } catch (error) { setStatus(error.message); showProfileError(error.message); }
   }
 
-  async function selectAgent(id) {
+  function sessionRows() {
+    const needle = String(ui.sessionQuery || '').trim().toLowerCase();
+    return ui.allSessions.filter((session) => {
+      if (ui.sessionAgent && session.profileId !== ui.sessionAgent) return false;
+      if (!needle) return true;
+      const name = ui.agents.find((agent) => agent.id === session.profileId)?.name || session.profileId || '';
+      return `${name} ${session.title || ''} ${session.preview || ''} ${session.sourceLabel || ''} ${session.source || ''}`.toLowerCase().includes(needle);
+    }).slice().sort((a, b) => sessionAt(b) - sessionAt(a));
+  }
+
+  function paintAgentFilter() {
+    const select = $('session-agent');
+    if (!select) return;
+    const current = ui.sessionAgent;
+    select.replaceChildren();
+    const all = el('option', '', 'All agents');
+    all.value = '';
+    select.append(all);
+    for (const agent of ui.agents) {
+      const option = el('option', '', agent.name || agent.id);
+      option.value = agent.id;
+      select.append(option);
+    }
+    const known = ui.agents.some((agent) => agent.id === current);
+    select.value = known ? current : '';
+    ui.sessionAgent = select.value || '';
+  }
+
+  function paintAllSessions() {
+    const list = $('all-sessions');
+    if (!list) return;
+    paintAgentFilter();
+    const rows = sessionRows();
+    list.replaceChildren();
+    for (const session of rows) {
+      const agent = ui.agents.find((item) => item.id === session.profileId);
+      const name = agent?.name || session.profileId || 'Agent';
+      const item = el('li', `all-session${session.id === ui.sessionId && session.profileId === ui.selected ? ' active' : ''}`);
+      item.dataset.profile = session.profileId || '';
+      item.dataset.sessionId = session.id || '';
+      const avatar = el('span', 'avatar');
+      const canvas = el('canvas');
+      mountOrb(canvas, session.profileId || name, agent?.orb || signatureOf(session.profileId), 28, true);
+      avatar.append(canvas);
+      const copy = el('span', 'all-session-copy');
+      const top = el('span', 'all-session-top');
+      top.append(el('span', 'agent-name', name), el('span', 'source-pill', session.sourceLabel || session.source || 'session'));
+      const when = sessionWhen(session);
+      if (when) top.append(el('span', 'session-time', when));
+      copy.append(top, el('div', 'session-title', session.title || session.id));
+      if (session.preview) copy.append(el('div', 'session-preview', session.preview));
+      item.append(avatar, copy);
+      item.onclick = () => openListed(session);
+      list.append(item);
+    }
+    if (!rows.length) list.append(el('li', 'session-empty', ui.allSessions.length ? 'No sessions match.' : 'No sessions yet.'));
+  }
+
+  function setSidebar(tab, { persist = true, remember = true } = {}) {
+    ui.sidebar = tab === 'sessions' ? 'sessions' : 'agents';
+    if (remember) ui.tabChosen = true;
+    const agentsOn = ui.sidebar === 'agents';
+    $('tab-agents')?.setAttribute('aria-selected', String(agentsOn));
+    $('tab-sessions')?.setAttribute('aria-selected', String(!agentsOn));
+    $('bot-list')?.classList.toggle('hidden', !agentsOn);
+    $('agent-caption-actions')?.classList.toggle('hidden', !agentsOn);
+    $('session-tools')?.classList.toggle('hidden', agentsOn);
+    $('all-sessions')?.classList.toggle('hidden', agentsOn);
+    if (!agentsOn) $('bot-search')?.classList.toggle('hidden', true);
+    paintAgents();
+    if (!agentsOn) paintAllSessions();
+    if (persist && root.workspace?.command) root.workspace.command('settings', { sidebarTab: ui.sidebar }).catch(() => {});
+  }
+
+  async function loadAllSessions() {
+    if (ui.sample) {
+      ui.allSessions = SAMPLE.sessions.slice().sort((a, b) => sessionAt(b) - sessionAt(a));
+      paintAllSessions();
+      return;
+    }
+    if (!root.remoteHermes) return;
+    try {
+      const result = await root.remoteHermes.request('all-sessions', {});
+      ui.allSessions = Array.isArray(result?.data) ? result.data.slice().sort((a, b) => sessionAt(b) - sessionAt(a)) : [];
+      paintAllSessions();
+    } catch (error) {
+      if (ui.sidebar === 'sessions') setStatus(error.message);
+    }
+  }
+
+  async function openListed(session) {
+    if (!session?.id || !session.profileId) return;
+    await selectAgent(session.profileId, { sessionId: session.id });
+    paintAllSessions();
+  }
+
+  async function selectAgent(id, { sessionId = '' } = {}) {
     ui.selected = id;
     ui.sessionId = '';
     ui.messages = [];
@@ -272,14 +384,16 @@
     if (ui.sample) {
       ui.sessions = SAMPLE.sessions.filter((session) => session.profileId === id);
       paintSessions();
-      if (ui.sessions[0]) await openSession(ui.sessions[0].id);
+      const sampleTarget = sessionId && ui.sessions.some((session) => session.id === sessionId) ? sessionId : ui.sessions[0]?.id;
+      if (sampleTarget) await openSession(sampleTarget);
       return;
     }
     try {
       const result = await root.remoteHermes.request('sessions', { profile: id, limit: 100 });
       ui.sessions = Array.isArray(result?.data) ? result.data : [];
       paintSessions();
-      if (ui.sessions[0]) await openSession(ui.sessions[0].id);
+      const target = sessionId && ui.sessions.some((session) => session.id === sessionId) ? sessionId : ui.sessions[0]?.id;
+      if (target) await openSession(target);
       else setStatus('No sessions for this agent yet. Send a message to start one.');
     } catch (error) { setStatus(error.message); showProfileError(error.message); }
   }
@@ -294,7 +408,10 @@
       paintBanner();
       if (!ui.selected || !ui.agents.some((agent) => agent.id === ui.selected)) ui.selected = ui.agents[0]?.id || '';
       paintAgents();
-      if (ui.selected) await selectAgent(ui.selected);
+      await Promise.all([
+        ui.selected ? selectAgent(ui.selected) : null,
+        loadAllSessions(),
+      ]);
     } catch (error) { setStatus(error.message); showProfileError(error.message); }
   }
 
@@ -303,6 +420,10 @@
     ui.wired = true;
     const form = $('remote-composer');
     form?.addEventListener('submit', send);
+    $('tab-agents')?.addEventListener('click', () => setSidebar('agents'));
+    $('tab-sessions')?.addEventListener('click', () => setSidebar('sessions'));
+    $('session-search')?.addEventListener('input', (event) => { ui.sessionQuery = event.target.value || ''; paintAllSessions(); });
+    $('session-agent')?.addEventListener('change', (event) => { ui.sessionAgent = event.target.value || ''; paintAllSessions(); });
     $('remote-input')?.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) send(event);
     });
@@ -349,6 +470,7 @@
   function sync(next) {
     if (!root.document) return;
     wire();
+    if (!ui.tabChosen) setSidebar(next?.sidebarTab === 'sessions' ? 'sessions' : 'agents', { persist: false });
     const remote = next?.remoteHermes || {};
     ui.keys = remote.profilesWithKeys || [];
     ui.keyless = ui.keys.length === 0;
@@ -381,6 +503,7 @@
     ui.stamp = 'sample';
     wire();
     paintBanner();
+    ui.allSessions = SAMPLE.sessions.slice().sort((a, b) => sessionAt(b) - sessionAt(a));
     const host = $('intelio-profile');
     if (host) host.textContent = 'VPS Hermes · sample';
     const pin = $('hermes-pin');
@@ -388,5 +511,5 @@
     return selectAgent(agent);
   }
 
-  return { signatureOf, accentOf, switcherRows, seedAgents, SAMPLE, sync, filter, refresh, mountSample, selectedName: () => selectedAgent()?.name || '' };
+  return { signatureOf, accentOf, switcherRows, seedAgents, sessionAt, sessionRows, SAMPLE, sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => selectedAgent()?.name || '' };
 });
