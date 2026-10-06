@@ -6,7 +6,7 @@ const path = require('node:path');
 const { originAllowed } = require('../src/intelio/origins.cjs');
 const { safetyDefaults, classifyUrl, agentNavigationDecision, redact } = require('../src/intelio/safety.cjs');
 const { loadIntelio, pngIcon } = require('../src/intelio/bridge.cjs');
-const { linuxDemoEnabled } = require('../src/intelio/linux-demo.cjs');
+const { linuxDemoEnabled, rendererSandbox } = require('../src/intelio/linux-demo.cjs');
 
 const repo = path.resolve(__dirname, '../..');
 const example = path.join(repo, 'intelio', 'profiles', 'example');
@@ -82,6 +82,9 @@ test('linux demo sandbox switch is opt-in', () => {
   assert.equal(linuxDemoEnabled({ INTELIO_LINUX_DEMO: '1' }, 'linux'), true);
   assert.equal(linuxDemoEnabled({ INTELIO_LINUX_DEMO: '1' }, 'darwin'), false);
   assert.equal(linuxDemoEnabled({}, 'linux'), false);
+  assert.equal(rendererSandbox({ INTELIO_LINUX_DEMO: '1' }, 'linux'), false);
+  assert.equal(rendererSandbox({ INTELIO_LINUX_DEMO: '1' }, 'darwin'), true);
+  assert.equal(rendererSandbox({}, 'linux'), true);
 });
 
 test('window icon is a real PNG', () => {

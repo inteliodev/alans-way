@@ -12,4 +12,10 @@ function applyLinuxDemo(app, env = process.env, platform = process.platform) {
   return true;
 }
 
-module.exports = { linuxDemoEnabled, applyLinuxDemo };
+// Per-view sandbox stays on for Mac. On the Linux demo the Chromium zygote
+// cannot map the renderer startup region (exit 5) unless sandbox is off here too.
+function rendererSandbox(env = process.env, platform = process.platform) {
+  return !linuxDemoEnabled(env, platform);
+}
+
+module.exports = { linuxDemoEnabled, applyLinuxDemo, rendererSandbox };

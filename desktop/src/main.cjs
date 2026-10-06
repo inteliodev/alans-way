@@ -14,7 +14,7 @@ const { snapshotExpression, settleSnapshot, checkpointExpression, restoreExpress
 const { createVpsBrowser } = require('./vps-browser.cjs');
 const { createExtensionStore } = require('./extension-store.cjs');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
-const { applyLinuxDemo } = require('./intelio/linux-demo.cjs');
+const { applyLinuxDemo, rendererSandbox } = require('./intelio/linux-demo.cjs');
 const { agentNavigationDecision } = require('./intelio/safety.cjs');
 const { loadIntelio, publicIntelioState, pngIcon } = require('./intelio/bridge.cjs');
 
@@ -197,7 +197,7 @@ function backgroundHost(width = 900, height = 700) {
     // during load and has no viewport before its first show. Keep inactive
     // tabs visible inside a separate window that can never accept native focus.
     backgroundWindow = new BrowserWindow({ show: false, focusable: false, frame: false, skipTaskbar: true,
-      width, height, webPreferences: { sandbox: true, backgroundThrottling: false } });
+      width, height, webPreferences: { sandbox: rendererSandbox(), backgroundThrottling: false } });
   } else {
     const [currentWidth, currentHeight] = backgroundWindow.getContentSize();
     if (width > currentWidth || height > currentHeight) backgroundWindow.setContentSize(Math.max(width, currentWidth), Math.max(height, currentHeight));
@@ -314,7 +314,7 @@ function createTab({ url = 'about:blank', botId = prefs.selectedBotId || 'shared
   const targetUrl = pageUrl(url, extensionPage);
   if (controller === 'agent') assertIntelioAgentUrl(targetUrl);
   const view = new WebContentsView({ ...(options?.webContents ? { webContents: options.webContents } : {}),
-    webPreferences: { ...options?.webPreferences, preload: undefined, partition: 'persist:browser', contextIsolation: true, nodeIntegration: false, sandbox: true,
+    webPreferences: { ...options?.webPreferences, preload: undefined, partition: 'persist:browser', contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox(),
       webSecurity: true, backgroundThrottling: false } });
   view.setBackgroundColor('#0b0b0c');
   const tab = { id: crypto.randomUUID(), view, botId: String(botId).slice(0, 100), controller, extensionPage, epoch: 1, title: 'New tab', loading: false, allowedBots: [], refs: new Set(), generation: 0, queue: Promise.resolve() };
@@ -1058,17 +1058,17 @@ function startApi() {
 function createWindow() {
   nativeTheme.themeSource = 'dark';
   const windowOptions = { width: 1550, height: 980, minWidth: 1120, minHeight: 680, backgroundColor: intelioSession?.public?.brand?.tokens?.background || '#0a0a0a', title: intelioTitle(), icon: nativeImage.createFromBuffer(pngIcon()),
-    webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } };
+    webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } };
   if (process.platform === 'darwin') { windowOptions.titleBarStyle = 'hiddenInset'; windowOptions.trafficLightPosition = { x: 18, y: 18 }; }
   win = new BrowserWindow(windowOptions);
-  telegramView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'telegram-preload.bundle.cjs'), partition: 'persist:telegram', contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  telegramView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'telegram-preload.bundle.cjs'), partition: 'persist:telegram', contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } });
   telegramView.setBackgroundColor('#09090a');
   configureContents(telegramView.webContents, true);
   telegramView.webContents.on('did-start-loading', () => { lastBotWorkSignature = ''; activity.clear(); broadcast(); });
   telegramView.webContents.on('render-process-gone', () => { telegramStatus = 'offline'; activity.clear(); broadcast(); });
   telegramView.webContents.on('did-fail-load', (_e, code, _desc, _url, main) => { if (main && code !== -3) { telegramStatus = 'offline'; activity.clear(); broadcast(); } });
   win.contentView.addChildView(telegramView);
-  remoteView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  remoteView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } });
   remoteView.setBackgroundColor('#101011');
   remoteView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   remoteView.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -1098,6 +1098,7 @@ function createWindow() {
   // This never installs a global input hook or moves the system cursor.
   pointerTimer = setInterval(() => {
     if (!win || win.isDestroyed() || !win.isVisible() || win.isMinimized()) return;
+    if (win.webContents.isDestroyed() || win.webContents.isCrashed()) return;
     const point = screen.getCursorScreenPoint(), bounds = win.getContentBounds();
     const zoom = win.webContents.getZoomFactor();
     win.webContents.send('workspace:pointer', { x: (point.x - bounds.x) / zoom, y: (point.y - bounds.y) / zoom });
@@ -1127,7 +1128,7 @@ else {
       selectTab: wc => { if (isQuitting || registeringExtensionTab) return; const tab = [...tabs.values()].find(item => item.view.webContents === wc); if (tab) { activeTabId = tab.id; prefs.remoteControl = false; applyLayout(); broadcast(); } else BrowserWindow.fromWebContents(wc)?.show(); },
       removeTab: (wc, window) => { if (isQuitting) return; const tab = [...tabs.values()].find(item => item.view.webContents === wc); if (tab) closeTab(tab.id); else if (window !== win && window !== backgroundWindow && !window?.isDestroyed()) window?.close(); },
       createWindow: async details => {
-        const popup = new BrowserWindow({ parent: win, width: details.width || 640, height: details.height || 720, webPreferences: { session: browserSession, sandbox: true, contextIsolation: true, nodeIntegration: false } });
+        const popup = new BrowserWindow({ parent: win, width: details.width || 640, height: details.height || 720, webPreferences: { session: browserSession, sandbox: rendererSandbox(), contextIsolation: true, nodeIntegration: false } });
         extensionHost.addTab(popup.webContents, popup); configureContents(popup.webContents);
         const url = Array.isArray(details.url) ? details.url[0] : details.url || 'about:blank';
         await popup.loadURL(isExtensionUrl(url) ? url : normalizeUrl(url)); return popup;

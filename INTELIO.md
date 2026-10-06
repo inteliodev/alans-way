@@ -37,7 +37,7 @@ cd desktop
 INTELIO_LINUX_DEMO=1 HERMES_WORKSPACE_DATA=/tmp/intelio-alans-way-demo npm start
 ```
 
-`INTELIO_LINUX_DEMO=1` is Linux-only. It turns off the Electron sandbox, `/dev/shm` and GPU switches so the shell can open under Xvfb. It does not change the Mac path, and it does not relax tab ownership, the browsing zone, or the safety defaults.
+`INTELIO_LINUX_DEMO=1` is Linux-only. It turns off the Electron sandbox (including per-view `sandbox`, which this VM's Chromium zygote needs or the shell renderer exits 5), `/dev/shm`, and GPU switches so the shell can open under Xvfb. It does not change the Mac path, and it does not relax tab ownership, the browsing zone, or the safety defaults.
 
 ## Safety defaults
 
