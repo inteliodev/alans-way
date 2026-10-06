@@ -25,6 +25,7 @@ const STATIC = {
   '/index.html': 'index.html',
   '/app.css': 'app.css',
   '/app.js': 'app.js',
+  '/thinking-orbs.js': 'thinking-orbs.js',
   '/sw.js': 'sw.js',
   '/manifest.webmanifest': 'manifest.webmanifest',
 };

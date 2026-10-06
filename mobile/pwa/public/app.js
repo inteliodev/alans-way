@@ -29,6 +29,9 @@
     jobsOk: false,
     thinking: false,
     speaking: false,
+    listening: false,
+    searching: false,
+    connecting: false,
   };
   let audioCtx = null;
   let mic = null;
@@ -152,8 +155,6 @@
     'kid a': ['#e879f9', '#fb7185'],
     kida: ['#e879f9', '#fb7185'],
   };
-  let orbSeq = 0;
-
   function hashHue(id) {
     let hash = 2166136261;
     const text = String(id || 'intelio');
@@ -169,24 +170,49 @@
   }
 
   const FACE_PX = { avatar: 72, 'avatar sm': 36, 'avatar lg': 148, face: 32, tile: 96, pip: 28, mark: 96 };
-  const CLIENT_VERSION = 'intelio-pwa-5';
+  const CLIENT_VERSION = 'intelio-pwa-6';
 
-  function face(profile, className) {
+  function activityFor(id, still) {
+    if (still || id !== state.bot.id) return { state: 'breathing', paused: true };
+    if (state.connecting) return { state: 'connecting', paused: false };
+    if (state.call.active && !state.call.paused) {
+      if (state.speaking) return { state: 'composing', paused: false };
+      if (state.listening || state.ptt) return { state: 'listening', paused: false };
+    }
+    if (state.searching) return { state: 'searching', paused: false };
+    if (state.thinking) return { state: 'working', paused: false };
+    return { state: 'breathing', paused: false };
+  }
+
+  function face(profile, className, options) {
+    const opts = options || {};
     const name = className || 'avatar';
     const px = FACE_PX[name] || 72;
     const id = String(profile?.id || profile?.name || 'intelio');
-    const [core, edge] = orbColors(profile);
-    const uid = `g${orbSeq += 1}`;
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 100 100');
-    svg.setAttribute('width', String(px));
-    svg.setAttribute('height', String(px));
-    svg.className.baseVal = `orb ${name}`;
-    svg.dataset.profile = id;
-    svg.setAttribute('aria-hidden', 'true');
-    if ((state.thinking || state.speaking) && id === state.bot.id) svg.classList.add('live');
-    svg.innerHTML = `<defs><radialGradient id="${uid}" cx="34%" cy="30%" r="72%"><stop offset="0%" stop-color="#ffffff" stop-opacity="0.85"/><stop offset="18%" stop-color="${core}"/><stop offset="100%" stop-color="${edge}"/></radialGradient></defs><circle cx="50" cy="50" r="36" fill="url(#${uid})"/><ellipse cx="38" cy="34" rx="14" ry="8" fill="#ffffff" opacity="0.28"/>`;
-    return svg;
+    const [core] = orbColors(profile);
+    const still = opts.still != null ? opts.still : (name === 'avatar sm' || name === 'pip');
+    const canvas = document.createElement('canvas');
+    canvas.className = `orb ${name}`;
+    canvas.dataset.profile = id;
+    canvas.dataset.still = still ? '1' : '0';
+    if (opts.pinned) canvas.dataset.pinned = '1';
+    canvas.dataset.accent = core;
+    canvas.style.setProperty('--orb', core);
+    canvas.width = px;
+    canvas.height = px;
+    const act = opts.state
+      ? { state: opts.state, paused: opts.paused != null ? opts.paused : still }
+      : activityFor(id, still);
+    if (window.ThinkingOrbs) {
+      window.ThinkingOrbs.mount(canvas, {
+        state: act.state,
+        display: px,
+        size: px >= 48 ? 64 : 20,
+        paused: act.paused,
+        accent: core,
+      });
+    }
+    return canvas;
   }
 
   function storedTheme() {
@@ -216,9 +242,18 @@
   }
 
   function paintLive() {
-    const on = state.thinking || state.speaking;
-    document.querySelectorAll('svg.orb').forEach((node) => {
-      node.classList.toggle('live', on && node.dataset.profile === state.bot.id);
+    if (!window.ThinkingOrbs) return;
+    document.querySelectorAll('canvas.orb').forEach((node) => {
+      if (node.dataset.pinned === '1') return;
+      const px = node.clientWidth || Number(node.getAttribute('width')) || 64;
+      const act = activityFor(node.dataset.profile, node.dataset.still === '1');
+      window.ThinkingOrbs.sync(node, {
+        state: act.state,
+        paused: act.paused,
+        display: px,
+        size: px >= 48 ? 64 : 20,
+        accent: node.dataset.accent || '',
+      });
     });
   }
 
@@ -586,11 +621,12 @@
   function iconsView() {
     const wrap = el('div', 'icons');
     const names = [['Intelio', 'intelio'], ['PRC', 'prc'], ['Alignment', 'alignment'], ['HHP', 'hhp'], ['Kid A', 'kid-a'], ['Lumen', 'lumen'], ['Nimbus', 'nimbus']];
-    for (const [label, id] of names) {
+    const show = ['breathing', 'working', 'searching', 'listening', 'composing', 'weaving', 'shaping'];
+    names.forEach(([label, id], index) => {
       const figure = document.createElement('figure');
-      figure.append(face({ id }, 'tile'), el('figcaption', '', label));
+      figure.append(face({ id }, 'tile', { state: show[index], paused: false, still: false, pinned: true }), el('figcaption', '', label));
       wrap.append(figure);
-    }
+    });
     return wrap;
   }
 
@@ -927,7 +963,11 @@
 
   function agentCard() {
     const frag = document.createDocumentFragment();
-    frag.append(el('h2', '', 'New agent'));
+    const head = el('div', 'agent-head');
+    const preview = face({ id: 'new-agent', name: 'New' }, 'avatar sm', { still: true, pinned: true });
+    preview.id = 'agent-preview';
+    head.append(preview, el('h2', '', 'New agent'));
+    frag.append(head);
     const name = document.createElement('input');
     name.id = 'agent-name';
     name.placeholder = 'Name';
@@ -952,6 +992,14 @@
     const save = el('button', 'block', 'Create agent');
     save.type = 'button';
     save.addEventListener('click', () => createAgent(name.value, description.value, select.value));
+    name.addEventListener('input', () => {
+      const slug = name.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || 'new-agent';
+      const [core] = orbColors({ id: slug });
+      preview.dataset.profile = slug;
+      preview.dataset.accent = core;
+      preview.style.setProperty('--orb', core);
+      if (window.ThinkingOrbs) window.ThinkingOrbs.sync(preview, { accent: core, state: 'breathing', paused: true, display: 36, size: 20 });
+    });
     frag.append(name, description, select, save);
     frag.append(el('p', '', 'A new agent uses the shared Codex sign-in. Its route appears after the gateway restarts.'));
     return frag;
@@ -1022,6 +1070,8 @@
 
   async function beginPtt(button) {
     state.ptt = true;
+    state.listening = true;
+    paintLive();
     button.classList.add('hot');
     state.pttText = '';
     try {
@@ -1030,9 +1080,10 @@
       await openMic();
       startRecorder();
     } catch (error) {
-      state.ptt = false;
-      button.classList.remove('hot');
-      state.error = micMessage(error);
+    state.ptt = false;
+    state.listening = false;
+    button.classList.remove('hot');
+    state.error = micMessage(error);
       render();
     }
   }
@@ -1042,6 +1093,8 @@
     if (button) button.classList.remove('hot');
     if (!state.ptt) return;
     state.ptt = false;
+    state.listening = false;
+    paintLive();
     if (webRec && resolvedEngine() === 'web') {
       try { webRec.stop(); } catch { /* already stopped */ }
       return;
@@ -1074,8 +1127,14 @@
         if (event.results[i].isFinal) finalText += piece;
         else interim += piece;
       }
-      if (interim && state.call.active) bargeIn();
-      if (finalText.trim()) sendTurn(finalText.trim());
+      if (interim && state.call.active) {
+        if (!state.listening) { state.listening = true; paintLive(); }
+        bargeIn();
+      }
+      if (finalText.trim()) {
+        state.listening = false;
+        sendTurn(finalText.trim());
+      }
     };
     rec.onerror = () => { state.error = 'On-phone speech recognition stopped.'; };
     rec.onend = () => {
@@ -1224,6 +1283,10 @@
         const name = payload.name || payload.tool || 'a tool';
         const failed = event.includes('fail');
         const done = failed || event.includes('complete') || event.includes('result') || event.includes('finished');
+        if (/search|browse|web|fetch|http|crawl/i.test(String(name))) {
+          state.searching = !done;
+          paintLive();
+        }
         if (event.includes('start') || done) {
           pushLine('activity', payload.summary || payload.error || name, { title: name, status: failed ? 'Failed' : (done ? 'Done' : 'Running') });
         }
@@ -1250,6 +1313,7 @@
     paintThread();
     } finally {
       state.thinking = false;
+      state.searching = false;
       paintLive();
     }
   }
@@ -1372,6 +1436,8 @@
     if (level >= VAD_START) {
       if (!mic.speaking) {
         mic.speaking = true;
+        state.listening = true;
+        paintLive();
         bargeIn();
         startRecorder();
       }
@@ -1380,6 +1446,8 @@
       if (!mic.quietSince) mic.quietSince = now;
       if (now - mic.quietSince > SILENCE_MS) {
         mic.speaking = false;
+        state.listening = false;
+        paintLive();
         mic.quietSince = 0;
         const blobPromise = stopRecorder();
         blobPromise.then((blob) => blob && transcribeBlob(blob).then((text) => { if (text) sendTurn(text); })).catch((error) => {
@@ -1397,6 +1465,9 @@
     state.call = { active: true, paused: false, muted: false, speaker: true, sessionId, startedAt: Date.now(), frozenSeconds: null };
     state.captions = state.chatId === sessionId ? state.messages : [];
     state.view = 'call';
+    state.connecting = true;
+    state.listening = false;
+    render();
     try {
       await unlockAudio();
       if (resolvedEngine() === 'web') startWebRecognizer(true);
@@ -1407,8 +1478,11 @@
     } catch (error) {
       state.call.paused = true;
       state.micError = micMessage(error);
+    } finally {
+      state.connecting = false;
     }
-    render();
+    if (state.micError) render();
+    else paintLive();
   }
 
   function micMessage(error) {
@@ -1421,6 +1495,9 @@
   async function endCall() {
     state.call.active = false;
     state.call.paused = false;
+    state.listening = false;
+    state.connecting = false;
+    state.speaking = false;
     bargeIn();
     releaseMic();
     if (webRec) { try { webRec.stop(); } catch { /* ignore */ } webRec = null; }
@@ -1445,6 +1522,11 @@
   window.__intelioPreview = async function (name) {
     if (!state.sample) return false;
     state.bot = profileById('intelio');
+    state.thinking = false;
+    state.speaking = false;
+    state.listening = false;
+    state.searching = false;
+    state.connecting = false;
     state.call.active = true;
     state.call.paused = false;
     state.call.muted = false;
@@ -1457,7 +1539,8 @@
       state.drawer = name === 'drawer';
       state.call.frozenSeconds = 33;
     } else if (name === 'chat') {
-      state.call.frozenSeconds = 19;
+      state.call.active = false;
+      state.thinking = true;
       state.chatId = 'sample-lamp';
       state.messages = await loadMessages('sample-lamp', []);
       state.view = 'chat';
@@ -1465,6 +1548,7 @@
       state.drawer = false;
     } else if (name === 'call') {
       state.call.frozenSeconds = 14;
+      state.listening = true;
       state.captions = await loadMessages('sample-intelio', []);
       state.view = 'call';
     } else if (name === 'icons') {

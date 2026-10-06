@@ -5,6 +5,7 @@
  * does not need a new image file.
  */
 const { encodePng } = require('../../desktop/src/intelio/png-icon.cjs');
+const { frameOf } = require('./thinking-orbs.cjs');
 
 const NAMED = {
   intelio: ['#7a5cff', '#3de1ff'],
@@ -54,47 +55,62 @@ function orbPalette(id) {
   return { kind: 'hash', hue, stops: [hsl(hue, 78, 52), hsl(hue + 36, 85, 68)] };
 }
 
-function mix(a, b, t) {
-  const u = Math.min(1, Math.max(0, t));
-  return [
-    Math.round(a[0] + (b[0] - a[0]) * u),
-    Math.round(a[1] + (b[1] - a[1]) * u),
-    Math.round(a[2] + (b[2] - a[2]) * u),
-  ];
-}
-
-function renderOrbPng(id, size = 256) {
-  const palette = orbPalette(id);
-  const [inner, outer] = palette.stops;
-  const pixels = Buffer.alloc(size * size * 4);
-  const cx = (size - 1) / 2;
-  const radius = size * 0.34;
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const dx = x - cx;
-      const dy = y - cx;
-      const dist = Math.hypot(dx, dy);
-      const unit = dist / radius;
+function stamp(pixels, size, x0, y0, radius, color, alpha) {
+  const rad = Math.max(0.6, radius);
+  const coverA = alpha == null ? 1 : alpha;
+  const minX = Math.max(0, Math.floor(x0 - rad));
+  const maxX = Math.min(size - 1, Math.ceil(x0 + rad));
+  const minY = Math.max(0, Math.floor(y0 - rad));
+  const maxY = Math.min(size - 1, Math.ceil(y0 + rad));
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const dist = Math.hypot(x - x0, y - y0);
+      if (dist > rad) continue;
+      const cover = Math.min(1, ((rad - dist) / Math.max(0.5, rad * 0.45)) * coverA);
       const offset = (y * size + x) * 4;
-      pixels[offset] = 12;
-      pixels[offset + 1] = 12;
-      pixels[offset + 2] = 16;
-      pixels[offset + 3] = 255;
-      if (unit > 1.55) continue;
-      const angle = Math.atan2(dy, dx);
-      const swirl = (Math.sin(angle * 3 + unit * 5) + 1) / 2;
-      let color = mix(inner, outer, unit * 0.75 + swirl * 0.25);
-      const highlight = Math.hypot(dx + radius * 0.28, dy + radius * 0.32) / (radius * 0.55);
-      if (highlight < 1) color = mix(color, [255, 255, 255], (1 - highlight) * 0.55);
-      let alpha = 1;
-      if (unit > 1) alpha = Math.max(0, 1 - (unit - 1) / 0.55);
-      const base = mix([12, 12, 16], color, alpha);
-      pixels[offset] = base[0];
-      pixels[offset + 1] = base[1];
-      pixels[offset + 2] = base[2];
+      pixels[offset] = Math.round(pixels[offset] * (1 - cover) + color[0] * cover);
+      pixels[offset + 1] = Math.round(pixels[offset + 1] * (1 - cover) + color[1] * cover);
+      pixels[offset + 2] = Math.round(pixels[offset + 2] * (1 - cover) + color[2] * cover);
       pixels[offset + 3] = 255;
     }
   }
+}
+
+function renderOrbPng(id, size = 256) {
+  const accent = orbPalette(id).stops[0];
+  const preset = 64;
+  const frame = frameOf('breathing', preset, 0.6);
+  const pixels = Buffer.alloc(size * size * 4);
+  const bg = [16, 14, 40];
+  const cx = (size - 1) / 2;
+  const scale = size / preset;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const glow = Math.max(0, 1 - Math.hypot(x - cx, y - cx) / (size * 0.46));
+      const mix = glow * glow * 0.62;
+      const offset = (y * size + x) * 4;
+      pixels[offset] = Math.round(bg[0] + (accent[0] - bg[0]) * mix);
+      pixels[offset + 1] = Math.round(bg[1] + (accent[1] - bg[1]) * mix);
+      pixels[offset + 2] = Math.round(bg[2] + (accent[2] - bg[2]) * mix);
+      pixels[offset + 3] = 255;
+    }
+  }
+  const ink = (white) => {
+    const g = Math.round((1 - Math.min(1, Math.max(0, white))) * 255);
+    return [
+      Math.round(g * 0.78 + accent[0] * 0.22),
+      Math.round(g * 0.78 + accent[1] * 0.22),
+      Math.round(g * 0.78 + accent[2] * 0.22),
+    ];
+  };
+  for (const line of frame.lines || []) {
+    const steps = Math.max(2, Math.ceil(Math.hypot(line.x2 - line.x1, line.y2 - line.y1) * scale));
+    for (let i = 0; i <= steps; i += 1) {
+      const f = i / steps;
+      stamp(pixels, size, (line.x1 + (line.x2 - line.x1) * f) * scale, (line.y1 + (line.y2 - line.y1) * f) * scale, Math.max(0.8, (line.w / 2) * scale), ink(line.white), line.a);
+    }
+  }
+  for (const dot of frame.dots) stamp(pixels, size, dot.x * scale, dot.y * scale, dot.r * scale, ink(dot.white), dot.a);
   return encodePng(size, size, pixels);
 }
 

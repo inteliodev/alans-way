@@ -172,15 +172,25 @@ button { cursor: pointer; }
   flex: 0 0 auto;
   background: transparent;
 }
-svg.orb { background: transparent; overflow: visible; }
-svg.orb.live { animation: orb-pulse 1.6s ease-in-out infinite; }
+canvas.orb {
+  display: block;
+  background: transparent;
+  border-radius: 50%;
+  box-shadow: 0 0 16px var(--orb, transparent);
+}
+canvas.pip,
+canvas.avatar.sm,
+canvas.face { box-shadow: 0 0 6px var(--orb, transparent); }
+canvas.avatar.lg,
+canvas.tile,
+canvas.mark { box-shadow: 0 0 28px var(--orb, transparent); }
 .avatar {
   width: 72px;
   height: 72px;
   max-width: 72px;
   max-height: 72px;
   border-radius: 50%;
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08), var(--glow);
+  box-shadow: 0 0 18px var(--orb, transparent);
 }
 .avatar.sm {
   width: 36px;
@@ -503,6 +513,7 @@ html[data-theme="dark"] .drawer { background: rgba(12, 12, 14, 0.94); color: #f5
   color: inherit;
 }
 .callbar .face,
+.callbar canvas.face,
 .callbar svg.face,
 .callbar img {
   width: 32px;
@@ -514,7 +525,7 @@ html[data-theme="dark"] .drawer { background: rgba(12, 12, 14, 0.94); color: #f5
   flex: 0 0 32px;
   object-fit: cover;
   border-radius: 10px;
-  box-shadow: none;
+  box-shadow: 0 0 6px var(--orb, transparent);
 }
 .callbar .round,
 .callbar .end {
@@ -560,6 +571,7 @@ html[data-theme="dark"] .drawer { background: rgba(12, 12, 14, 0.94); color: #f5
 }
 .icons figure { margin: 0; text-align: center; min-width: 0; }
 .icons .tile,
+.icons canvas.tile,
 .icons svg.tile,
 .icons img {
   width: 96px;
@@ -579,7 +591,8 @@ html[data-theme="dark"] .drawer { background: rgba(12, 12, 14, 0.94); color: #f5
 @keyframes pop { from { transform: scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes slide { from { transform: translateX(-18px); } to { transform: none; } }
 @keyframes wave { 50% { height: 16px; } }
-@keyframes orb-pulse { 50% { filter: brightness(1.35); } }
+.agent-head { display: flex; align-items: center; gap: 10px; }
+.agent-head h2 { margin: 0; }
 .settings {
   flex: 1;
   min-height: 0;

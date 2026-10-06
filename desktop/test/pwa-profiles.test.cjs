@@ -122,10 +122,20 @@ test('a fresh key replaces a cloned one and the gateway restart is explicit', ()
 });
 
 test('named orbs stay distinct from hashed ones', () => {
+  const { frameOf } = require('../../mobile/pwa/thinking-orbs.cjs');
+  const { renderOrbPng } = require('../../mobile/pwa/orbs.cjs');
   assert.notEqual(hashHue('lumen'), hashHue('nimbus'));
   assert.equal(orbPalette('intelio').kind, 'named');
   assert.equal(orbPalette('lumen').kind, 'hash');
   assert.equal(orbPalette('Lumen').hue, hashHue('lumen'));
+  const listening = frameOf('listening', 64, 0.6);
+  const breathing = frameOf('breathing', 64, 0.6);
+  assert.equal(listening.dots.length > 20, true);
+  assert.equal(breathing.dots.length > 20, true);
+  assert.equal(listening.dots[0].x === breathing.dots[0].x && listening.dots.length === breathing.dots.length, false);
+  const png = renderOrbPng('intelio', 64);
+  assert.equal(png[0], 0x89);
+  assert.equal(png.length > 200, true);
 });
 
 function request(port, method, pathname, { cookie = '', body, origin, headers = {} } = {}) {
