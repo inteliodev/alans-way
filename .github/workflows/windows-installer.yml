@@ -37,6 +37,19 @@ jobs:
           if (-not (Test-Path $exe)) { throw "packaged exe missing: $exe" }
           $p = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -Wait -PassThru
           if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0) { throw "smoke exit $($p.ExitCode)" }
+      - name: End-to-end main window against a fake Hermes
+        timeout-minutes: 8
+        run: |
+          npm install --prefix "$env:RUNNER_TEMP\pw" playwright-core@1.63.0
+          $env:NODE_PATH = "$env:RUNNER_TEMP\pw\node_modules"
+          node scripts/packaged-window-e2e.cjs
+      - name: Upload the e2e screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intelio-e2e-main-window
+          path: desktop/dist/e2e-main-window.png
+          if-no-files-found: ignore
       - name: Upload the unsigned installer
         uses: actions/upload-artifact@v4
         with:
@@ -51,7 +64,7 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             TAG="$GITHUB_REF_NAME"
           else
-            TAG="v0.3.1-intelio-windows"
+            TAG="v0.3.2-intelio-windows"
           fi
           NOTES="Unsigned per-user Intelio installer (NSIS, x64). Private draft only — do not publish this release. Windows SmartScreen: More info, then Run anyway. See docs/intelio-windows-and-mobile.md."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

@@ -1,9 +1,9 @@
 /** Main-window Remote Hermes: profile orbs, sessions, and streaming chat. */
 (function intelioRemote(root, factory) {
-  const api = factory();
+  const api = factory(root);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && root.document) root.IntelioRemote = api;
-})(typeof window !== 'undefined' ? window : globalThis, function intelioRemoteFactory() {
+})(typeof window !== 'undefined' ? window : globalThis, function intelioRemoteFactory(root) {
   const SIGNATURES = {
     intelio: 'connecting',
     prc: 'solving',
