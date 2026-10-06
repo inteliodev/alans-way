@@ -37,7 +37,10 @@ AVATAR_ASSETS = frozenset(f"desktop/assets/avatars/{name}.png" for name in (
     "apollo", "artemis", "athena", "faun", "hades", "hermes", "medusa",
     "minotaur", "poseidon", "zeus",
 ))
-BINARY_ASSETS.update({name: b"\x89PNG\r\n\x1a\n" for name in AVATAR_ASSETS})
+PHONE_AVATARS = frozenset(f"mobile/pwa/public/avatars/{name}.png" for name in (
+    "intelio", "prc", "alignment", "hhp", "kid-a",
+))
+BINARY_ASSETS.update({name: b"\x89PNG\r\n\x1a\n" for name in AVATAR_ASSETS | PHONE_AVATARS})
 BINARY_LIMITS = {"desktop/src/newtab-backdrop.png": 4194304, "desktop/assets/icon.icns": 2097152}
 
 

@@ -21,6 +21,12 @@
     error: '',
     ptt: false,
     call: { active: false, paused: false, muted: false, speaker: true, sessionId: '', startedAt: 0, frozenSeconds: null },
+    tab: 'sessions',
+    drawer: false,
+    skills: [],
+    jobs: [],
+    skillsOk: false,
+    jobsOk: false,
   };
   let audioCtx = null;
   let mic = null;
@@ -74,6 +80,12 @@
       gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>',
       send: '<path d="M5 12h14M13 6l6 6-6 6"/>',
       signal: '<path d="M4 18v-3M9 18v-6M14 18V8M19 18V5"/>',
+      menu: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+      chat: '<path d="M5 16.5V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9z"/>',
+      feed: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h8M8 13h5"/>',
+      library: '<circle cx="7" cy="12" r="2"/><circle cx="17" cy="8" r="2"/><circle cx="17" cy="16" r="2"/><path d="M9 12h6M15 8l-6 3M15 16l-6-3"/>',
+      goals: '<path d="M5 12.5l4 4 10-10"/>',
+      down: '<path d="M6 10l6 6 6-6"/>',
     };
     const wrap = el('span', 'ico');
     wrap.innerHTML = `<svg viewBox="0 0 24 24">${paths[name] || ''}</svg>`;
@@ -129,23 +141,44 @@
     return state.sample ? el('div', 'sample-flag', 'SAMPLE DATA') : el('span');
   }
 
-  function blob(color) {
-    const node = el('div', 'blob');
-    node.style.setProperty('--c', color || '#ff8a1f');
-    return node;
+  const AVATARS = {
+    intelio: '/avatars/intelio.png',
+    prc: '/avatars/prc.png',
+    alignment: '/avatars/alignment.png',
+    hhp: '/avatars/hhp.png',
+    'kid a': '/avatars/kid-a.png',
+    'kid-a': '/avatars/kid-a.png',
+    kida: '/avatars/kid-a.png',
+  };
+
+  function avatarSrc(profile) {
+    const keys = [profile?.id, profile?.name].map((value) => String(value || '').trim().toLowerCase());
+    for (const key of keys) if (AVATARS[key]) return AVATARS[key];
+    return AVATARS.intelio;
   }
 
   function face(profile, className) {
-    if (!profile || profile.id === 'intelio') {
-      const img = document.createElement('img');
-      img.src = '/icon-192.png';
-      img.alt = '';
-      img.className = className || 'face';
-      return img;
-    }
-    const node = el('div', className || 'face');
-    node.style.background = profile.color || '#ff8a1f';
-    return node;
+    const img = document.createElement('img');
+    img.src = avatarSrc(profile);
+    img.alt = '';
+    img.className = className || 'avatar';
+    return img;
+  }
+
+  function haptic() {
+    try { navigator.vibrate?.(10); } catch { /* this browser has no vibration */ }
+  }
+
+  function tabs() {
+    const items = [['chat', 'Chat', 'chat'], ['sessions', 'Sessions', 'feed']];
+    if (state.skillsOk) items.push(['library', 'Library', 'library']);
+    if (state.jobsOk) items.push(['goals', 'Goals', 'goals']);
+    return items;
+  }
+
+  function visibleChats() {
+    const q = state.query.trim().toLowerCase();
+    return state.home.conversations.filter((row) => !q || `${row.title} ${row.preview}`.toLowerCase().includes(q));
   }
 
   async function unlockAudio() {
@@ -217,13 +250,24 @@
       app.append(loginView());
       return;
     }
-    const screen = el('div', `screen${state.call.active ? ' has-bar' : ''}`);
+    const screen = el('div', `screen${state.call.active && state.view !== 'call' ? ' has-bar' : ''}`);
     screen.append(statusBar());
     if (state.sample) screen.append(sampleFlag());
     if (state.error) screen.append(el('div', 'toast', state.error));
-    if (state.view === 'home') screen.append(homeView());
-    else if (state.view === 'chat') screen.append(chatView());
-    else if (state.view === 'call') screen.append(callView());
+    if (state.view === 'call') screen.append(callView());
+    else if (state.view === 'icons') screen.append(iconsView());
+    else {
+      screen.append(topBar());
+      const stage = el('div', 'stage');
+      if (state.view === 'chat') stage.append(chatBody());
+      else if (state.tab === 'library') stage.append(libraryView());
+      else if (state.tab === 'goals') stage.append(goalsView());
+      else stage.append(sessionsView());
+      screen.append(stage);
+      if (state.view === 'chat') screen.append(composer());
+      screen.append(tabBar());
+      if (state.drawer) screen.append(drawer());
+    }
     app.append(screen);
     if (prior) app.append(prior);
     paintCallbar();
@@ -242,148 +286,120 @@
     return wrap;
   }
 
-  function homeView() {
-    const frag = document.createDocumentFragment();
-    const top = el('div', 'home-top');
-    const me = el('button', 'avatar-btn');
-    me.type = 'button';
-    me.setAttribute('aria-label', 'Account');
-    const photo = document.createElement('img');
-    photo.src = '/icon-192.png';
-    photo.alt = '';
-    me.append(photo);
-    me.addEventListener('click', () => openSheet('settings'));
-    const actions = el('div', 'home-actions');
-    const search = el('button', 'iconbtn');
-    search.type = 'button';
-    search.setAttribute('aria-label', 'Search');
-    search.append(icon('search'));
-    search.addEventListener('click', () => { state.searching = !state.searching; render(); });
-    const newer = el('button', 'iconbtn');
-    newer.type = 'button';
-    newer.setAttribute('aria-label', 'New chat');
-    newer.append(icon('plus'));
-    newer.addEventListener('click', () => openSheet('new'));
-    actions.append(search, newer);
-    top.append(me, actions);
-    frag.append(top);
-    if (state.searching) {
-      const box = el('div', 'searchbox');
-      const input = document.createElement('input');
-      input.placeholder = 'Search';
-      input.value = state.query;
-      input.addEventListener('input', () => { state.query = input.value; paintList(); });
-      box.append(input);
-      frag.append(box);
-    }
-    const tiles = el('div', 'tiles');
-    for (const profile of state.home.profiles) {
-      const button = el('button', 'tile-wrap');
-      button.type = 'button';
-      const tile = el('div', 'tile');
-      tile.style.setProperty('--c', profile.color);
-      tile.append(blob(profile.color));
-      const dot = el('i', `dot ${profile.status === 'online' ? '' : profile.status}`.trim());
-      tile.append(dot);
-      button.append(tile, el('em', '', profile.name));
-      button.addEventListener('click', () => startChatWith(profile));
-      tiles.append(button);
-    }
-    frag.append(tiles);
-    const list = el('div');
-    list.id = 'list';
-    const q = state.query.trim().toLowerCase();
-    const rows = state.home.conversations.filter((row) => !q || `${row.title} ${row.preview}`.toLowerCase().includes(q));
-    list.append(rebuildList(rows));
-    frag.append(list);
-    return frag;
-  }
-
-  function paintList() {
-    const list = document.getElementById('list');
-    if (!list) return;
-    const q = state.query.trim().toLowerCase();
-    const rows = state.home.conversations.filter((row) => !q || `${row.title} ${row.preview}`.toLowerCase().includes(q));
-    list.replaceChildren(rebuildList(rows));
-  }
-
-  function rebuildList(rows) {
-    const root = document.createDocumentFragment();
-    let group = '';
-    let ul = null;
-    for (const row of rows) {
-      if (row.group !== group) {
-        group = row.group || 'chat';
-        root.append(el('h2', 'group', group));
-        ul = el('ul', 'convos');
-        root.append(ul);
+  function selectTab(id) {
+    haptic();
+    state.drawer = false;
+    state.tab = id;
+    if (id === 'chat') {
+      state.view = 'chat';
+      if (!state.chatId) {
+        const first = state.home.conversations[0];
+        if (first) { openChat(first); return; }
       }
-      const profile = profileById(row.profileId);
-      const button = el('button', 'row');
-      button.type = 'button';
-      const mini = el('div', 'mini');
-      mini.style.setProperty('--c', profile.color || '#ff8a1f');
-      if (profile.id === 'intelio') {
-        const img = document.createElement('img');
-        img.src = '/icon-192.png';
-        img.alt = '';
-        img.style.width = '28px';
-        img.style.height = '28px';
-        img.style.borderRadius = '8px';
-        mini.append(img);
-      } else mini.append(blob(profile.color));
-      const copy = el('div', 'copy');
-      copy.append(el('strong', '', row.title), el('p', '', row.preview));
-      button.append(mini, copy);
-      const live = (state.call.active && state.call.sessionId === row.id) || row.inCall;
-      if (live) {
-        const pill = el('span', 'pill');
-        if (state.call.active && state.call.sessionId === row.id) pill.id = 'call-pill';
-        const seconds = state.call.active && state.call.sessionId === row.id ? callElapsed() : 33;
-        pill.append(el('i'), document.createTextNode(`in call ${clock(seconds, 'pill')}`));
-        button.append(pill);
-      } else button.append(el('span', 'when', row.time || ''));
-      button.addEventListener('click', () => openChat(row));
-      const item = el('li');
-      item.append(button);
-      ul.append(item);
-    }
-    if (!rows.length) root.append(el('p', 'empty', state.sample ? 'No sample conversations.' : 'No conversations yet.'));
-    return root;
+    } else state.view = 'home';
+    render();
   }
 
-  function chatView() {
-    const frag = document.createDocumentFragment();
-    const top = el('header', 'chat-top');
-    const back = el('button', 'iconbtn back');
-    back.type = 'button';
-    back.setAttribute('aria-label', 'Back');
-    back.append(icon('back'));
-    back.addEventListener('click', () => { state.view = 'home'; render(); });
-    const id = el('div', 'chat-id');
-    const mini = el('div', 'mini');
-    mini.style.setProperty('--c', state.bot.color || '#ff8a1f');
-    if (state.bot.id === 'intelio') {
-      const img = document.createElement('img');
-      img.src = '/icon-192.png';
-      img.alt = '';
-      img.style.width = '22px';
-      img.style.height = '22px';
-      img.style.borderRadius = '6px';
-      mini.append(img);
-    } else mini.append(blob(state.bot.color));
-    const names = el('div');
-    names.append(el('strong', '', state.bot.name || 'Intelio'), el('span', '', state.call.active ? 'In a call' : 'Online'));
-    id.append(mini, names);
-    const call = el('button', 'iconbtn');
-    call.type = 'button';
-    call.setAttribute('aria-label', 'Call');
-    call.append(icon('phone'));
-    call.addEventListener('click', () => startCall(state.chatId));
-    top.append(back, id, call);
+  function topBar() {
+    const bar = el('div', 'topbar');
+    const menu = el('button', 'iconbtn');
+    menu.type = 'button';
+    menu.setAttribute('aria-label', 'Menu');
+    menu.append(icon('menu'));
+    menu.addEventListener('click', () => { haptic(); state.drawer = true; render(); });
+    const gear = el('button', 'iconbtn');
+    gear.type = 'button';
+    gear.setAttribute('aria-label', 'Settings');
+    gear.append(icon('gear'));
+    gear.addEventListener('click', () => openSheet('settings'));
+    bar.append(menu);
+    if (state.view === 'chat' || state.tab === 'sessions') {
+      const hero = el('div', 'hero');
+      hero.append(face(state.bot, 'avatar'));
+      const pill = el('button', 'name-pill', state.bot.name || 'Intelio');
+      pill.type = 'button';
+      pill.addEventListener('click', () => { if (state.view !== 'chat') selectTab('chat'); });
+      hero.append(pill);
+      bar.append(hero);
+    }
+    bar.append(gear);
+    return bar;
+  }
+
+  function sessionsView() {
+    const list = el('div', 'feed');
+    list.id = 'list';
+    const rows = visibleChats();
+    if (!rows.length) list.append(el('p', 'empty', state.sample ? 'No sample conversations.' : 'No conversations yet.'));
+    for (const row of rows) list.append(sessionCard(row));
+    return list;
+  }
+
+  function sessionCard(row) {
+    const profile = profileById(row.profileId);
+    const button = el('button', 'feed-card');
+    button.type = 'button';
+    button.append(face(profile, 'avatar sm'));
+    const copy = el('div', 'copy');
+    copy.append(el('strong', '', row.title), el('p', '', row.preview || ''));
+    button.append(copy);
+    const live = (state.call.active && state.call.sessionId === row.id) || row.inCall;
+    if (live) {
+      const pill = el('span', 'pill');
+      if (state.call.active && state.call.sessionId === row.id) pill.id = 'call-pill';
+      const seconds = state.call.active && state.call.sessionId === row.id ? callElapsed() : (row.inCall ? 33 : 0);
+      pill.append(el('i'), document.createTextNode(`in call ${clock(seconds, 'pill')}`));
+      button.append(pill);
+    } else button.append(el('span', 'when', row.time || ''));
+    button.addEventListener('click', () => openChat(row));
+    return button;
+  }
+
+  function libraryView() {
+    const list = el('div', 'feed');
+    if (!state.skills.length) list.append(el('p', 'empty', 'No skills on this profile.'));
+    for (const skill of state.skills) {
+      const card = el('article', 'lib-card');
+      const head = el('div', 'lib-head');
+      head.append(face(state.bot, 'avatar sm'), el('strong', '', skill.name));
+      card.append(head, el('p', '', skill.description || skill.category || ''));
+      list.append(card);
+    }
+    return list;
+  }
+
+  function goalsView() {
+    const list = el('div', 'feed');
+    if (!state.jobs.length) list.append(el('p', 'empty', 'No scheduled jobs.'));
+    for (const job of state.jobs) {
+      const card = el('article', 'lib-card');
+      card.append(el('strong', '', job.name || 'Scheduled job'));
+      card.append(el('p', '', [job.schedule, job.status, job.detail].filter(Boolean).join(' · ')));
+      list.append(card);
+    }
+    return list;
+  }
+
+  function chatBody() {
     const thread = el('div', 'thread');
     thread.id = 'thread';
     fillThread(thread, state.messages);
+    return thread;
+  }
+
+  function composer() {
+    const wrap = el('div', 'composer-wrap');
+    const jump = el('button', 'jump');
+    jump.id = 'jump';
+    jump.type = 'button';
+    jump.hidden = true;
+    jump.setAttribute('aria-label', 'Latest messages');
+    jump.append(icon('down'));
+    jump.addEventListener('click', () => {
+      const thread = document.getElementById('thread');
+      if (thread) thread.scrollTop = thread.scrollHeight;
+      jump.hidden = true;
+    });
     const form = el('form', 'composer');
     const plus = roundButton('plus', () => openSheet('new'));
     const input = document.createElement('input');
@@ -409,43 +425,145 @@
       event.preventDefault();
       const text = input.value.trim();
       input.value = '';
-      if (text) sendTurn(text);
+      if (text) { haptic(); sendTurn(text); }
     });
-    frag.append(top, thread, form);
-    return frag;
+    wrap.append(jump, form);
+    return wrap;
+  }
+
+  function tabBar() {
+    const bar = el('nav', 'tabbar');
+    for (const [id, label, glyph] of tabs()) {
+      const button = el('button', `tab${(id === 'chat' ? state.view === 'chat' : state.view !== 'chat' && state.tab === id) ? ' on' : ''}`);
+      button.type = 'button';
+      button.append(icon(glyph), el('span', '', label));
+      button.addEventListener('click', () => selectTab(id));
+      bar.append(button);
+    }
+    return bar;
+  }
+
+  function drawer() {
+    const root = document.createDocumentFragment();
+    const backdrop = el('button', 'backdrop');
+    backdrop.type = 'button';
+    backdrop.setAttribute('aria-label', 'Close menu');
+    backdrop.addEventListener('click', () => { state.drawer = false; render(); });
+    const panel = el('aside', 'drawer');
+    const head = el('div', 'drawer-head');
+    head.append(el('h1', '', state.bot.name || 'Intelio'));
+    const gear = el('button', 'iconbtn');
+    gear.type = 'button';
+    gear.setAttribute('aria-label', 'Settings');
+    gear.append(icon('gear'));
+    gear.addEventListener('click', () => { state.drawer = false; openSheet('settings'); });
+    head.append(gear);
+    panel.append(head, el('div', 'kicker', 'TABS'));
+    for (const [id, label, glyph] of tabs()) {
+      const button = el('button', `navbtn${(id === 'chat' ? state.view === 'chat' : state.tab === id && state.view !== 'chat') ? ' on' : ''}`);
+      button.type = 'button';
+      button.append(icon(glyph), el('span', '', label));
+      button.addEventListener('click', () => selectTab(id));
+      panel.append(button);
+    }
+    panel.append(el('div', 'kicker', 'SIDE CHATS'));
+    const sides = el('div', 'sides');
+    for (const row of visibleChats()) {
+      const button = el('button', 'sidechat', row.title);
+      button.type = 'button';
+      button.addEventListener('click', () => openChat(row));
+      sides.append(button);
+    }
+    const search = el('div', 'searchline');
+    const input = document.createElement('input');
+    input.placeholder = 'Search';
+    input.value = state.query;
+    input.addEventListener('input', () => {
+      state.query = input.value;
+      sides.replaceChildren();
+      for (const row of visibleChats()) {
+        const button = el('button', 'sidechat', row.title);
+        button.type = 'button';
+        button.addEventListener('click', () => openChat(row));
+        sides.append(button);
+      }
+    });
+    const newer = el('button', 'iconbtn');
+    newer.type = 'button';
+    newer.setAttribute('aria-label', 'New chat');
+    newer.append(icon('plus'));
+    newer.addEventListener('click', () => { state.drawer = false; openSheet('new'); });
+    search.append(input, newer);
+    panel.append(sides, search);
+    root.append(backdrop, panel);
+    return root;
+  }
+
+  function iconsView() {
+    const wrap = el('div', 'icons');
+    const names = [['Intelio', 'intelio'], ['PRC', 'prc'], ['Alignment', 'alignment'], ['HHP', 'hhp'], ['Kid A', 'kid-a']];
+    for (const [label, id] of names) {
+      const figure = document.createElement('figure');
+      figure.append(face({ id }, 'avatar lg'), el('figcaption', '', label));
+      wrap.append(figure);
+    }
+    return wrap;
   }
 
   function fillThread(thread, messages) {
     thread.replaceChildren();
     for (const message of messages) {
-      if (message.role === 'activity') thread.append(el('div', 'activity', message.text));
+      if (message.role === 'activity' || message.role === 'tool') thread.append(toolCard(message));
       else if (message.role === 'time') thread.append(el('div', 'stamp', message.text));
-      else if (message.role === 'choice') thread.append(el('div', 'choice', message.text));
-      else thread.append(el('div', `bubble ${message.role === 'user' ? 'user' : 'bot'}`, message.text));
+      else if (message.role === 'choice') {
+        const choice = el('button', 'choice', message.text);
+        choice.type = 'button';
+        choice.addEventListener('click', () => sendTurn(message.text));
+        thread.append(choice);
+      } else thread.append(el('div', `bubble ${message.role === 'user' ? 'user' : 'bot'}`, message.text));
     }
+    queueMicrotask(() => {
+      const jump = document.getElementById('jump');
+      if (!jump) return;
+      thread.addEventListener('scroll', () => {
+        const gap = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
+        jump.hidden = gap < 72;
+      });
+    });
+  }
+
+  function toolCard(message) {
+    let title = message.title || 'Tool';
+    let text = message.text || '';
+    if (!message.title && text.includes(' · ')) {
+      const parts = text.split(' · ');
+      title = parts.shift();
+      text = parts.join(' · ');
+    }
+    const card = el('article', 'toolcard');
+    const head = el('div', 'toolhead');
+    head.append(face(state.bot, 'avatar sm'), el('strong', '', title));
+    const status = el('button', 'status', message.status || 'Done');
+    status.type = 'button';
+    status.addEventListener('click', () => openSheet('tool', { title, text, status: message.status || 'Done' }));
+    head.append(status);
+    card.append(head, el('p', '', text));
+    return card;
   }
 
   function callView() {
     const frag = document.createDocumentFragment();
-    const top = el('header', 'call-top');
+    const top = el('header', 'topbar');
     const min = el('button', 'iconbtn');
     min.type = 'button';
     min.setAttribute('aria-label', 'Minimize');
     min.append(icon('back'));
-    min.addEventListener('click', () => { state.view = state.chatId ? 'chat' : 'home'; render(); });
+    min.addEventListener('click', () => { state.view = state.chatId ? 'chat' : 'home'; state.tab = state.chatId ? 'chat' : 'sessions'; render(); });
     top.append(min);
     const hero = el('div', 'call-hero');
-    const avatar = el('div', 'call-avatar');
-    avatar.style.setProperty('--c', state.bot.color || '#ff8a1f');
-    if (state.bot.id === 'intelio') {
-      const img = document.createElement('img');
-      img.src = '/icon-192.png';
-      img.alt = '';
-      avatar.append(img);
-    } else avatar.append(blob(state.bot.color));
     const timer = el('p', 'timer', clock(callElapsed(), 'screen'));
     timer.id = 'call-timer';
-    hero.append(avatar, el('h1', '', state.bot.name || 'Intelio'), timer);
+    hero.append(face(state.bot, 'avatar lg'), el('h1', '', state.bot.name || 'Intelio'), timer);
     const captions = el('div', 'captions');
     captions.id = 'captions';
     fillCaptions(captions, state.captions);
@@ -458,15 +576,14 @@
     const end = el('button', 'end');
     end.type = 'button';
     end.setAttribute('aria-label', 'End call');
-    end.append(el('span', 'end-mark'));
-    end.addEventListener('click', () => endCall());
+    end.textContent = '×';
+    end.addEventListener('click', () => { haptic(); endCall(); });
     controls.append(gear, speaker, mute, end);
     frag.append(top, hero, captions, controls);
     if (state.call.paused && state.micError) {
       frag.append(el('p', 'empty', state.micError));
       const resume = el('button', 'block', 'Resume call');
       resume.type = 'button';
-      resume.style.margin = '0 18px 18px';
       resume.addEventListener('click', () => startCall(state.call.sessionId));
       frag.append(resume);
     }
@@ -531,6 +648,11 @@
     state.home = await home.json();
     state.sample = Boolean(state.home.sample);
     state.bot = state.home.profiles[0] || state.bot;
+    state.skills = Array.isArray(state.home.skills) ? state.home.skills : [];
+    state.jobs = Array.isArray(state.home.jobs) ? state.home.jobs : [];
+    state.skillsOk = Boolean(state.home.skillsOk);
+    state.jobsOk = Boolean(state.home.jobsOk);
+    state.tab = 'sessions';
     const voice = await fetch('/api/voice');
     if (voice.ok) state.engines = await voice.json();
     state.view = 'home';
@@ -545,6 +667,8 @@
     state.chatId = row.id;
     state.bot = profileById(row.profileId);
     state.view = 'chat';
+    state.tab = 'chat';
+    state.drawer = false;
     state.messages = [];
     render();
     await loadMessages(row.id, state.messages);
@@ -574,10 +698,12 @@
     state.chatId = id;
     state.messages = [];
     state.view = 'chat';
+    state.tab = 'chat';
+    state.drawer = false;
     render();
   }
 
-  function openSheet(name) {
+  function openSheet(name, extra) {
     state.sheet = name;
     const existing = document.getElementById('sheet');
     if (existing) existing.remove();
@@ -585,10 +711,19 @@
     sheet.id = 'sheet';
     const card = el('div', 'card');
     if (name === 'settings') card.append(settingsCard());
+    else if (name === 'tool') card.append(toolSheet(extra || {}));
     else card.append(newCard());
     sheet.append(card);
     sheet.addEventListener('click', (event) => { if (event.target === sheet) sheet.remove(); });
     app.append(sheet);
+  }
+
+  function toolSheet(extra) {
+    const frag = document.createDocumentFragment();
+    frag.append(el('h2', '', extra.title || 'Tool'));
+    frag.append(el('p', '', extra.text || ''));
+    frag.append(el('p', '', extra.status || 'Done'));
+    return frag;
   }
 
   function settingsCard() {
@@ -834,9 +969,13 @@
       try { payload = JSON.parse(data); } catch { payload = { text: data }; }
       if (event.includes('tool')) {
         const name = payload.name || payload.tool || 'a tool';
-        if (event.includes('complete') || event.includes('result') || event.includes('finished')) {
+        const failed = event.includes('fail');
+        const done = failed || event.includes('complete') || event.includes('result') || event.includes('finished');
+        if (event.includes('start') || done) {
+          pushLine('activity', payload.summary || payload.error || name, { title: name, status: failed ? 'Failed' : (done ? 'Done' : 'Running') });
+        }
+        if (done) {
           pending.pending = false;
-          pushLine('activity', payload.summary || `Used ${name}`);
           const next = { role: 'assistant', text: '', pending: true };
           for (const bucket of buckets()) bucket.push(next);
           Object.assign(pending, next);
@@ -1021,7 +1160,10 @@
     bargeIn();
     releaseMic();
     if (webRec) { try { webRec.stop(); } catch { /* ignore */ } webRec = null; }
-    if (state.view === 'call') state.view = state.chatId ? 'chat' : 'home';
+    if (state.view === 'call') {
+      state.view = state.chatId ? 'chat' : 'home';
+      state.tab = state.chatId ? 'chat' : 'sessions';
+    }
     render();
   }
 
@@ -1045,18 +1187,25 @@
     state.call.speaker = true;
     state.call.sessionId = 'sample-intelio';
     state.error = '';
-    if (name === 'home') {
+    if (name === 'home' || name === 'drawer') {
       state.view = 'home';
+      state.tab = 'sessions';
+      state.drawer = name === 'drawer';
       state.call.frozenSeconds = 33;
     } else if (name === 'chat') {
       state.call.frozenSeconds = 19;
       state.chatId = 'sample-lamp';
       state.messages = await loadMessages('sample-lamp', []);
       state.view = 'chat';
+      state.tab = 'chat';
+      state.drawer = false;
     } else if (name === 'call') {
       state.call.frozenSeconds = 14;
       state.captions = await loadMessages('sample-intelio', []);
       state.view = 'call';
+    } else if (name === 'icons') {
+      state.call.active = false;
+      state.view = 'icons';
     }
     render();
     return true;

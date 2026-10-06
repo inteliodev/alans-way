@@ -127,6 +127,12 @@ test('sample phone data is loopback-only and labeled', async () => {
     assert.equal(home.sample, true);
     assert.equal(home.label, 'SAMPLE DATA');
     assert.ok(home.profiles.length >= 3);
+    assert.equal(home.skillsOk, true);
+    assert.equal(home.jobsOk, true);
+    assert.match(JSON.stringify(home.skills), /SAMPLE DATA/);
+    const avatar = await request(address.port, 'GET', '/avatars/intelio.png');
+    assert.equal(avatar.status, 200);
+    assert.equal(avatar.body.slice(1, 4), 'PNG');
     const lamp = await request(address.port, 'GET', '/api/sessions/sample-lamp/messages');
     assert.match(lamp.body, /Searched 3 marketplaces/);
     assert.match(lamp.body, /SAMPLE DATA/);

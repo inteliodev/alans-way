@@ -33,8 +33,10 @@ const AUDIO_LIMIT = 8 * 1024 * 1024;
 
 const TILES = [
   { id: 'intelio', name: 'Intelio', color: '#ff8a1f', status: 'online' },
-  { id: 'finance', name: 'Finance', color: '#2ecc71', status: 'busy' },
-  { id: 'recruiting', name: 'Recruiting', color: '#1abc9c', status: 'away' },
+  { id: 'prc', name: 'PRC', color: '#5b7cfa', status: 'online' },
+  { id: 'alignment', name: 'Alignment', color: '#b388ff', status: 'online' },
+  { id: 'hhp', name: 'HHP', color: '#2eb8a0', status: 'away' },
+  { id: 'kid-a', name: 'Kid A', color: '#ff8a80', status: 'online' },
 ];
 
 const SAMPLE_HOME = {
@@ -43,18 +45,27 @@ const SAMPLE_HOME = {
   profiles: TILES,
   conversations: [
     { id: 'sample-intelio', profileId: 'intelio', group: 'work', title: 'Intelio', preview: 'Need your yes on the Friday all-hands deck.', time: '7:34 PM', inCall: true },
-    { id: 'sample-outreach', profileId: 'recruiting', group: 'work', title: 'Outreach', preview: '8 intros drafted — sitting in the CRM till you review.', time: '11:16 AM' },
-    { id: 'sample-launch', profileId: 'intelio', group: 'work', title: 'Website launch', preview: 'Checkout is clean on staging. Three bugs left.', time: '11:02 AM' },
-    { id: 'sample-support', profileId: 'finance', group: 'work', title: 'Support', preview: 'Acme is wobbling. Drafted a Thursday check-in.', time: '2:20 PM' },
-    { id: 'sample-marketing', profileId: 'recruiting', group: 'work', title: 'Marketing', preview: 'Launch post is live. First 200 impressions.', time: '1:05 PM' },
-    { id: 'sample-renewal', profileId: 'finance', group: 'work', title: 'Acme renewal', preview: 'Support: Acme is wobbling. Drafted a Thursday note.', time: '9:40 AM' },
+    { id: 'sample-outreach', profileId: 'prc', group: 'work', title: 'Outreach', preview: '8 intros drafted — sitting in the CRM till you review.', time: '11:16 AM' },
+    { id: 'sample-launch', profileId: 'alignment', group: 'work', title: 'Website launch', preview: 'Checkout is clean on staging. Three bugs left.', time: '11:02 AM' },
+    { id: 'sample-support', profileId: 'hhp', group: 'work', title: 'Support', preview: 'Acme is wobbling. Drafted a Thursday check-in.', time: '2:20 PM' },
+    { id: 'sample-marketing', profileId: 'kid-a', group: 'work', title: 'Marketing', preview: 'Launch post is live. First 200 impressions.', time: '1:05 PM' },
+    { id: 'sample-renewal', profileId: 'hhp', group: 'work', title: 'Acme renewal', preview: 'Support: Acme is wobbling. Drafted a Thursday note.', time: '9:40 AM' },
+  ],
+  skillsOk: true,
+  jobsOk: true,
+  skills: [
+    { name: 'web', description: 'SAMPLE DATA · Search and read pages the agent is allowed to open.', category: 'tools' },
+    { name: 'session-search', description: 'SAMPLE DATA · Look through this profile’s Hermes sessions.', category: 'memory' },
+  ],
+  jobs: [
+    { id: 'sample-digest', name: 'Friday digest', schedule: 'weekly', status: 'active', detail: 'SAMPLE DATA · Summarize the week’s sessions.' },
   ],
 };
 
 const SAMPLE_MESSAGES = {
   'sample-lamp': [
     { role: 'user', content: 'I\'m redoing the office. Can you find me a nice vintage desk lamp? Ideally brass, under $150.' },
-    { role: 'activity', content: 'Searched 3 marketplaces' },
+    { role: 'activity', content: 'web_search · Searched 3 marketplaces' },
     { role: 'assistant', content: 'Best three: a 1960s brass banker\'s lamp ($95), a restored Bauhaus task lamp ($140), and an art-deco swing arm ($120). The banker\'s lamp is in the cleanest condition.' },
     { role: 'choice', content: 'Go with the banker\'s lamp.' },
     { role: 'assistant', content: 'Ordered — arriving Thursday. I sent the receipt to Finance for expenses.' },
@@ -70,12 +81,37 @@ const SAMPLE_MESSAGES = {
 };
 
 function icons() {
-  const png = readBrandPng(resolveRepoRoot());
+  const avatar = path.join(PUBLIC, 'avatars', 'intelio.png');
+  const png = fs.existsSync(avatar) ? fs.readFileSync(avatar) : readBrandPng(resolveRepoRoot());
   return {
     '/icon-192.png': scalePng(png, 192, 192),
     '/icon-512.png': scalePng(png, 512, 512),
     '/apple-touch-icon.png': scalePng(png, 180, 180),
   };
+}
+
+function listFrom(json, keys) {
+  if (Array.isArray(json)) return json;
+  for (const key of keys) if (Array.isArray(json?.[key])) return json[key];
+  return [];
+}
+
+function normalizeSkills(json) {
+  return listFrom(json, ['skills', 'data']).slice(0, 80).map((item) => ({
+    name: String(item.name || item.id || 'Skill').slice(0, 80),
+    description: String(item.description || '').slice(0, 240),
+    category: String(item.category || '').slice(0, 40),
+  }));
+}
+
+function normalizeJobs(json) {
+  return listFrom(json, ['jobs', 'data']).slice(0, 80).map((item) => ({
+    id: String(item.id || item.job_id || '').slice(0, 80),
+    name: String(item.name || item.title || item.prompt || 'Scheduled job').slice(0, 120),
+    schedule: String(item.schedule || item.cron || item.cadence || '').slice(0, 80),
+    status: String(item.state || item.status || item.last_status || '').slice(0, 40),
+    detail: String(item.prompt || item.description || '').slice(0, 240),
+  }));
 }
 
 function readCookie(header, name) {
@@ -363,7 +399,22 @@ function createPwaServer({
       time: clockLabel(row.updated_at || row.updatedAt || row.created_at),
       source: String(row.source || ''),
     })).filter((row) => ID_RE.test(row.id));
-    return { sample: false, label: '', profiles: listed, conversations };
+    return { sample: false, label: '', profiles: listed, conversations, skills: [], jobs: [], skillsOk: false, jobsOk: false };
+  }
+  async function optionalList(pathname, normalize) {
+    try {
+      const response = await fetchImpl(hermesUrl(pathname), {
+        headers: { Authorization: `Bearer ${bearerKey()}`, Accept: 'application/json' },
+        redirect: 'error',
+      });
+      const text = await response.text();
+      if (!response.ok) return { ok: false, list: [] };
+      let json = [];
+      try { json = JSON.parse(text); } catch { json = []; }
+      return { ok: true, list: normalize(json) };
+    } catch {
+      return { ok: false, list: [] };
+    }
   }
 
   async function handle(req, res) {
@@ -396,7 +447,26 @@ function createPwaServer({
         if (!response.ok) return send(res, response.status, { error: 'Hermes did not return conversations.' });
         let json = {};
         try { json = JSON.parse(text); } catch { json = {}; }
-        return send(res, 200, realHome(json.data || json.sessions || []));
+        const home = realHome(json.data || json.sessions || []);
+        const skills = await optionalList('/v1/skills', normalizeSkills);
+        const jobs = await optionalList('/api/jobs', normalizeJobs);
+        home.skills = skills.list;
+        home.jobs = jobs.list;
+        home.skillsOk = skills.ok;
+        home.jobsOk = jobs.ok;
+        return send(res, 200, home);
+      }
+      if (req.method === 'GET' && url.pathname === '/api/skills') {
+        if (sample) return send(res, 200, { data: SAMPLE_HOME.skills, sample: true, label: 'SAMPLE DATA' });
+        const skills = await optionalList('/v1/skills', normalizeSkills);
+        if (!skills.ok) return send(res, 404, { error: 'This Hermes has no skills list.' });
+        return send(res, 200, { data: skills.list });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/jobs') {
+        if (sample) return send(res, 200, { data: SAMPLE_HOME.jobs, sample: true, label: 'SAMPLE DATA' });
+        const jobs = await optionalList('/api/jobs', normalizeJobs);
+        if (!jobs.ok) return send(res, 404, { error: 'This Hermes has no scheduled jobs.' });
+        return send(res, 200, { data: jobs.list });
       }
       if (req.method === 'GET' && url.pathname === '/api/voice') {
         return send(res, 200, await voiceStatus());
@@ -461,6 +531,15 @@ function createPwaServer({
           return send(res, 200, { id: 'sample-lamp', title: String(body.title || 'Intelio').slice(0, 200), sample: true, label: 'SAMPLE DATA' });
         }
         return await forward(req, res, '/api/sessions', { method: 'POST', body: { title: String(body.title || '').slice(0, 200) } });
+      }
+      if (req.method === 'GET' && url.pathname.startsWith('/avatars/')) {
+        const name = path.basename(url.pathname);
+        if (!/^[a-z0-9-]+\.png$/.test(name)) return send(res, 404, { error: 'Not found.' });
+        const file = path.join(PUBLIC, 'avatars', name);
+        if (!file.startsWith(path.join(PUBLIC, 'avatars') + path.sep) || !fs.existsSync(file)) return send(res, 404, { error: 'Not found.' });
+        const payload = fs.readFileSync(file);
+        res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'image/png', 'content-length': payload.length, 'cache-control': 'public, max-age=86400' });
+        return res.end(payload);
       }
       if (req.method === 'GET' && iconBytes[url.pathname]) {
         const payload = iconBytes[url.pathname];
