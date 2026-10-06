@@ -165,9 +165,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     const ses = sessionFor(CLOUD_PARTITION);
     if (!ses) return;
     const url = `${resolved.origin}/intelio/bootstrap`;
-    const doFetch = net && typeof net.fetch === 'function'
-      ? (target, init) => net.fetch(target, { ...init, session: ses })
-      : (target, init) => ses.fetch(target, init);
+    const doFetch = (target, init) => ses.fetch(target, init);
     let response;
     try {
       response = await doFetch(url, { redirect: 'manual', headers: { Accept: 'application/json' } });

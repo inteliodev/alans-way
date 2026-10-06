@@ -88,15 +88,12 @@ function profileBase(config, profileName) {
   return `http://${host}:${config.port}${prefix}`;
 }
 
-function selectFetch(config, { fetchImpl, sessionFor, net } = {}) {
+function selectFetch(config, { fetchImpl, sessionFor } = {}) {
   if (config && config.partition && typeof sessionFor === 'function') {
     const ses = sessionFor(config.partition);
-    if (ses && net && typeof net.fetch === 'function') {
-      return (url, init = {}) => net.fetch(url, { ...init, session: ses });
-    }
-    if (ses && typeof ses.fetch === 'function') {
-      return (url, init = {}) => ses.fetch(url, init);
-    }
+    // net.fetch always uses the default session. The partition cookie is only
+    // sent by session.fetch.
+    if (ses && typeof ses.fetch === 'function') return (url, init = {}) => ses.fetch(url, init);
   }
   return fetchImpl;
 }
