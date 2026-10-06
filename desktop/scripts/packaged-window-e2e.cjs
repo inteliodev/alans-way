@@ -87,6 +87,7 @@ function vncCipher(password, challenge) {
 
 function acceptDesktop(server, password, vnc) {
   server.on('upgrade', (req, socket) => {
+    socket.on('error', () => {});
     const url = String(req.url || '');
     if (url.includes(password) || /[?&]password=/.test(url)) vnc.leaked = true;
     const key = req.headers['sec-websocket-key'];
@@ -214,6 +215,8 @@ function listen(vncPassword) {
     json({});
   });
   acceptDesktop(server, vncPassword, vnc);
+  server.on('clientError', (_err, socket) => socket.destroy());
+  server.on('error', () => {});
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, vnc })));
 }
 
@@ -259,6 +262,9 @@ async function main() {
     child.stderr.on('data', take);
     child.on('exit', (code) => reject(new Error(`Intelio exited ${code} before DevTools opened\n${errBuf.slice(-2000)}`)));
   });
+  child.on('error', () => {});
+  child.stdout.on('error', () => {});
+  child.stderr.on('error', () => {});
   child.stdout.on('data', (chunk) => process.stdout.write(chunk));
   try {
     const ws = await waitForDevtools;
