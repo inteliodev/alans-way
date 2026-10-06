@@ -8,6 +8,10 @@ on:
     tags:
       - "v*"
 
+concurrency:
+  group: intelio-desktop-0-3-6-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -64,13 +68,70 @@ jobs:
           else
             TAG="v0.3.6-intelio-windows"
           fi
-          NOTES="Unsigned per-user Intelio installer (NSIS, x64). Private draft only — do not publish this release. Windows SmartScreen: More info, then Run anyway. See docs/intelio-windows-and-mobile.md."
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/Intelio-Setup-*.exe --repo "$GITHUB_REPOSITORY" --clobber
+          NOTES="Unsigned Intelio 0.3.6 draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: Intelio arm64 zip of Intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
+          TITLE="Intelio 0.3.6"
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$TAG" dist/Intelio-Setup-*.exe --repo "$GITHUB_REPOSITORY" --clobber && exit 0
+            else
+              gh release create "$TAG" dist/Intelio-Setup-*.exe \
+                --repo "$GITHUB_REPOSITORY" \
+                --draft \
+                --title "$TITLE" \
+                --notes "$NOTES" && exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+
+  mac-zip:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Build the unsigned Apple Silicon app zip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip
+          npm ci
+          npm run package:mac
+          node scripts/zip-mac-app.cjs
+          unzip -t "dist/Intelio-0.3.6-mac-arm64.zip" >/dev/null
+      - name: Upload the macOS zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: Intelio-mac-arm64
+          path: desktop/dist/Intelio-*-mac-arm64.zip
+          if-no-files-found: error
+      - name: Attach the macOS zip to the private draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
           else
-            gh release create "$TAG" dist/Intelio-Setup-*.exe \
-              --repo "$GITHUB_REPOSITORY" \
-              --draft \
-              --title "Intelio Windows $TAG" \
-              --notes "$NOTES"
+            TAG="v0.3.6-intelio-windows"
           fi
+          NOTES="Unsigned Intelio 0.3.6 draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: Intelio arm64 zip of Intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
+          TITLE="Intelio 0.3.6"
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$TAG" dist/Intelio-*-mac-arm64.zip --repo "$GITHUB_REPOSITORY" --clobber && exit 0
+            else
+              gh release create "$TAG" dist/Intelio-*-mac-arm64.zip \
+                --repo "$GITHUB_REPOSITORY" \
+                --draft \
+                --title "$TITLE" \
+                --notes "$NOTES" && exit 0
+            fi
+            sleep 10
+          done
+          exit 1

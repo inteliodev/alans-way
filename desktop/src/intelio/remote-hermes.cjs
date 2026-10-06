@@ -58,10 +58,10 @@ function normalizeRemoteConfig(input = {}) {
   return { enabled, host, port, profile };
 }
 
-/** Windows first launch has no preferences file and starts as a VPS client. Other platforms stay opt-in. */
+/** Windows and macOS first launch have no preferences file and start as a VPS client. Linux stays opt-in. */
 function remoteHermesDefaults(platform = process.platform) {
   const connection = 'auto';
-  if (platform === 'win32') return { enabled: true, host: VPS_HOST, port: DEFAULT_PORT, profile: 'intelio', connection };
+  if (platform === 'win32' || platform === 'darwin') return { enabled: true, host: VPS_HOST, port: DEFAULT_PORT, profile: 'intelio', connection };
   return { enabled: false, host: '', port: DEFAULT_PORT, profile: 'intelio', connection };
 }
 

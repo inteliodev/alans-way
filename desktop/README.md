@@ -81,7 +81,7 @@ npm start
 npm run package:mac
 ```
 
-The package command builds an Apple Silicon Mac app in `dist/alans-way-localapp-darwin-arm64`. It includes a custom icon and the Node MCP connector. This is a local development build; signed/notarized public distribution is a later release step. Building and running locally does not require a paid developer account.
+The package command builds an Apple Silicon Mac app in `dist/Intelio-darwin-arm64`. It includes a custom icon and the Node MCP connector. This is a local development build; signed/notarized public distribution is a later release step. Building and running locally does not require a paid developer account.
 
 With the app open, `node test/browser-smoke.cjs` exercises the real MCP protocol against its own local test page. It checks typing, clicking, screenshots, popups, shared cookies, bot ownership, and stale epochs. It asks you to click Take over and Give to agent to verify the human control boundary. It sends no Telegram messages and operates no third-party forms.
 

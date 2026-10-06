@@ -28,13 +28,20 @@ test('a fresh Windows profile with a keystore is remote and lists the four agent
   assert.equal(runPackagedSmoke(), 0);
 });
 
-test('macOS without a settings file stays on local Telegram', () => {
+test('a fresh macOS profile lists the four VPS harness profiles, not local Telegram', () => {
   const plan = freshWindowPlan({ platform: 'darwin', preferencesText: null, keyNames: KEYS });
-  assert.equal(plan.remote, false);
-  assert.equal(plan.telegramSignIn, true);
-  assert.equal(plan.host, '');
-  assert.equal(plan.desktop, '');
-  assert.deepEqual(plan.agents, []);
+  assert.equal(plan.remote, true);
+  assert.equal(plan.telegramSignIn, false);
+  assert.equal(plan.host, VPS_HOST);
+  assert.equal(plan.desktop, VNC_URL);
+  assert.deepEqual(plan.agents.map((agent) => agent.id), KEYS);
+  const localSaved = freshWindowPlan({
+    platform: 'darwin',
+    preferencesText: JSON.stringify({ bots: [{ id: 'underwriting', name: 'Underwriting' }] }),
+    keyNames: KEYS,
+  });
+  assert.equal(localSaved.remote, true);
+  assert.deepEqual(localSaved.agents.map((agent) => agent.id), KEYS);
 });
 
 test('an incomplete remoteHermes object does not wipe the Windows host, and enabled false stays off', () => {
