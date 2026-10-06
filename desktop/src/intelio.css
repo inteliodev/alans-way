@@ -1,0 +1,28 @@
+/* Intelio chrome. Tokens come from the harness brand file; hairlines use the line color at low opacity so the dark shell stays readable. */
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/geist-sans-latin-400-normal.woff2") format("woff2");
+}
+:root {
+  --bg: #0a0a0a;
+  --text: #f5f5f5;
+  --muted: #e5e5e5;
+  --line: #e5e5e5;
+  --intelio-surface: #f5f5f5;
+  --intelio-font: "Geist", "Geist Sans", ui-sans-serif, system-ui, sans-serif;
+}
+body { font-family: var(--intelio-font); background: var(--bg); color: var(--text); }
+.sidebar, .workspace-pane, .splitter, .chat-pane { background: var(--bg); }
+.side-title { height: auto; min-height: 70px; padding-top: 28px; padding-bottom: 8px; align-items: flex-start; }
+.intelio-mark { width: 18px; height: 18px; margin-top: 2px; border-radius: 4px; flex-shrink: 0; }
+.intelio-wordmark { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+#product-title { color: #ffffff; font-weight: 500; letter-spacing: -0.03em; font-size: 15px; line-height: 1.1; }
+.intelio-credit { color: var(--muted); font-size: 10px; font-weight: 400; letter-spacing: 0.01em; }
+.intelio-profile { margin: 0 16px 4px 20px; color: var(--muted); font-size: 10px; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; }
+#hermes-pin { margin-bottom: 8px; }
+.primary-button { background: var(--intelio-surface); color: var(--bg); }
+.modal-card { background: #111111; border-color: rgba(229, 229, 229, 0.28); }
+.workspace-footer { color: #e5e5e5; }

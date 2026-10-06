@@ -14,8 +14,11 @@ const { snapshotExpression, settleSnapshot, checkpointExpression, restoreExpress
 const { createVpsBrowser } = require('./vps-browser.cjs');
 const { createExtensionStore } = require('./extension-store.cjs');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
+const { applyLinuxDemo } = require('./intelio/linux-demo.cjs');
+const { agentNavigationDecision } = require('./intelio/safety.cjs');
+const { loadIntelio, publicIntelioState, pngIcon } = require('./intelio/bridge.cjs');
 
-app.enableSandbox();
+if (!applyLinuxDemo(app)) app.enableSandbox();
 app.setName("alans-way-localapp");
 // Keep existing sessions and connector discovery stable when the product name changes.
 app.setPath('userData', process.env.HERMES_WORKSPACE_DATA
@@ -39,6 +42,7 @@ const API_TOKEN = crypto.randomBytes(32).toString('hex');
 // early enough that its last step (wait caps at 30s) still answers in time.
 const BATCH_BUDGET_MS = 50000;
 let isQuitting = false;
+let intelioSession = null;
 let backgroundCaptureQueue = Promise.resolve();
 const avatarStore = createAvatarStore({ root: ROOT, nativeImage, dialog, getWindow: () => win, getPreferences: () => prefs });
 const agentInput = createAgentInput({ command: browserCommand,
@@ -118,8 +122,28 @@ function selectAgent(id) {
   activeTabId = viewingVps ? 'vps' : nextLocal;
   applyLayout();
 }
+function assertIntelioAgentUrl(url) {
+  if (!intelioSession?.ok) throw Object.assign(new Error('Intelio profile is not loaded; agent browsing is paused.'), { status: 403 });
+  const decision = agentNavigationDecision(url, {
+    origins: intelioSession.browsingOrigins,
+    appPages: [NEWTAB_URL, 'about:blank', ''],
+  });
+  if (!decision.ok) throw Object.assign(new Error(decision.error), { status: decision.status });
+}
+function intelioTitle() {
+  const title = intelioSession?.public?.brand?.windowTitle || 'Intelio';
+  const profile = intelioSession?.public?.profileName;
+  return profile ? `${title} — ${profile}` : title;
+}
+function applyIntelioChrome() {
+  if (!win || win.isDestroyed()) return;
+  win.setTitle(intelioTitle());
+  const background = intelioSession?.public?.brand?.tokens?.background;
+  if (background) win.setBackgroundColor(background);
+  try { win.setIcon(nativeImage.createFromBuffer(pngIcon())); } catch { /* icon is cosmetic; the profile report still stands */ }
+}
 function getState() {
-  return { name: app.getName(), version: app.getVersion(), bots: prefs.bots.map(bot => ({ ...bot, activity: activity.get(bot.id), hue: botAccent(bot.id).hue })), order: prefs.order, hidden: prefs.hidden,
+  return { name: app.getName(), version: app.getVersion(), intelio: publicIntelioState(intelioSession), bots: prefs.bots.map(bot => ({ ...bot, activity: activity.get(bot.id), hue: botAccent(bot.id).hue })), order: prefs.order, hidden: prefs.hidden,
     selectedBotId: prefs.selectedBotId, chatWidth: prefs.chatWidth, preview: prefs.preview, previewPos: prefs.previewPos, showBots: prefs.showBots, showBrowser: prefs.showBrowser, remoteUrl: prefs.remoteUrl,
     remoteStatus, remoteControl: prefs.remoteControl === true, telegramStatus, tabs: [...tabs.values()].map(describeTab),
     vpsBrowser: prefs.vpsBrowser, vpsBrowserStatus, handoffs: prefs.handoffs, macSshHost: prefs.macSshHost || '',
@@ -232,6 +256,12 @@ function configureContents(contents, isTelegram = false) {
     else if (!isTelegram && !/^https?:\/\//i.test(url) && url !== 'about:blank') {
       if (!isExtensionUrl(url)) event.preventDefault();
       else { const tab = [...tabs.values()].find(item => item.view.webContents === contents); if (tab) { tab.extensionPage = true; changeController(tab.id, 'human'); } }
+    } else if (!isTelegram) {
+      const tab = [...tabs.values()].find(item => item.view.webContents === contents);
+      if (tab?.controller === 'agent') {
+        try { assertIntelioAgentUrl(url); }
+        catch (error) { event.preventDefault(); tab.error = error.message; broadcast(); }
+      }
     }
   });
   contents.on('before-input-event', (event, input) => {
@@ -282,6 +312,7 @@ async function resolveFavicon(tab, favicons) {
 function createTab({ url = 'about:blank', botId = prefs.selectedBotId || 'shared', controller = 'human', options, skipLoad = false, activate = true, extensionPage = false } = {}) {
   if (tabs.size >= 40) throw new Error('Close a tab before opening another.');
   const targetUrl = pageUrl(url, extensionPage);
+  if (controller === 'agent') assertIntelioAgentUrl(targetUrl);
   const view = new WebContentsView({ ...(options?.webContents ? { webContents: options.webContents } : {}),
     webPreferences: { ...options?.webPreferences, preload: undefined, partition: 'persist:browser', contextIsolation: true, nodeIntegration: false, sandbox: true,
       webSecurity: true, backgroundThrottling: false } });
@@ -339,6 +370,7 @@ function changeController(id, controller) {
   const tab = tabs.get(id);
   if (!tab) throw new Error('Tab not found.');
   if (tab.extensionPage && controller === 'agent') throw new Error('Extension account pages stay under your control.');
+  if (controller === 'agent') assertIntelioAgentUrl(tab.view.webContents.getURL());
   tab.controller = controller === 'agent' ? 'agent' : 'human';
   if (tab.controller === 'agent') tab.agentSince = Date.now();
   if (tab.controller === 'agent' && tab.botId === 'shared' && prefs.selectedBotId) tab.botId = prefs.selectedBotId;
@@ -513,6 +545,15 @@ function registerIpc() {
       }
       case 'set-site-permission': sitePermissions.set(value); break;
       case 'reset-site-permissions': sitePermissions.reset(); break;
+      case 'reload-intelio': {
+        const requested = typeof value?.profileDir === 'string' ? value.profileDir.trim() : '';
+        const next = requested ? loadIntelio({ profileDir: requested, prefs }) : loadIntelio({ argv: process.argv, prefs });
+        intelioSession = next;
+        if (next.ok && requested) prefs.intelioProfile = requested;
+        applyIntelioChrome();
+        if (!next.ok) { broadcast(); throw new Error(next.error || 'Intelio profile failed to load.'); }
+        break;
+      }
       case 'settings':
         if (typeof value.macSshHost === 'string' && value.macSshHost.trim() && !isSshTarget(value.macSshHost.trim())) throw new Error('Enter the Mac SSH address as user@host or host, with no spaces or symbols.');
         if (value.vpsBrowser && typeof value.vpsBrowser === 'object') { prefs.vpsBrowser={sshHost:String(value.vpsBrowser.sshHost || '').trim(),scriptPath:String(value.vpsBrowser.scriptPath || '').trim(),sudo:value.vpsBrowser.sudo===true}; vpsBrowserStatus='connecting'; refreshVpsTabs(); }
@@ -524,6 +565,7 @@ function registerIpc() {
         if (typeof value.macSshHost === 'string') prefs.macSshHost = value.macSshHost.trim();
         if (typeof value.autoOpenLinks === 'boolean') prefs.autoOpenLinks = value.autoOpenLinks;
         if (typeof value.primaryBotId === 'string') prefs.primaryBotId = prefs.bots.some((bot) => bot.id === value.primaryBotId) || value.primaryBotId === '' ? value.primaryBotId : prefs.primaryBotId;
+        if (typeof value.intelioProfile === 'string') prefs.intelioProfile = value.intelioProfile.trim();
         if (['ask', 'block', 'approximate'].includes(value.locationDefault)) prefs.locationDefault = value.locationDefault;
         if (Number.isFinite(value.chatWidth)) prefs.chatWidth = Math.max(320, Math.min(680, value.chatWidth));
         savePreferences(); applyLayout(); break;
@@ -877,6 +919,7 @@ async function performAction(tab, body, botId, depth = 0) {
     await agentInput.clear(tab);
     requireActor(tab, botId, body.epoch, true, overseer);
     const target = pageUrl(body.url);
+    assertIntelioAgentUrl(target);
     // loadURL resolves only at did-finish-load — far past the connector's own
     // abort. Cap the wait at commit+settle; the caller reads `loading` and can
     // snapshot to follow a still-loading page.
@@ -1014,9 +1057,10 @@ function startApi() {
 }
 function createWindow() {
   nativeTheme.themeSource = 'dark';
-  win = new BrowserWindow({ width: 1550, height: 980, minWidth: 1120, minHeight: 680, backgroundColor: '#09090a', title: app.getName(),
-    titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 18 },
-    webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  const windowOptions = { width: 1550, height: 980, minWidth: 1120, minHeight: 680, backgroundColor: intelioSession?.public?.brand?.tokens?.background || '#0a0a0a', title: intelioTitle(), icon: nativeImage.createFromBuffer(pngIcon()),
+    webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } };
+  if (process.platform === 'darwin') { windowOptions.titleBarStyle = 'hiddenInset'; windowOptions.trafficLightPosition = { x: 18, y: 18 }; }
+  win = new BrowserWindow(windowOptions);
   telegramView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'telegram-preload.bundle.cjs'), partition: 'persist:telegram', contextIsolation: true, nodeIntegration: false, sandbox: true } });
   telegramView.setBackgroundColor('#09090a');
   configureContents(telegramView.webContents, true);
@@ -1043,7 +1087,7 @@ function createWindow() {
   win.on('enter-full-screen', broadcast); win.on('leave-full-screen', broadcast);
   win.on('close', (event) => { if (!isQuitting) { event.preventDefault(); win.hide(); } });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: app.getName(), submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: intelioSession?.public?.brand?.windowTitle || 'Intelio', submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { label: 'File', submenu: [{ label: 'New Browser Tab', accelerator: 'CmdOrCtrl+T', click: () => createTab({}) }, { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => extensionPopup?.browserWindow?.isFocused() ? extensionPopup.destroy() : closeTab(activeTabId) }] },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     { label: 'View', submenu: [{ label: 'Reload Page', accelerator: 'CmdOrCtrl+R', click: () => tabs.get(activeTabId)?.view.webContents.reload() }, { role: 'togglefullscreen' }, ...(app.isPackaged ? [] : [{ label: 'App Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => win.webContents.toggleDevTools() }])] },
@@ -1074,6 +1118,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.whenReady().then(async () => {
     app.setAccessibilitySupportEnabled(true); prefs = readPreferences(); prefs.remoteControl = false;
+    intelioSession = loadIntelio({ argv: process.argv, prefs });
     try { parseRemoteUrl(prefs.remoteUrl); } catch { prefs.remoteUrl = ''; }
     fs.mkdirSync(app.getPath('userData'), { recursive: true });
     const browserSession = session.fromPartition('persist:browser');

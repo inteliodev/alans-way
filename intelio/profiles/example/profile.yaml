@@ -1,0 +1,15 @@
+# Example Intelio profile. Client secrets belong in an uncommitted .env
+# next to this file. The loader never reads .env.
+name: Example
+panels:
+  - telegram
+  - browser
+  - vps
+skills: []
+allowed_folders:
+  - files
+hermes_profile: example
+browsing_origins: []
+safety:
+  yolo: false
+  consequential: ask

@@ -1,0 +1,7 @@
+Vendored contract for the Intelio harness (schema, brand, Hermes pin only).
+Upstream: https://github.com/inteliodev/intelio-harness
+This tree was not copied from that private repo. On 2026-10-05 the GitHub
+token available to the cloud agent received HTTP 404 for it.
+Replace pin/, schema/, and brand/ with the same paths from a pinned harness
+commit when the repo is readable. See intelio/SYNC.md.
+Hermes source is not vendored.

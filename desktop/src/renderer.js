@@ -182,6 +182,7 @@ function render(next) {
     $('presence-status').classList.toggle('active', window.HermesAvatars.isActive(bot.activity));
   }
   renderBots(); renderTabs(); renderSettingsBots(); renderSitePermissions(); renderExtensions();
+  window.IntelioUI?.apply(state);
   const tab = state.tabs.find((item) => item.id === state.activeTabId);
   const remote = state.activeTabId==='vps';
   $('vm-toggle').title = remote ? 'Return to browser' : 'Expand virtual desktop';
@@ -360,6 +361,7 @@ async function showCookieSettings(body) {
 function showSettings() {
   openModal('Workspace settings');
   const body = $('modal-body'), field = element('div', 'field');
+  window.IntelioUI?.appendSettings(body, { element, command, state, toast });
   const extensions = element('button', 'secondary-button', 'Manage browser extensions'); extensions.onclick = showExtensions;
   body.append(extensions, element('hr', 'section-divider'));
   body.append(element('h3', '', 'Telegram bots'));
@@ -391,6 +393,7 @@ function showSettings() {
     [!!(state.vpsBrowser?.sshHost), 'VPS SSH address saved'],
     [!!state.macSshHost, 'This Mac’s SSH address saved'],
     [state.api.ready, 'Browser connector ready'],
+    [state.intelio?.hermes?.match === 'commit', state.intelio?.hermes ? `Hermes pin ${(state.intelio.hermes.pinCommit || '').slice(0, 12) || 'missing'} · ${state.intelio.hermes.summary}` : 'Hermes pin not loaded'],
   ];
   for (const [done, label] of checks) checklist.append(element('p', `check-item${done ? ' done' : ''}`, `${done ? '✓' : '○'} ${label}`));
   body.append(checklist);
