@@ -50,7 +50,7 @@ INTELIO_LINUX_DEMO=1 HERMES_WORKSPACE_DATA=/tmp/intelio-alans-way-demo npm start
 
 ## Remote Hermes (VPS)
 
-The VPS runs the single Hermes brain; this app is a client of it over Tailscale through the Hermes API server (same sessions and memory as Telegram). Configure host, port, profile and key under Settings → Remote Hermes (VPS), then open Window → Remote Hermes (VPS). Details, security model and VPS setup: [docs/intelio-remote-hermes.md](docs/intelio-remote-hermes.md).
+The VPS runs the single Hermes brain; this app is a client of it over Tailscale through the Hermes API server (same sessions and memory as Telegram). Configure host, port, profile and key under Settings → Remote Hermes (VPS), then open Window → Remote Hermes (VPS). Details, security model and VPS setup: [docs/intelio-remote-hermes.md](docs/intelio-remote-hermes.md). The Windows installer and the tailnet phone client are in [docs/intelio-windows-and-mobile.md](docs/intelio-windows-and-mobile.md).
 
 ## Safety defaults
 

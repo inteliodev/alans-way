@@ -2,8 +2,9 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { resolveRepoRoot } = require('./paths.cjs');
 
-const file = path.join(__dirname, '..', '..', '..', 'intelio', 'forks.json');
+const file = path.join(resolveRepoRoot(), 'intelio', 'forks.json');
 const forks = JSON.parse(fs.readFileSync(file, 'utf8'));
 
 function githubRepo(value, key) {

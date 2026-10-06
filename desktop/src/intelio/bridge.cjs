@@ -4,8 +4,9 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { redact, safetyDefaults } = require('./safety.cjs');
+const { resolveRepoRoot } = require('./paths.cjs');
 
-const repoRoot = path.resolve(__dirname, '../../..');
+const repoRoot = resolveRepoRoot();
 
 function profileFromArgv(argv) {
   const args = Array.isArray(argv) ? argv : [];

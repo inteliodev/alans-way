@@ -1,10 +1,11 @@
 # Remote Hermes (VPS) mode
 
-"One Hermes": the Intelio VPS (`intelio-vps.tail9c1007.ts.net`, `100.111.128.12`)
+"One Hermes": the Intelio VPS (`intelio-vps.tail9c1007.ts.net`)
 runs the single Hermes brain — one multiplexed gateway serving Telegram
-(@inteliodevbot, profile `intelio`) and the Hermes API server. The Mac app, the
-phone and Telegram are clients of it. Sessions, memory, skills and the model
-provider all live on the VPS.
+(@inteliodevbot, profile `intelio`) and the Hermes API server. The desktop app,
+the phone and Telegram are clients of it. Sessions, memory, skills and the model
+provider all live on the VPS. The listener address is whatever `tailscale ip -4`
+prints on that machine; this doc does not repeat it.
 
 ## Why the API server (and not SSH + TUI)
 
@@ -33,12 +34,12 @@ into the Telegram chat. Telegram turns show up in the app on the next poll (8 s)
 ## VPS side (already enabled on srv1685012)
 
 - `~/.hermes/.env` (default profile, owns the multiplexed listener):
-  `API_SERVER_ENABLED=true`, `API_SERVER_HOST=100.111.128.12`, `API_SERVER_PORT=8642`,
-  `API_SERVER_KEY=<random>`.
+  `API_SERVER_ENABLED=true`, `API_SERVER_HOST` set to the tailnet address from
+  `tailscale ip -4`, `API_SERVER_PORT=8642`, `API_SERVER_KEY=<random>`.
 - `~/.hermes/profiles/intelio/.env`: its own `API_SERVER_KEY=<random>`. Hermes
   binds keys to the routed profile: `/p/intelio/...` only accepts the intelio key.
 - `ufw allow in on tailscale0 to any port 8642 proto tcp`. The listener is bound
-  to the tailnet IP, never `0.0.0.0`; the Hostinger panel still only allows 22.
+  to the tailnet address, never a wildcard address; the Hostinger panel still only allows 22.
 - systemd drop-in `hermes-gateway.service.d/10-intelio-tailnet-wait.conf` waits up
   to ~80 s for the tailnet IP at boot so the bind does not fail.
 
@@ -46,15 +47,16 @@ into the Telegram chat. Telegram turns show up in the app on the next poll (8 s)
 
 Settings → **Remote Hermes (VPS)**:
 
-- Host: `intelio-vps.tail9c1007.ts.net` (or `100.111.128.12`). Only Tailscale
-  addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`, `*.ts.net`) or loopback
-  (for `ssh -L 8642:100.111.128.12:8642 intelio-vps`) are accepted; anything
+- Host: `intelio-vps.tail9c1007.ts.net` (or the tailnet address from `tailscale ip -4`). Only Tailscale
+  addresses (the CGNAT range Tailscale assigns, `fd7a:115c:a1e0::/48`, `*.ts.net`) or loopback
+  (for an SSH tunnel to the VPS) are accepted; anything
   else is refused before a request is made.
 - Port: `8642`. Profile: `intelio` (`default` = unprefixed routes).
 - API key: paste the profile's key once. It is encrypted with Electron
-  `safeStorage` (macOS Keychain) in `remote-hermes-keys.json` (mode 600) and is
+  `safeStorage` (Windows DPAPI, macOS Keychain, or libsecret) in `remote-hermes-keys.json` (mode 600) and is
   only used in the main process. It is never sent to a renderer, never logged,
   and redacted from errors.
+- A fresh Windows install starts in this mode already (that host, port 8642, profile `intelio`) and asks for Tailscale if it is missing. The key is still entered once. See [Windows and the phone](intelio-windows-and-mobile.md).
 
 To read the key on the VPS without echoing it into shell history:
 `ssh intelio-vps 'grep ^API_SERVER_KEY= ~/.hermes/profiles/intelio/.env | cut -d= -f2-' | pbcopy`.

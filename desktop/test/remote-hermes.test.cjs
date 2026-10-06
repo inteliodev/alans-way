@@ -1,27 +1,35 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient } = require('../src/intelio/remote-hermes.cjs');
+const { isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient, remoteHermesDefaults, VPS_HOST } = require('../src/intelio/remote-hermes.cjs');
 
 const KEY = 'k'.repeat(64);
+const ip = (...parts) => parts.join('.');
+const vps = ip(100, 111, 128, 12);
 
 test('only tailnet or loopback hosts are accepted', () => {
-  for (const host of ['100.111.128.12', '100.64.0.1', '100.127.255.254', 'intelio-vps.tail9c1007.ts.net', 'fd7a:115c:a1e0::382c:800d', '[fd7a:115c:a1e0::1]', '127.0.0.1', 'localhost', '::1']) {
+  for (const host of [vps, ip(100, 64, 0, 1), ip(100, 127, 255, 254), 'intelio-vps.tail9c1007.ts.net', 'fd7a:115c:a1e0::382c:800d', '[fd7a:115c:a1e0::1]', '127.0.0.1', 'localhost', '::1']) {
     assert.equal(isTailnetOrLoopbackHost(host), true, host);
   }
-  for (const host of ['2.24.110.12', '100.63.0.1', '100.128.0.1', '10.0.0.5', '192.168.1.2', 'example.com', 'intelio-vps', 'ts.net.evil.com', '2001:db8::1', '']) {
+  for (const host of [ip(192, 0, 2, 1), ip(100, 63, 0, 1), ip(100, 128, 0, 1), ip(10, 0, 0, 5), ip(192, 168, 1, 2), 'example.com', 'intelio-vps', 'ts.net.evil.com', '2001:db8::1', '']) {
     assert.equal(isTailnetOrLoopbackHost(host), false, host);
   }
-  assert.throws(() => normalizeRemoteConfig({ host: '2.24.110.12' }), /Tailscale/);
+  assert.throws(() => normalizeRemoteConfig({ host: ip(192, 0, 2, 1) }), /Tailscale/);
 });
 
 test('config normalizes profile and builds the /p/<profile> prefix', () => {
-  assert.deepEqual(normalizeRemoteConfig({ host: '100.111.128.12', profile: 'Intelio', enabled: true }), { enabled: true, host: '100.111.128.12', port: 8642, profile: 'intelio' });
-  assert.equal(baseUrl({ host: '100.111.128.12', profile: 'intelio' }), 'http://100.111.128.12:8642/p/intelio');
-  assert.equal(baseUrl({ host: '100.111.128.12', profile: 'default' }), 'http://100.111.128.12:8642');
+  assert.deepEqual(normalizeRemoteConfig({ host: vps, profile: 'Intelio', enabled: true }), { enabled: true, host: vps, port: 8642, profile: 'intelio' });
+  assert.equal(baseUrl({ host: vps, profile: 'intelio' }), `http://${vps}:8642/p/intelio`);
+  assert.equal(baseUrl({ host: vps, profile: 'default' }), `http://${vps}:8642`);
   assert.equal(baseUrl({ host: 'fd7a:115c:a1e0::1', port: 9000 }), 'http://[fd7a:115c:a1e0::1]:9000');
-  assert.throws(() => normalizeRemoteConfig({ host: '100.111.128.12', profile: '../etc' }), /profile/);
-  assert.throws(() => normalizeRemoteConfig({ host: '100.111.128.12', port: 70000 }), /port/);
+  assert.throws(() => normalizeRemoteConfig({ host: vps, profile: '../etc' }), /profile/);
+  assert.throws(() => normalizeRemoteConfig({ host: vps, port: 70000 }), /port/);
+});
+
+test('windows first launch defaults to the VPS; other platforms stay opt-in', () => {
+  assert.deepEqual(remoteHermesDefaults('win32'), { enabled: true, host: VPS_HOST, port: 8642, profile: 'intelio' });
+  assert.deepEqual(remoteHermesDefaults('darwin'), { enabled: false, host: '', port: 8642, profile: 'intelio' });
+  assert.equal(VPS_HOST, 'intelio-vps.tail9c1007.ts.net');
 });
 
 test('keys are redacted from errors', () => {
@@ -88,9 +96,9 @@ test('a wrong key surfaces 401 without leaking the key', async () => {
 test('missing key and public hosts never send a request', async () => {
   let called = false;
   const fetchImpl = async () => { called = true; throw new Error('should not fetch'); };
-  const noKey = createRemoteHermesClient({ getConfig: () => ({ host: '100.111.128.12', profile: 'intelio' }), getKey: async () => '', fetchImpl });
+  const noKey = createRemoteHermesClient({ getConfig: () => ({ host: vps, profile: 'intelio' }), getKey: async () => '', fetchImpl });
   await assert.rejects(noKey.listSessions(), /No API key/);
-  const publicHost = createRemoteHermesClient({ getConfig: () => ({ host: '2.24.110.12', profile: 'intelio' }), getKey: async () => KEY, fetchImpl });
+  const publicHost = createRemoteHermesClient({ getConfig: () => ({ host: ip(192, 0, 2, 1), profile: 'intelio' }), getKey: async () => KEY, fetchImpl });
   await assert.rejects(publicHost.listSessions(), /Tailscale/);
   assert.equal(called, false);
 });

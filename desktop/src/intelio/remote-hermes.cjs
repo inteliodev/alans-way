@@ -17,10 +17,12 @@
  * process only (encrypted with Electron safeStorage); it never reaches a
  * renderer and is redacted from every error.
  *
- * Hosts are restricted to the tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48,
+ * Hosts are restricted to the tailnet (Tailscale CGNAT, fd7a:115c:a1e0::/48,
  * *.ts.net) or loopback (for an `ssh -L` tunnel). Public hosts are refused, so
  * a typo can never send the key or agent traffic over the internet.
  */
+
+const VPS_HOST = 'intelio-vps.tail9c1007.ts.net';
 
 const DEFAULT_PORT = 8642;
 const PROFILE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -52,6 +54,12 @@ function normalizeRemoteConfig(input = {}) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Remote Hermes port must be 1-65535.');
   if (profile && !PROFILE_RE.test(profile)) throw new Error('Hermes profile names are lowercase letters, digits, "-" and "_".');
   return { enabled, host, port, profile };
+}
+
+/** Windows first launch has no preferences file and starts as a VPS client. Other platforms stay opt-in. */
+function remoteHermesDefaults(platform = process.platform) {
+  if (platform === 'win32') return { enabled: true, host: VPS_HOST, port: DEFAULT_PORT, profile: 'intelio' };
+  return { enabled: false, host: '', port: DEFAULT_PORT, profile: 'intelio' };
 }
 
 function baseUrl(config) {
@@ -162,4 +170,4 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
   };
 }
 
-module.exports = { DEFAULT_PORT, isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient };
+module.exports = { DEFAULT_PORT, VPS_HOST, remoteHermesDefaults, isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient };

@@ -70,8 +70,10 @@
   /** Remote Hermes (VPS): this app as a client of the single Hermes on the VPS, over Tailscale only. */
   function appendRemoteHermes(body, { element, command, toast }) {
     body.append(element('h3', '', 'Remote Hermes (VPS)'));
-    body.append(element('p', 'settings-note', 'Chat with the VPS Hermes over Tailscale. Same sessions and memory as Telegram. The host must be a tailnet address (100.x or *.ts.net) or 127.0.0.1 for an SSH tunnel; the key is the profile\'s API_SERVER_KEY and is stored in the macOS keychain-backed safe storage, never shown again.'));
+    body.append(element('p', 'settings-note', 'Chat with the VPS Hermes over Tailscale. Same sessions and memory as Telegram. The host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The key is the profile\'s API_SERVER_KEY. It is encrypted with the operating system (Windows DPAPI, macOS Keychain, or libsecret) and is never shown again.'));
     const status = element('p', 'settings-note', 'Loading…');
+    const tail = element('p', 'settings-note', 'Checking Tailscale…');
+    tail.id = 'remote-hermes-tailscale';
     const make = (id, labelText, value, type = 'text') => {
       const field = element('div', 'field');
       const label = element('label', '', labelText); label.htmlFor = id;
@@ -83,9 +85,17 @@
     const profile = make('remote-hermes-profile', 'Hermes profile', 'intelio');
     const key = make('remote-hermes-key', 'API key for this profile (write-only)', '', 'password');
     key.placeholder = 'unchanged';
+    const install = element('button', 'secondary-button', 'Install Tailscale');
+    install.hidden = true;
+    install.onclick = () => command('remote-hermes-install-tailscale', {}).catch((e) => { status.textContent = e.message; });
     const show = (s) => {
       host.value = s.host || ''; port.value = s.port || 8642; profile.value = s.profile || 'default';
       status.textContent = s.error || `${s.hasKey ? 'Key saved' : 'No key saved'} for profile ${s.profile || 'default'}.${s.encryptionAvailable ? '' : ' OS encryption unavailable: keys cannot be saved.'}`;
+      if (s.tailscale) {
+        tail.textContent = s.tailscale.detail || '';
+        install.hidden = Boolean(s.tailscale.connected);
+        install.textContent = s.tailscale.installed ? 'Open Tailscale download' : 'Install Tailscale';
+      }
     };
     command('remote-hermes-state', {}).then(show).catch((e) => { status.textContent = e.message; });
     const save = element('button', 'secondary-button', 'Save');
@@ -103,7 +113,7 @@
     };
     const open = element('button', 'secondary-button', 'Open Remote Hermes');
     open.onclick = () => command('open-remote-hermes', {}).catch((e) => { status.textContent = e.message; });
-    body.append(status, save, test, open, element('hr', 'section-divider'));
+    body.append(status, tail, install, save, test, open, element('hr', 'section-divider'));
   }
 
   window.IntelioUI = { apply, appendSettings };

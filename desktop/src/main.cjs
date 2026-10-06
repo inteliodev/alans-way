@@ -19,6 +19,8 @@ const { agentNavigationDecision } = require('./intelio/safety.cjs');
 const { loadIntelio, publicIntelioState, pngIcon } = require('./intelio/bridge.cjs');
 const { agents, agentsSetup } = require('./intelio/forks.cjs');
 const { setupRemoteHermes } = require('./intelio/remote-hermes-main.cjs');
+const { remoteHermesDefaults } = require('./intelio/remote-hermes.cjs');
+const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
 
 if (!applyLinuxDemo(app)) app.enableSandbox();
 app.setName("alans-way-localapp");
@@ -65,13 +67,17 @@ const sitePermissions = createSitePermissions({ getPreferences: () => prefs, sav
   }
 });
 let pointerTimer, activityTimer, idleTimer;
+let tailscaleFirstRun = false;
 
 function readPreferences() {
-  const defaults = { bots: [], order: [], hidden: [], selectedBotId: '', accountId: '', remoteUrl: '', chatWidth: 490, preview: true, previewPos: null, showBots: true, showBrowser: true, savedTabs: [], avatarLibrary: [], avatarPreferences: {}, locationDefault: 'approximate', sitePermissions: {}, browserExtensions: [], vpsBrowser: {}, remoteHermes: { enabled: false, host: '', port: 8642, profile: 'intelio' }, agentIdleMinutes: 15, agentLastTabs: {}, handoffs: [],
+  const defaults = { bots: [], order: [], hidden: [], selectedBotId: '', accountId: '', remoteUrl: '', chatWidth: 490, preview: true, previewPos: null, showBots: true, showBrowser: true, savedTabs: [], avatarLibrary: [], avatarPreferences: {}, locationDefault: 'approximate', sitePermissions: {}, browserExtensions: [], vpsBrowser: {}, remoteHermes: remoteHermesDefaults(process.platform), agentIdleMinutes: 15, agentLastTabs: {}, handoffs: [],
     overseerBots: String(process.env.HERMES_OVERSEER_BOTS || '').split(',').map((id) => id.trim()).filter((id) => id && id.length <= 100) };
   const file = path.join(app.getPath('userData'), 'preferences.json');
   let text;
-  try { text = fs.readFileSync(file, 'utf8'); } catch { return { ...defaults, remoteUrl: process.env.HERMES_WORKSPACE_VPS_URL || '' }; }
+  try { text = fs.readFileSync(file, 'utf8'); } catch {
+    if (process.platform === 'win32') tailscaleFirstRun = true;
+    return { ...defaults, remoteUrl: process.env.HERMES_WORKSPACE_VPS_URL || '' };
+  }
   try { return { ...defaults, ...JSON.parse(text) }; }
   catch {
     // Keep the unreadable file: the next save would otherwise erase every bot,
@@ -1126,7 +1132,7 @@ else {
   app.whenReady().then(async () => {
     app.setAccessibilitySupportEnabled(true); prefs = readPreferences(); prefs.remoteControl = false;
     intelioSession = loadIntelio({ argv: process.argv, prefs });
-    remoteHermes = setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, getPrefs: () => prefs, savePreferences, root: ROOT, rendererSandbox,
+    remoteHermes = setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs: () => prefs, savePreferences, root: ROOT, rendererSandbox,
       icon: nativeImage.createFromBuffer(pngIcon()), background: intelioSession?.public?.brand?.tokens?.background });
     try { parseRemoteUrl(prefs.remoteUrl); } catch { prefs.remoteUrl = ''; }
     fs.mkdirSync(app.getPath('userData'), { recursive: true });
@@ -1157,6 +1163,17 @@ else {
     extensionStore = createExtensionStore({ root: app.getPath('userData'), session: browserSession, dialog, nativeImage, getWindow: () => win, getPreferences: () => prefs, savePreferences, onChanged: broadcast,
       canInstall: frame => [...tabs.values()].some(tab => tab.id === activeTabId && tab.controller === 'human' && tab.view.webContents.mainFrame === frame && !layout.obscured) });
     await extensionStore.installStore(); createWindow(); await extensionStore.restore(); broadcast();
+    if (tailscaleFirstRun) {
+      checkTailscale().then(async (status) => {
+        const prompt = firstRunMessage(status);
+        if (!prompt || !win || win.isDestroyed()) return;
+        const buttons = prompt.install ? ['Install Tailscale', 'Later'] : ['OK'];
+        const answer = await dialog.showMessageBox(win, {
+          type: 'info', buttons, defaultId: 0, cancelId: buttons.length - 1, message: prompt.message, detail: prompt.detail,
+        });
+        if (prompt.install && answer.response === 0) await shell.openExternal(status.installUrl);
+      }).catch(() => {});
+    }
   });
   app.on('second-instance', () => { win?.show(); win?.focus(); });
   app.on('activate', () => { win?.show(); win?.focus(); });

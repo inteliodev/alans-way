@@ -7,8 +7,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeRemoteConfig, createRemoteHermesClient, redactKey } = require('./remote-hermes.cjs');
+const { checkTailscale, assertInstallUrl, installUrl } = require('./tailscale.cjs');
 
-function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, getPrefs, savePreferences, root, rendererSandbox, icon, background }) {
+function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs, savePreferences, root, rendererSandbox, icon, background }) {
   let chatWindow = null;
   const keyFile = () => path.join(app.getPath('userData'), 'remote-hermes-keys.json');
   const inflight = new Map();
@@ -31,6 +32,13 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, getPrefs,
     return normalizeRemoteConfig(prefs.remoteHermes || {});
   }
   const client = createRemoteHermesClient({ getConfig: config, getKey });
+  let tailscaleCache = { at: 0, value: null };
+  async function tailscaleStatus() {
+    if (tailscaleCache.value && Date.now() - tailscaleCache.at < 15000) return tailscaleCache.value;
+    const value = await checkTailscale().catch(() => ({ installed: false, connected: false, detail: 'Could not check Tailscale.', installUrl: installUrl() }));
+    tailscaleCache = { at: Date.now(), value };
+    return value;
+  }
 
   function publicState() {
     let cfg;
@@ -51,7 +59,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, getPrefs,
   async function command(name, value = {}) {
     const prefs = getPrefs();
     switch (name) {
-      case 'remote-hermes-state': return publicState();
+      case 'remote-hermes-state': return { ...publicState(), tailscale: await tailscaleStatus() };
       case 'remote-hermes-config': {
         const next = normalizeRemoteConfig({ ...(prefs.remoteHermes || {}), ...value });
         prefs.remoteHermes = next;
@@ -76,6 +84,11 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, getPrefs,
         return { ...publicState(), health, sessionChat: features.session_chat_streaming === true, model: caps?.model || caps?.model_name || '' };
       }
       case 'open-remote-hermes': open(); return publicState();
+      case 'remote-hermes-install-tailscale': {
+        const status = await tailscaleStatus();
+        await shell.openExternal(assertInstallUrl(status.installUrl));
+        return { ...publicState(), tailscale: status };
+      }
       default: return undefined;
     }
   }
