@@ -65,8 +65,22 @@ function remoteHermesDefaults(platform = process.platform) {
 function baseUrl(config) {
   const cfg = normalizeRemoteConfig(config);
   if (!cfg.host) throw new Error('Set the Remote Hermes host first.');
-  const host = cfg.host.includes(':') && !cfg.host.startsWith('[') ? `[${cfg.host}]` : cfg.host;
-  return `http://${host}:${cfg.port}${cfg.profile ? `/p/${cfg.profile}` : ''}`;
+  return profileBase(cfg, cfg.profile || 'default');
+}
+
+/** `default` is the unprefixed gateway. Any other name is `/p/<profile>`. */
+function resolveProfile(config, override) {
+  if (override === undefined || override === null) return config.profile || 'default';
+  const raw = String(override).trim().toLowerCase();
+  if (!raw || raw === 'default') return 'default';
+  if (!PROFILE_RE.test(raw)) throw new Error('Hermes profile names are lowercase letters, digits, "-" and "_".');
+  return raw;
+}
+
+function profileBase(config, profileName) {
+  const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
+  const prefix = profileName && profileName !== 'default' ? `/p/${profileName}` : '';
+  return `http://${host}:${config.port}${prefix}`;
 }
 
 function redactKey(text, key) {
@@ -105,11 +119,12 @@ function createSseParser(onEvent) {
 function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fetch, timeoutMs = 15000 } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('fetch is unavailable');
 
-  async function request(method, path, { body, query, stream = false, signal } = {}) {
+  async function request(method, path, { body, query, stream = false, signal, profile } = {}) {
     const config = normalizeRemoteConfig(getConfig());
-    const key = await getKey(config.profile || 'default');
-    if (!key) throw new Error(`No API key saved for Hermes profile "${config.profile || 'default'}".`);
-    const url = new URL(baseUrl(config) + path);
+    const profileName = resolveProfile(config, profile);
+    const key = await getKey(profileName);
+    if (!key) throw new Error(`No API key saved for Hermes profile "${profileName}".`);
+    const url = new URL(profileBase(config, profileName) + path);
     for (const [k, v] of Object.entries(query || {})) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
     const controller = new AbortController();
     const timer = stream ? null : setTimeout(() => controller.abort(), timeoutMs);
@@ -147,13 +162,13 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
     },
     capabilities: () => request('GET', '/v1/capabilities'),
     skills: () => request('GET', '/v1/skills'),
-    listSessions: ({ source, limit = 50, offset = 0 } = {}) => request('GET', '/api/sessions', { query: { source, limit, offset } }),
-    getSession: (id) => request('GET', `/api/sessions/${encodeURIComponent(id)}`),
-    messages: (id) => request('GET', `/api/sessions/${encodeURIComponent(id)}/messages`, { query: { inline_images: 'false' } }),
-    createSession: (title) => request('POST', '/api/sessions', { body: title ? { title: String(title).slice(0, 200) } : {} }),
+    listSessions: ({ source, limit = 50, offset = 0, profile } = {}) => request('GET', '/api/sessions', { query: { source, limit, offset }, profile }),
+    getSession: (id, { profile } = {}) => request('GET', `/api/sessions/${encodeURIComponent(id)}`, { profile }),
+    messages: (id, { profile } = {}) => request('GET', `/api/sessions/${encodeURIComponent(id)}/messages`, { query: { inline_images: 'false' }, profile }),
+    createSession: (title, { profile } = {}) => request('POST', '/api/sessions', { body: title ? { title: String(title).slice(0, 200) } : {}, profile }),
     /** Run one turn in an existing session; calls onEvent for each SSE event. Resolves with the final assistant text. */
-    async chat(id, input, { onEvent = () => {}, signal } = {}) {
-      const response = await request('POST', `/api/sessions/${encodeURIComponent(id)}/chat/stream`, { body: { input: String(input) }, stream: true, signal });
+    async chat(id, input, { onEvent = () => {}, signal, profile } = {}) {
+      const response = await request('POST', `/api/sessions/${encodeURIComponent(id)}/chat/stream`, { body: { input: String(input) }, stream: true, signal, profile });
       let finalText = '';
       let failed = null;
       const feed = createSseParser((evt) => {
@@ -170,4 +185,4 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
   };
 }
 
-module.exports = { DEFAULT_PORT, VPS_HOST, remoteHermesDefaults, isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient };
+module.exports = { DEFAULT_PORT, PROFILE_RE, VPS_HOST, remoteHermesDefaults, isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient };

@@ -3,6 +3,8 @@ name: windows-installer
 on:
   workflow_dispatch:
   push:
+    branches:
+      - cursor/intelio-harness-layer-8db4
     tags:
       - "v*"
 
@@ -42,11 +44,15 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             TAG="$GITHUB_REF_NAME"
           else
-            TAG="windows-build-${GITHUB_SHA::12}"
+            TAG="v0.3.0-intelio-windows"
           fi
           NOTES="Unsigned per-user Intelio installer (NSIS, x64). Private draft only — do not publish this release. Windows SmartScreen: More info, then Run anyway. See docs/intelio-windows-and-mobile.md."
-          gh release create "$TAG" dist/Intelio-Setup-*.exe \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft \
-            --title "Intelio Windows $TAG" \
-            --notes "$NOTES"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/Intelio-Setup-*.exe --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/Intelio-Setup-*.exe \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "Intelio Windows $TAG" \
+              --notes "$NOTES"
+          fi

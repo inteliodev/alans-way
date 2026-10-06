@@ -50,7 +50,7 @@ INTELIO_LINUX_DEMO=1 HERMES_WORKSPACE_DATA=/tmp/intelio-alans-way-demo npm start
 
 ## Remote Hermes (VPS)
 
-The VPS runs the single Hermes brain; this app is a client of it over Tailscale through the Hermes API server (same sessions and memory as Telegram). Configure host, port, and profile under Settings → Remote Hermes (VPS), then open Window → Remote Hermes (VPS). The profile key arrives as `remote-hermes-key.import` in the Hermes Workspace folder; Intelio encrypts it and deletes that file. Details, security model and VPS setup: [docs/intelio-remote-hermes.md](docs/intelio-remote-hermes.md). The Windows installer, Tailscale phone sign-in, and on-VPS voice are in [docs/intelio-windows-and-mobile.md](docs/intelio-windows-and-mobile.md).
+The VPS runs the single Hermes brain; this app is a client of it over Tailscale through the Hermes API server (same sessions and memory as Telegram). When Remote Hermes is on, the main window’s agents, sessions, and chat use that API. The import file `remote-hermes-key.import` can hold one `profile=key` line per profile (`API_SERVER_KEY` still means intelio); Intelio encrypts them and deletes that file. Details, security model and VPS setup: [docs/intelio-remote-hermes.md](docs/intelio-remote-hermes.md). The Windows installer, Tailscale phone sign-in, and on-VPS voice are in [docs/intelio-windows-and-mobile.md](docs/intelio-windows-and-mobile.md).
 
 ## Safety defaults
 

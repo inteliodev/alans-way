@@ -6,15 +6,38 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeRemoteConfig, createRemoteHermesClient, redactKey } = require('./remote-hermes.cjs');
+const { normalizeRemoteConfig, createRemoteHermesClient, redactKey, PROFILE_RE } = require('./remote-hermes.cjs');
+const { createRemoteMain } = require('./remote-main-data.cjs');
 const { checkTailscale, assertInstallUrl, installUrl } = require('./tailscale.cjs');
 
-function keyFromImport(text) {
+function unquote(value) {
+  return String(value || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
+/** Several `profile=key` lines. A lone raw line, or `API_SERVER_KEY=`, is the intelio key. */
+function keysFromImport(text) {
   const lines = String(text || '').replace(/^\uFEFF/, '').split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
-  const line = lines[0] || '';
-  const named = line.match(/^(?:export\s+)?API_SERVER_KEY\s*=\s*(.*)$/);
-  const value = (named ? named[1] : line).trim().replace(/^['"]|['"]$/g, '');
-  return value;
+  const keys = {};
+  if (lines.length === 1 && !lines[0].includes('=')) {
+    const value = unquote(lines[0]);
+    if (value.length >= 16) keys.intelio = value;
+    return keys;
+  }
+  for (const line of lines) {
+    const named = line.match(/^(?:export\s+)?([A-Za-z0-9_-]+)\s*=\s*(.*)$/);
+    if (!named) continue;
+    const value = unquote(named[2]);
+    if (value.length < 16) continue;
+    if (/^API_SERVER_KEY$/i.test(named[1])) { keys.intelio = value; continue; }
+    const profile = named[1].trim().toLowerCase();
+    if (!PROFILE_RE.test(profile)) continue;
+    keys[profile] = value;
+  }
+  return keys;
+}
+
+function keyFromImport(text) {
+  return keysFromImport(text).intelio || '';
 }
 
 function secureDelete(file, fsImpl = fs) {
@@ -33,25 +56,25 @@ function secureDelete(file, fsImpl = fs) {
 function importRemoteHermesKey({ file, profile, safeStorage, readKeys, writeKeys, fsImpl = fs }) {
   if (!fsImpl.existsSync(file)) return { imported: false };
   const st = fsImpl.statSync(file);
-  if (st.size > 4096) {
+  if (st.size > 16384) {
     secureDelete(file, fsImpl);
     return { imported: false, refused: true };
   }
-  const key = keyFromImport(fsImpl.readFileSync(file, 'utf8'));
-  if (key.length < 16) {
+  const parsed = keysFromImport(fsImpl.readFileSync(file, 'utf8'));
+  const names = Object.keys(parsed);
+  if (!names.length) {
     secureDelete(file, fsImpl);
     return { imported: false, refused: true };
   }
   if (!safeStorage || !safeStorage.isEncryptionAvailable()) return { imported: false, unavailable: true };
   const keys = readKeys();
-  const name = profile || 'default';
-  keys[name] = safeStorage.encryptString(key).toString('base64');
+  for (const name of names) keys[name] = safeStorage.encryptString(parsed[name]).toString('base64');
   writeKeys(keys);
   secureDelete(file, fsImpl);
-  return { imported: true, notice: 'Connected to VPS Hermes' };
+  return { imported: true, profiles: names, notice: 'Connected to VPS Hermes', profile: profile || names[0] };
 }
 
-function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs, savePreferences, root, rendererSandbox, icon, background }) {
+function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs, savePreferences, getMainWindow, root, rendererSandbox, icon, background }) {
   let chatWindow = null;
   const keyFile = () => path.join(app.getPath('userData'), 'remote-hermes-keys.json');
   const inflight = new Map();
@@ -74,6 +97,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return normalizeRemoteConfig(prefs.remoteHermes || {});
   }
   const client = createRemoteHermesClient({ getConfig: config, getKey });
+  const mainData = createRemoteMain({ getConfig: config, getKey, keyNames: () => Object.keys(readKeys()) });
   let startupNotice = '';
   try {
     const imported = importRemoteHermesKey({
@@ -104,10 +128,10 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   }
 
   function trusted(event) {
-    try {
-      const ok = chatWindow && !chatWindow.isDestroyed() && event.sender === chatWindow.webContents && event.senderFrame === event.sender.mainFrame && event.sender.getURL().startsWith('file:');
-      if (!ok) throw new Error();
-    } catch { throw new Error('Untrusted Remote Hermes request.'); }
+    const mainWindow = typeof getMainWindow === 'function' ? getMainWindow() : null;
+    const windows = [chatWindow, mainWindow].filter((item) => item && !item.isDestroyed());
+    const ok = windows.some((item) => event.sender === item.webContents && event.senderFrame === event.sender.mainFrame && event.sender.getURL().startsWith('file:'));
+    if (!ok) throw new Error('Untrusted Remote Hermes request.');
   }
 
   /** Settings commands, called from the main window's existing trusted workspace:command handler. */
@@ -151,13 +175,18 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   function register() {
     ipcMain.handle('remote-hermes', async (event, name, value = {}) => {
       trusted(event);
-      const key = await getKey(config().profile || 'default').catch(() => '');
+      const profileHint = value.profile ? String(value.profile) : (config().profile || 'default');
+      const key = await getKey(profileHint).catch(() => '');
       try {
         switch (name) {
           case 'state': return publicState();
-          case 'sessions': return await client.listSessions({ source: value.source, limit: Math.min(Number(value.limit) || 50, 200), offset: Number(value.offset) || 0 });
-          case 'messages': return await client.messages(String(value.id));
-          case 'create-session': return await client.createSession(value.title);
+          case 'agents': return await mainData.listAgents();
+          case 'sessions': {
+            const rows = await mainData.listSessions(value.profile ? String(value.profile) : undefined, { source: value.source, limit: Math.min(Number(value.limit) || 50, 200), offset: Number(value.offset) || 0 });
+            return { data: rows };
+          }
+          case 'messages': return await client.messages(String(value.id), { profile: value.profile });
+          case 'create-session': return await client.createSession(value.title, { profile: value.profile });
           case 'skills': return await client.skills();
           case 'send': {
             const id = String(value.id);
@@ -166,6 +195,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
             try {
               return await client.chat(id, String(value.input || '').slice(0, 100000), {
                 signal: controller.signal,
+                profile: value.profile,
                 onEvent: (evt) => { if (!event.sender.isDestroyed()) event.sender.send('remote-hermes:event', { sessionId: id, event: evt.event, data: evt.data }); },
               });
             } finally { inflight.delete(id); }
@@ -193,4 +223,4 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   return { register, command, open, publicState, startupNotice: () => startupNotice };
 }
 
-module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, secureDelete };
+module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, keysFromImport, secureDelete };

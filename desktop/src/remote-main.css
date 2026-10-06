@@ -1,0 +1,24 @@
+.chat-pane { display: flex; flex-direction: column; min-height: 0; }
+.telegram-slot { flex: 1; min-height: 0; }
+.remote-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #0e0e10; }
+.remote-banner { margin: 10px 14px 0; padding: 4px 8px; width: fit-content; border-radius: 999px; border: 1px solid #6b5420; color: #f3d48a; font-size: 11px; letter-spacing: .04em; }
+.remote-split { flex: 1; min-height: 0; display: grid; grid-template-columns: 188px minmax(0, 1fr); }
+.remote-sessions { list-style: none; margin: 0; padding: 8px; overflow: auto; border-right: 1px solid #232325; }
+.session-item { padding: 8px; border-radius: 10px; cursor: pointer; }
+.session-item.active { background: #1c1c22; }
+.session-meta { margin-bottom: 4px; }
+.source-pill { display: inline-block; font-size: 10px; line-height: 1.4; border: 1px solid #3a3a44; border-radius: 999px; padding: 0 6px; color: #c5c5d0; }
+.session-title { font-size: 13px; }
+.session-preview, .session-empty { color: #8d8d98; font-size: 12px; margin-top: 3px; }
+.remote-thread { display: flex; flex-direction: column; min-height: 0; }
+.remote-messages { flex: 1; overflow: auto; padding: 14px 16px; }
+.msg { margin: 0 0 12px; white-space: pre-wrap; line-height: 1.45; }
+.msg.user { color: #c8c8d2; }
+.msg.assistant { color: #f4f4f8; }
+.remote-composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #232325; }
+.remote-composer input { flex: 1; background: #17171b; border: 1px solid #2c2c32; color: inherit; border-radius: 8px; padding: 8px 10px; }
+.remote-composer button { border-radius: 8px; padding: 8px 12px; background: #24242c; }
+.remote-status { min-height: 18px; margin: 0; padding: 0 12px 8px; color: #9a9aa6; font-size: 12px; }
+.bot-row canvas.orb, #chat-avatar canvas.orb { display: block; border-radius: 50%; }
+.bot-row .avatar { width: 36px; height: 36px; }
+#chat-avatar canvas.orb { width: 28px; height: 28px; }

@@ -52,9 +52,9 @@ Settings → **Remote Hermes (VPS)**:
   (for an SSH tunnel to the VPS) are accepted; anything
   else is refused before a request is made.
 - Port: `8642`. Profile: `intelio` (`default` = unprefixed routes).
-- API key: you do not type it. Place `remote-hermes-key.import` in the app data folder (`Hermes Workspace`) before launch. Intelio encrypts it with Electron
-  `safeStorage` (Windows DPAPI, macOS Keychain, or libsecret) in `remote-hermes-keys.json` (mode 600), securely deletes the import file, and shows **Connected to VPS Hermes**. The key is
-  only used in the main process. It is never sent to a renderer, never logged,
+- API keys: you do not type them. Place `remote-hermes-key.import` in the app data folder (`Hermes Workspace`) before launch. The file can hold several lines, `<profile>=<key>`. A legacy `API_SERVER_KEY=...` line, or a single raw key, is the intelio key. Intelio encrypts every usable line with Electron
+  `safeStorage` (Windows DPAPI, macOS Keychain, or libsecret) in `remote-hermes-keys.json` (mode 600), securely deletes the import file, and shows **Connected to VPS Hermes**. Each `/p/<profile>` route accepts only that profile’s key. Keys are
+  only used in the main process. They are never sent to a renderer, never logged,
   and redacted from errors. A rotated key replaces the stored one when a new import file is present at the next launch.
 - A fresh Windows install starts in this mode already (that host, port 8642, profile `intelio`) and asks for Tailscale if it is missing. See [Windows and the phone](intelio-windows-and-mobile.md).
 
@@ -62,19 +62,20 @@ The phone client reads `~/.hermes/profiles/intelio/.env` on the VPS (mode 600) a
 
 Calls and texts use a separate loopback process, `mobile/phone/bridge.cjs`, on `127.0.0.1:8650`. Caddy at `https://2-24-110-12.sslip.io/twilio/*` is the public front. See [Windows and the phone](intelio-windows-and-mobile.md).
 
-Open the chat with Window → **Remote Hermes (VPS)** (`Cmd+Shift+H`) or the
-Settings button. The left list shows sessions from every surface (filter by
-Telegram / App / CLI / Cron); pick one to read and continue it, or **New**.
+When Remote Hermes is on, the main Intelio window is the client: the agent list, sessions, history, sending, and streaming all use `/p/<profile>/api/sessions` and `/api/sessions/{id}/chat/stream`. The list comes from `/api/home` or `/api/profiles`, then from saved key names, then from the configured profile. Intelio, PRC, Alignment, and HHP keep the phone orb types (connecting, solving, searching, weaving). Sessions from photon/iMessage, Telegram, API, and one-shot stay in that list, each tagged with its source. macOS stays on local Telegram until Remote Hermes is turned on.
+
+Window → **Remote Hermes (VPS)** (`Cmd+Shift+H`) still opens the plain session list for the configured profile.
 
 ## Code
 
-- `desktop/src/intelio/remote-hermes.cjs` — host policy, config, SSE parser, HTTP client.
-- `desktop/src/intelio/remote-hermes-main.cjs` — settings commands, encrypted key store, IPC, window.
-- `desktop/src/remote-hermes.html|css`, `desktop/src/remote-hermes-ui.js` — chat window (CSP `connect-src 'none'`; all traffic via IPC).
-- `desktop/test/remote-hermes.test.cjs` — host policy, redaction, SSE, client against a stub server.
+- `desktop/src/intelio/remote-hermes.cjs` — host policy, config, SSE parser, HTTP client. Each call can name a profile and uses that profile’s key.
+- `desktop/src/intelio/remote-main-data.cjs` — main-window agent list, session tags, and fallbacks.
+- `desktop/src/intelio/remote-hermes-main.cjs` — settings commands, multi-key import, encrypted key store, IPC.
+- `desktop/src/remote-main.js` — profile switcher and chat in the main window.
+- `desktop/src/remote-hermes.html|css`, `desktop/src/remote-hermes-ui.js` — plain chat window (CSP `connect-src 'none'`; all traffic via IPC).
+- `desktop/test/remote-hermes.test.cjs`, `desktop/test/remote-main-data.test.cjs`, `desktop/test/remote-hermes-import.test.cjs` — host policy, the main-window data layer, the switcher, and multi-key import.
 
 ## Not yet
 
-- Multiple profiles at once (one active profile + key at a time; keys are stored per profile).
 - Push instead of polling (Hermes has run SSE per turn, not a session-change feed).
 - Tool approval prompts from API turns (`/v1/runs/{id}/approval`) are not surfaced; ask-first actions wait server-side.

@@ -1,8 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const { injectBrowserAction } = require('electron-chrome-extensions/browser-action');
 if (location.protocol === 'file:' && location.pathname.endsWith('/index.html')) injectBrowserAction();
-// Remote Hermes (VPS) chat window only. The API key stays in the main process.
-if (location.protocol === 'file:' && location.pathname.endsWith('/remote-hermes.html')) {
+// Main window and the plain Remote Hermes window. The API key stays in the main process.
+if (location.protocol === 'file:' && (location.pathname.endsWith('/index.html') || location.pathname.endsWith('/remote-hermes.html'))) {
   contextBridge.exposeInMainWorld('remoteHermes', {
     request: (name, value) => ipcRenderer.invoke('remote-hermes', name, value),
     onEvent: (callback) => { ipcRenderer.on('remote-hermes:event', (_event, value) => callback(value)); },

@@ -70,7 +70,7 @@
   /** Remote Hermes (VPS): this app as a client of the single Hermes on the VPS, over Tailscale only. */
   function appendRemoteHermes(body, { element, command, toast }) {
     body.append(element('h3', '', 'Remote Hermes (VPS)'));
-    body.append(element('p', 'settings-note', 'Chat with the VPS Hermes over Tailscale. Same sessions and memory as Telegram. The host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. Put the profile key in remote-hermes-key.import inside the app data folder before launch. Intelio encrypts it with the operating system (Windows DPAPI, macOS Keychain, or libsecret) and deletes that file. You do not type the key.'));
+    body.append(element('p', 'settings-note', 'When Remote Hermes is on, the main window lists each profile and chats through that profile’s VPS sessions. The host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The import file remote-hermes-key.import can hold several lines, one profile=key per line. A legacy API_SERVER_KEY= line, or a single raw key, is the intelio key. Each profile only accepts its own key. Intelio encrypts them and deletes that file. You do not type the keys.'));
     const status = element('p', 'settings-note', 'Loading…');
     const tail = element('p', 'settings-note', 'Checking Tailscale…');
     tail.id = 'remote-hermes-tailscale';

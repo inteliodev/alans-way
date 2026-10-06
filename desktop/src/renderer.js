@@ -163,26 +163,47 @@ function showExtensions() {
   body.append(element('p', 'settings-note', 'This browser is Chromium, not Chrome — Google sync and Chrome’s built-in password manager are not included. For passwords and passkeys, install your manager’s extension from the Web Store and sign in inside it.'));
   renderExtensions();
 }
+function remoteActive(next = state) {
+  const remote = next?.remoteHermes;
+  return Boolean(remote?.enabled && remote?.host);
+}
 function render(next) {
+  const wasRemote = remoteActive(state);
   state = next;
+  const nowRemote = remoteActive();
+  if (wasRemote !== nowRemote) botListSignature = '';
+  document.body.classList.toggle('remote-main', nowRemote);
+  $('telegram-slot').classList.toggle('hidden', nowRemote);
+  $('telegram-note').classList.toggle('hidden', nowRemote);
+  $('remote-chat')?.classList.toggle('hidden', !nowRemote);
+  $('add-bot').classList.toggle('hidden', nowRemote);
+  $('sort-bots').classList.toggle('hidden', nowRemote);
   window.HermesAvatars.update(state);
   const bot = state.bots.find((item) => item.id === state.selectedBotId);
   document.documentElement.style.setProperty('--chat-width', `${state.chatWidth}px`);
   $('shell').classList.toggle('bots-hidden', state.showBots === false);
   $('bots-toggle').setAttribute('aria-pressed', String(state.showBots !== false));
   $('bots-toggle').title = state.showBots === false ? 'Show agent list' : 'Hide agent list';
-  $('chat-title').textContent = bot?.name || 'Telegram';
-  window.HermesAvatars.paint($('chat-avatar'), bot || { id: '', name: 'Telegram' }, state);
-  $('chat-avatar').title = bot ? `Customize ${bot.name} avatar` : 'Select a bot to customize its avatar';
-  $('agent-presence').classList.toggle('hidden', !bot);
-  if (bot) {
-    window.HermesAvatars.paint($('presence-avatar'), bot, state);
-    $('presence-name').textContent = bot.name;
-    $('presence-status').textContent = window.HermesAvatars.activityLabel(bot.activity);
-    $('presence-status').classList.toggle('active', window.HermesAvatars.isActive(bot.activity));
+  if (nowRemote) {
+    $('chat-title').textContent = window.IntelioRemote?.selectedName() || 'VPS Hermes';
+    $('agent-presence').classList.add('hidden');
+    window.IntelioRemote?.sync(state);
+  } else {
+    $('chat-title').textContent = bot?.name || 'Telegram';
+    window.HermesAvatars.paint($('chat-avatar'), bot || { id: '', name: 'Telegram' }, state);
+    $('chat-avatar').title = bot ? `Customize ${bot.name} avatar` : 'Select a bot to customize its avatar';
+    $('agent-presence').classList.toggle('hidden', !bot);
+    if (bot) {
+      window.HermesAvatars.paint($('presence-avatar'), bot, state);
+      $('presence-name').textContent = bot.name;
+      $('presence-status').textContent = window.HermesAvatars.activityLabel(bot.activity);
+      $('presence-status').classList.toggle('active', window.HermesAvatars.isActive(bot.activity));
+    }
+    renderBots();
   }
-  renderBots(); renderTabs(); renderSettingsBots(); renderSitePermissions(); renderExtensions();
+  renderTabs(); renderSettingsBots(); renderSitePermissions(); renderExtensions();
   window.IntelioUI?.apply(state);
+  if (nowRemote) $('intelio-profile').textContent = `VPS Hermes · ${state.remoteHermes.host}:${state.remoteHermes.port}`;
   const tab = state.tabs.find((item) => item.id === state.activeTabId);
   const remote = state.activeTabId==='vps';
   $('vm-toggle').title = remote ? 'Return to browser' : 'Expand virtual desktop';
@@ -442,8 +463,8 @@ function showAddBot() {
   form.append(field, submit); form.onsubmit = async (event) => { event.preventDefault(); const result = await command('open-username', { username: input.value.trim() }); if (result) closeModal(); };
   $('modal-body').append(form); input.focus();
 }
-$('search-toggle').onclick = () => { $('bot-search').classList.toggle('hidden'); if (!$('bot-search').classList.contains('hidden')) $('bot-search').focus(); else { $('bot-search').value = ''; renderBots(); } };
-$('bot-search').oninput = renderBots;
+$('search-toggle').onclick = () => { $('bot-search').classList.toggle('hidden'); if (!$('bot-search').classList.contains('hidden')) $('bot-search').focus(); else { $('bot-search').value = ''; if (remoteActive()) window.IntelioRemote?.filter(''); else renderBots(); } };
+$('bot-search').oninput = () => { if (remoteActive()) window.IntelioRemote?.filter($('bot-search').value); else renderBots(); };
 $('add-bot').onclick = showAddBot;
 $('settings-button').onclick = showSettings;
 $('settings-fallback').onclick = showSettings;
