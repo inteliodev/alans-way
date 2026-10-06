@@ -56,7 +56,7 @@ Settings → **Remote Hermes (VPS)**:
   `safeStorage` (Windows DPAPI, macOS Keychain, or libsecret) in `remote-hermes-keys.json` (mode 600), securely deletes the import file, and shows **Connected to VPS Hermes**. Each `/p/<profile>` route accepts only that profile’s key. Keys are
   only used in the main process. They are never sent to a renderer, never logged,
   and redacted from errors. A rotated key replaces the stored one when a new import file is present at the next launch.
-- A fresh Windows install starts in this mode already (that host, port 8642, profile `intelio`) and asks for Tailscale if it is missing. See [Windows and the phone](intelio-windows-and-mobile.md).
+- A fresh Windows install starts in this mode already (that host, port 8642, profile `intelio`) even when there is no preferences file. Saved settings that omit the host keep that default. An explicit off switch stays off. With a keystore present, the main window lists those agents and does not show the Telegram sign-in note. If the VPS cannot be reached, or a profile key is rejected, the window shows that error instead of staying on “Loading…”. The first launch also asks for Tailscale if it is missing. See [Windows and the phone](intelio-windows-and-mobile.md).
 
 The phone client reads `~/.hermes/profiles/intelio/.env` on the VPS (mode 600) and signs the browser in by Tailscale login. It does not need this import file.
 
@@ -69,11 +69,13 @@ Window → **Remote Hermes (VPS)** (`Cmd+Shift+H`) still opens the plain session
 ## Code
 
 - `desktop/src/intelio/remote-hermes.cjs` — host policy, config, SSE parser, HTTP client. Each call can name a profile and uses that profile’s key.
-- `desktop/src/intelio/remote-main-data.cjs` — main-window agent list, session tags, and fallbacks.
+- `desktop/src/intelio/orb-signature.cjs` — vendored orb types, so the packaged app does not require the phone tree.
+- `desktop/src/intelio/preferences.cjs` — fresh-profile remote defaults.
+- `desktop/src/intelio/remote-main-data.cjs` — main-window agent list, session tags, and fallbacks. Profile discovery times out, then uses saved key names.
 - `desktop/src/intelio/remote-hermes-main.cjs` — settings commands, multi-key import, encrypted key store, IPC.
 - `desktop/src/remote-main.js` — profile switcher and chat in the main window.
 - `desktop/src/remote-hermes.html|css`, `desktop/src/remote-hermes-ui.js` — plain chat window (CSP `connect-src 'none'`; all traffic via IPC).
-- `desktop/test/remote-hermes.test.cjs`, `desktop/test/remote-main-data.test.cjs`, `desktop/test/remote-hermes-import.test.cjs` — host policy, the main-window data layer, the switcher, and multi-key import.
+- `desktop/test/remote-hermes.test.cjs`, `desktop/test/remote-main-data.test.cjs`, `desktop/test/remote-hermes-import.test.cjs`, `desktop/test/fresh-windows-remote.test.cjs`, `desktop/test/packaged-requires.test.cjs` — host policy, the main-window data layer, the switcher, multi-key import, a fresh Windows profile, and packaged require paths.
 
 ## Not yet
 

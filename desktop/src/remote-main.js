@@ -113,6 +113,23 @@
     return content == null ? '' : JSON.stringify(content);
   }
   function setStatus(text) { const node = $('remote-status'); if (node) node.textContent = text || ''; }
+  function showProfileError(text) {
+    const host = $('intelio-profile');
+    if (host && text) host.textContent = text;
+  }
+  function seedAgents(names, profile) {
+    const stored = [...new Set((names || []).map((name) => String(name || '').trim().toLowerCase()).filter(Boolean))];
+    const named = [
+      { id: 'intelio', name: 'Intelio' },
+      { id: 'prc', name: 'PRC' },
+      { id: 'alignment', name: 'Alignment' },
+      { id: 'hhp', name: 'HHP' },
+    ].filter((agent) => stored.includes(agent.id)).map((agent) => ({ ...agent, orb: signatureOf(agent.id) }));
+    if (named.length) return named;
+    const fallback = String(profile || 'intelio').trim().toLowerCase() || 'intelio';
+    const known = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+    return [{ id: fallback, name: known[fallback] || fallback.slice(0, 1).toUpperCase() + fallback.slice(1), orb: signatureOf(fallback) }];
+  }
   function selectedAgent() { return ui.agents.find((agent) => agent.id === ui.selected) || null; }
 
   function mountOrb(canvas, id, orb, px, paused) {
@@ -169,7 +186,7 @@
       const heading = empty.querySelector('h3');
       const note = empty.querySelector('p');
       if (heading) heading.textContent = 'Agents on the VPS';
-      if (note) note.textContent = ui.agents.length ? 'No agents match that search.' : 'Loading agents from Hermes…';
+      if (note) note.textContent = rows.length ? 'No agents match that search.' : (ui.keyless ? 'No API keys saved for the VPS.' : 'Loading agents from Hermes…');
     }
     paintHeader();
   }
@@ -232,7 +249,7 @@
     const send = $('remote-send');
     if (input) input.disabled = false;
     if (send) send.disabled = false;
-    try { await loadMessages(id); } catch (error) { setStatus(error.message); }
+    try { await loadMessages(id); } catch (error) { setStatus(error.message); showProfileError(error.message); }
   }
 
   async function selectAgent(id) {
@@ -246,6 +263,7 @@
       ui.sessions = [];
       paintSessions();
       setStatus(`No key saved for ${id}.`);
+      showProfileError(`No key saved for ${id}.`);
       const input = $('remote-input');
       if (input) input.disabled = true;
       return;
@@ -263,7 +281,7 @@
       paintSessions();
       if (ui.sessions[0]) await openSession(ui.sessions[0].id);
       else setStatus('No sessions for this agent yet. Send a message to start one.');
-    } catch (error) { setStatus(error.message); }
+    } catch (error) { setStatus(error.message); showProfileError(error.message); }
   }
 
   async function refresh() {
@@ -277,7 +295,7 @@
       if (!ui.selected || !ui.agents.some((agent) => agent.id === ui.selected)) ui.selected = ui.agents[0]?.id || '';
       paintAgents();
       if (ui.selected) await selectAgent(ui.selected);
-    } catch (error) { setStatus(error.message); }
+    } catch (error) { setStatus(error.message); showProfileError(error.message); }
   }
 
   function wire() {
@@ -333,10 +351,18 @@
     wire();
     const remote = next?.remoteHermes || {};
     ui.keys = remote.profilesWithKeys || [];
+    ui.keyless = ui.keys.length === 0;
     const stamp = `${remote.host}|${remote.port}|${[...ui.keys].sort().join(',')}`;
     const search = $('bot-search');
     ui.query = search && !search.classList.contains('hidden') ? search.value : ui.query;
-    if (!ui.agents.length) paintAgents();
+    if (!ui.agents.length) {
+      if (ui.keys.length) ui.agents = seedAgents(ui.keys, remote.profile);
+      else {
+        setStatus('No API keys saved for the VPS.');
+        showProfileError('No API keys saved for the VPS.');
+      }
+      paintAgents();
+    }
     if (stamp !== ui.stamp) {
       ui.stamp = stamp;
       refresh();
@@ -362,5 +388,5 @@
     return selectAgent(agent);
   }
 
-  return { signatureOf, accentOf, switcherRows, SAMPLE, sync, filter, refresh, mountSample, selectedName: () => selectedAgent()?.name || '' };
+  return { signatureOf, accentOf, switcherRows, seedAgents, SAMPLE, sync, filter, refresh, mountSample, selectedName: () => selectedAgent()?.name || '' };
 });

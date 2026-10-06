@@ -19,7 +19,7 @@ The installer is one-click and per-user (no admin prompt): Start menu shortcut a
 
 ### First launch
 
-On Windows, when there is no preferences file yet, Remote Hermes is already on:
+On Windows, when there is no preferences file yet, the main window enters Remote Hermes (it does not fall back to the Telegram sign-in screen):
 
 - host `intelio-vps.tail9c1007.ts.net`
 - port `8642`
@@ -35,7 +35,7 @@ The executable is unsigned. Windows shows Microsoft Defender SmartScreen (“Win
 
 ### GitHub Actions
 
-`.github/workflows/windows-installer.yml` runs on `windows-latest` for **Run workflow** (`workflow_dispatch`), for tags `v*`, and for pushes to `cursor/intelio-harness-layer-8db4`. It uploads `Intelio-Setup` as a workflow artifact. A tag push names the draft release after that tag. A branch push attaches `Intelio-Setup-<version>.exe` to the draft release `v0.3.0-intelio-windows`, creating it or replacing the asset if that draft already exists. It does not publish the release.
+`.github/workflows/windows-installer.yml` runs on `windows-latest` for **Run workflow** (`workflow_dispatch`), for tags `v*`, and for pushes to `cursor/intelio-harness-layer-8db4`. It uploads `Intelio-Setup` as a workflow artifact. A tag push names the draft release after that tag. A branch push attaches `Intelio-Setup-<version>.exe` to the draft release `v0.3.1-intelio-windows`, creating it or replacing the asset if that draft already exists. After the installer is built, the workflow runs `Intelio.exe --smoke-test`, which loads the main-process modules and exits 0. It does not publish the release.
 
 Dispatch it from the Actions tab on this branch: `windows-installer` → Run workflow. The run URL looks like `https://github.com/inteliodev/alans-way/actions/workflows/windows-installer.yml`.
 

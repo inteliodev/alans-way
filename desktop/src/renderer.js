@@ -231,7 +231,7 @@ function render(next) {
   $('workspace-status').textContent = tab?.error ? `Page: ${tab.error}` : tab?.loading ? 'Loading…' : tab ? `${tab.controller === 'agent' ? `${agentName}${tab.agentBusy ? ' is working' : ' is browsing'}` : 'You'} in control${tab.controller === 'agent' ? ' · Take over anytime' : ''} · ${tab.host==='vps'?'VPS':'Mac'}${tab.handoff?.phase==='handed_off'?` · Handed off to the ${tab.handoff.destinationHost==='vps'?'VPS':'Mac'} — agents continue there`:tab.handoff&&tab.handoff.phase!=='reviewed'?' · Handoff: review page before continuing':''}` : state.activeTabId === 'vps' ? `VPS · ${state.remoteStatus}` : 'Ready';
   $('connection-status').textContent = state.api.ready ? 'Browser connector ready' : state.api.error ? 'Browser connector unavailable' : 'Browser connector starting…';
   const notes = { login: 'Sign in with your Telegram account. Your bots appear on the left.', connected: 'Your Telegram account · bot chats only', locked: 'Unlock Telegram to load your bot chats.', offline: 'Telegram is offline. Check your connection, then sync in Settings.', loading: 'Connecting to Telegram…' };
-  $('telegram-note').textContent = notes[state.telegramStatus] || notes.loading;
+  if (!nowRemote) $('telegram-note').textContent = notes[state.telegramStatus] || notes.loading;
   scheduleLayout();
 }
 function rect(id) {
@@ -530,5 +530,12 @@ function showRemoteNotice(next) {
   remoteNoticeShown = true;
   toast(next.remoteHermesNotice);
 }
+function showStartupError(message) {
+  const text = message || 'Intelio did not finish starting.';
+  const profile = $('intelio-profile');
+  if (profile) profile.textContent = text;
+  toast(text);
+}
 api.onState((next) => { showRemoteNotice(next); render(next); });
-api.getState().then((next) => { showRemoteNotice(next); render(next); }).catch((error) => toast(error.message));
+api.getState().then((next) => { showRemoteNotice(next); render(next); }).catch((error) => showStartupError(error.message));
+setTimeout(() => { if (!state) showStartupError('Intelio did not finish starting.'); }, 8000);

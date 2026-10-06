@@ -5,7 +5,7 @@
  * as the phone PWA: /api/home (or /api/profiles) and /p/<profile>/api/sessions.
  * Each profile is called with that profile's own API key.
  */
-const { signatureOf } = require('../../../mobile/pwa/orbs.cjs');
+const { signatureOf } = require('./orb-signature.cjs');
 const { createRemoteHermesClient, normalizeRemoteConfig, PROFILE_RE } = require('./remote-hermes.cjs');
 
 const NAMED_AGENTS = [
@@ -49,13 +49,44 @@ function parseProfiles(json) {
   return agents.length ? agents : null;
 }
 
-function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = globalThis.fetch } = {}) {
+function agentsFromKeys(names, profile = 'intelio') {
+  const stored = [...new Set((names || []).map((name) => String(name || '').trim().toLowerCase()).filter(Boolean))];
+  const named = NAMED_AGENTS.filter((agent) => stored.includes(agent.id)).map(decorate);
+  if (named.length) return named;
+  const fallback = String(profile || 'intelio').trim().toLowerCase() || 'intelio';
+  const row = NAMED_AGENTS.find((agent) => agent.id === fallback) || { id: fallback, name: titleCase(fallback) };
+  return [decorate(row)];
+}
+
+function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = globalThis.fetch, probeTimeoutMs = 3000 } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('fetch is unavailable');
   const client = createRemoteHermesClient({ getConfig, getKey, fetchImpl });
 
   function storedNames() {
     const names = typeof keyNames === 'function' ? keyNames() : keyNames;
     return [...new Set((names || []).map((name) => String(name || '').trim().toLowerCase()).filter(Boolean))];
+  }
+
+  async function probe(url, key) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), probeTimeoutMs);
+    try {
+      const response = await fetchImpl(url, {
+        headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+        redirect: 'error',
+        signal: controller.signal,
+      });
+      if (!response?.ok) return null;
+      let json;
+      try { json = await response.json(); } catch { return null; }
+      const agents = parseProfiles(json);
+      if (!agents) return null;
+      return { agents, sample: Boolean(json?.sample), label: json?.sample ? (json.label || 'SAMPLE DATA') : '' };
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async function listAgents() {
@@ -67,34 +98,22 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
     if (!order.length && config.profile) order.push(config.profile);
 
     if (config.host) {
-      const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
-      const root = `http://${host}:${config.port}`;
+      let key = '';
       for (const name of order) {
-        const key = await getKey(name);
-        if (!key) continue;
+        key = await getKey(name);
+        if (key) break;
+      }
+      if (key) {
+        const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
+        const root = `http://${host}:${config.port}`;
         for (const path of ['/api/home', '/api/profiles']) {
-          let response;
-          try {
-            response = await fetchImpl(`${root}${path}`, {
-              headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
-              redirect: 'error',
-            });
-          } catch { continue; }
-          if (!response?.ok) continue;
-          let json;
-          try { json = await response.json(); } catch { continue; }
-          const agents = parseProfiles(json);
-          if (!agents) continue;
-          return { agents, sample: Boolean(json?.sample), label: json?.sample ? (json.label || 'SAMPLE DATA') : '' };
+          const found = await probe(`${root}${path}`, key);
+          if (found) return found;
         }
       }
     }
 
-    const named = NAMED_AGENTS.filter((agent) => stored.includes(agent.id)).map(decorate);
-    if (named.length) return { agents: named, sample: false, label: '' };
-    const fallback = config.profile || 'intelio';
-    const row = NAMED_AGENTS.find((agent) => agent.id === fallback) || { id: fallback, name: titleCase(fallback) };
-    return { agents: [decorate(row)], sample: false, label: '' };
+    return { agents: agentsFromKeys(stored, config.profile || 'intelio'), sample: false, label: '' };
   }
 
   async function listSessions(profile, { source, limit = 100, offset = 0 } = {}) {
@@ -114,4 +133,4 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
   };
 }
 
-module.exports = { NAMED_AGENTS, sourceLabel, createRemoteMain };
+module.exports = { NAMED_AGENTS, sourceLabel, agentsFromKeys, createRemoteMain };

@@ -30,6 +30,13 @@ jobs:
         run: |
           npm ci
           npm run package:win
+      - name: Smoke-test the packaged app
+        timeout-minutes: 3
+        run: |
+          $exe = Join-Path $pwd "dist\win-unpacked\Intelio.exe"
+          if (-not (Test-Path $exe)) { throw "packaged exe missing: $exe" }
+          $p = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -Wait -PassThru
+          if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0) { throw "smoke exit $($p.ExitCode)" }
       - name: Upload the unsigned installer
         uses: actions/upload-artifact@v4
         with:
@@ -44,7 +51,7 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             TAG="$GITHUB_REF_NAME"
           else
-            TAG="v0.3.0-intelio-windows"
+            TAG="v0.3.1-intelio-windows"
           fi
           NOTES="Unsigned per-user Intelio installer (NSIS, x64). Private draft only — do not publish this release. Windows SmartScreen: More info, then Run anyway. See docs/intelio-windows-and-mobile.md."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

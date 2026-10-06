@@ -124,7 +124,9 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     let error = '';
     try { cfg = config(); } catch (e) { cfg = { ...(getPrefs().remoteHermes || {}) }; error = e.message; }
     const keys = readKeys();
-    return { ...cfg, hasKey: Boolean(keys[cfg.profile || 'default']), profilesWithKeys: Object.keys(keys), encryptionAvailable: safeStorage.isEncryptionAvailable(), error };
+    let encryptionAvailable = false;
+    try { encryptionAvailable = safeStorage.isEncryptionAvailable(); } catch (e) { error = error || e.message; }
+    return { ...cfg, hasKey: Boolean(keys[cfg.profile || 'default']), profilesWithKeys: Object.keys(keys), encryptionAvailable, error };
   }
 
   function trusted(event) {

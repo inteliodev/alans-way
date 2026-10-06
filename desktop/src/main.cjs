@@ -1,3 +1,9 @@
+if (process.argv.includes('--smoke-test')) {
+  process.on('uncaughtException', (error) => {
+    process.stderr.write(`${error && error.stack || error}\n`);
+    process.exit(1);
+  });
+}
 const { app, BrowserWindow, WebContentsView, ipcMain, Menu, dialog, clipboard, shell, nativeTheme, screen, nativeImage, session, safeStorage } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -19,7 +25,7 @@ const { agentNavigationDecision } = require('./intelio/safety.cjs');
 const { loadIntelio, publicIntelioState, pngIcon } = require('./intelio/bridge.cjs');
 const { agents, agentsSetup } = require('./intelio/forks.cjs');
 const { setupRemoteHermes } = require('./intelio/remote-hermes-main.cjs');
-const { remoteHermesDefaults } = require('./intelio/remote-hermes.cjs');
+const { loadPreferences } = require('./intelio/preferences.cjs');
 const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
 
 if (!applyLinuxDemo(app)) app.enableSandbox();
@@ -70,21 +76,17 @@ let pointerTimer, activityTimer, idleTimer;
 let tailscaleFirstRun = false;
 
 function readPreferences() {
-  const defaults = { bots: [], order: [], hidden: [], selectedBotId: '', accountId: '', remoteUrl: '', chatWidth: 490, preview: true, previewPos: null, showBots: true, showBrowser: true, savedTabs: [], avatarLibrary: [], avatarPreferences: {}, locationDefault: 'approximate', sitePermissions: {}, browserExtensions: [], vpsBrowser: {}, remoteHermes: remoteHermesDefaults(process.platform), agentIdleMinutes: 15, agentLastTabs: {}, handoffs: [],
-    overseerBots: String(process.env.HERMES_OVERSEER_BOTS || '').split(',').map((id) => id.trim()).filter((id) => id && id.length <= 100) };
   const file = path.join(app.getPath('userData'), 'preferences.json');
-  let text;
-  try { text = fs.readFileSync(file, 'utf8'); } catch {
-    if (process.platform === 'win32') tailscaleFirstRun = true;
-    return { ...defaults, remoteUrl: process.env.HERMES_WORKSPACE_VPS_URL || '' };
-  }
-  try { return { ...defaults, ...JSON.parse(text) }; }
-  catch {
+  let text = null;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { text = null; }
+  const loaded = loadPreferences({ text, platform: process.platform, env: process.env });
+  if (loaded.missing && process.platform === 'win32') tailscaleFirstRun = true;
+  if (loaded.corrupt) {
     // Keep the unreadable file: the next save would otherwise erase every bot,
     // permission and extension record with defaults.
     try { fs.renameSync(file, `${file}.corrupt-${Date.now()}`); } catch {}
-    return { ...defaults, remoteUrl: process.env.HERMES_WORKSPACE_VPS_URL || '' };
   }
+  return loaded.prefs;
 }
 function writePrivateJson(file, data) {
   fs.writeFileSync(`${file}.tmp`, JSON.stringify(data, null, 2), { mode: 0o600 });
@@ -1095,7 +1097,8 @@ function createWindow() {
   registerIpc();
   win.loadFile(path.join(ROOT, 'index.html'));
   remoteView.webContents.loadFile(path.join(ROOT, 'remote.html'));
-  telegramView.webContents.loadURL(prefs.selectedBotId ? `${TELEGRAM}#${prefs.selectedBotId}` : TELEGRAM).catch(() => {});
+  const remoteOn = Boolean(prefs?.remoteHermes?.enabled && prefs?.remoteHermes?.host);
+  if (!remoteOn) telegramView.webContents.loadURL(prefs.selectedBotId ? `${TELEGRAM}#${prefs.selectedBotId}` : TELEGRAM).catch(() => {});
   for (const item of prefs.savedTabs.slice(0, 12)) { try { createTab({ url: item.url, botId: item.botId, activate: false }); } catch {} }
   activeTabId = 'home';
   win.on('enter-full-screen', broadcast); win.on('leave-full-screen', broadcast);
@@ -1129,7 +1132,23 @@ function createWindow() {
   }, 30000).unref();
   vpsTimer=setInterval(refreshVpsTabs,5000);vpsTimer.unref();refreshVpsTabs();
 }
-if (!app.requestSingleInstanceLock()) app.quit();
+if (process.argv.includes('--smoke-test')) {
+  const { runPackagedSmoke } = require('./intelio/smoke.cjs');
+  app.whenReady().then(() => {
+    let code = 1;
+    try {
+      code = runPackagedSmoke();
+      process.stdout.write(code === 0 ? 'smoke ok\n' : 'smoke failed\n');
+    } catch (error) {
+      process.stderr.write(`${error && error.stack || error}\n`);
+      code = 1;
+    }
+    app.exit(code);
+  }).catch((error) => {
+    process.stderr.write(`${error && error.stack || error}\n`);
+    app.exit(1);
+  });
+} else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.whenReady().then(async () => {
     app.setAccessibilitySupportEnabled(true); prefs = readPreferences(); prefs.remoteControl = false;
