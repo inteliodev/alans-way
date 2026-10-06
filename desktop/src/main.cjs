@@ -1152,7 +1152,12 @@ if (process.argv.includes('--smoke-test')) {
 else {
   app.whenReady().then(async () => {
     app.setAccessibilitySupportEnabled(true); prefs = readPreferences(); prefs.remoteControl = false;
-    intelioSession = loadIntelio({ argv: process.argv, prefs });
+    if (process.env.INTELIO_E2E === '1') {
+      process.stderr.write('intelio e2e: skip profile loader\n');
+      intelioSession = { ok: false, error: 'e2e', browsingOrigins: [], public: { ok: false, error: 'Profile skipped for the packaged check.', brand: { windowTitle: 'Intelio', tokens: {} }, hermes: {} } };
+    } else {
+      intelioSession = loadIntelio({ argv: process.argv, prefs });
+    }
     remoteHermes = setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs: () => prefs, savePreferences, getMainWindow: () => win, root: ROOT, rendererSandbox,
       icon: nativeImage.createFromBuffer(pngIcon()), background: intelioSession?.public?.brand?.tokens?.background });
     try { parseRemoteUrl(prefs.remoteUrl); } catch { prefs.remoteUrl = ''; }
@@ -1183,7 +1188,12 @@ else {
     });
     extensionStore = createExtensionStore({ root: app.getPath('userData'), session: browserSession, dialog, nativeImage, getWindow: () => win, getPreferences: () => prefs, savePreferences, onChanged: broadcast,
       canInstall: frame => [...tabs.values()].some(tab => tab.id === activeTabId && tab.controller === 'human' && tab.view.webContents.mainFrame === frame && !layout.obscured) });
-    await extensionStore.installStore(); createWindow(); await extensionStore.restore(); broadcast();
+    if (process.env.INTELIO_E2E === '1') process.stderr.write('intelio e2e: open window\n');
+    else await extensionStore.installStore();
+    createWindow();
+    if (process.env.INTELIO_E2E !== '1') await extensionStore.restore();
+    broadcast();
+    if (process.env.INTELIO_E2E === '1') process.stderr.write('intelio e2e: window ready\n');
     if (tailscaleFirstRun) {
       checkTailscale().then(async (status) => {
         const prompt = firstRunMessage(status);

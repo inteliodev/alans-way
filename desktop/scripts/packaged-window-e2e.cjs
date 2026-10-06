@@ -3,11 +3,12 @@
  * Launch the packaged Windows app against a fake Hermes and assert the main
  * window actually renders agents. Run from desktop/ on windows-latest.
  */
+const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const { _electron: electron } = require('playwright-core');
+const { chromium } = require('playwright-core');
 
 const KEYS = {
   intelio: 'i'.repeat(32),
@@ -68,22 +69,54 @@ async function main() {
   }));
   fs.writeFileSync(path.join(userData, 'remote-hermes-key.import'), Object.entries(KEYS).map(([name, key]) => `${name}=${key}`).join('\n'));
 
-  let app;
+  const child = spawn(exe, ['--remote-debugging-port=0', '--disable-gpu'], {
+    cwd: path.dirname(exe),
+    env: {
+      ...process.env,
+      HERMES_WORKSPACE_DATA: userData,
+      INTELIO_E2E: '1',
+      INTELIO_PYTHON: 'intelio-no-python',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: false,
+  });
+  let browser;
   let page;
+  let errBuf = '';
+  const waitForDevtools = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`DevTools port did not open\n${errBuf.slice(-2000)}`)), 60000);
+    const take = (chunk) => {
+      const text = chunk.toString();
+      errBuf += text;
+      process.stderr.write(text);
+      const match = /DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/\S+)/.exec(errBuf);
+      if (!match) return;
+      clearTimeout(timer);
+      resolve(match[1]);
+    };
+    child.stderr.on('data', take);
+    child.on('exit', (code) => reject(new Error(`Intelio exited ${code} before DevTools opened\n${errBuf.slice(-2000)}`)));
+  });
+  child.stdout.on('data', (chunk) => process.stdout.write(chunk));
   try {
-    app = await electron.launch({
-      executablePath: exe,
-      cwd: path.dirname(exe),
-      args: ['--disable-gpu'],
-      timeout: 90000,
-      env: {
-        ...process.env,
-        HERMES_WORKSPACE_DATA: userData,
-        INTELIO_PYTHON: 'intelio-no-python',
-      },
-    });
-    page = await app.firstWindow();
-    await page.waitForFunction(() => document.querySelectorAll('#bot-list .bot-row').length === 4, null, { timeout: 60000 });
+    const ws = await waitForDevtools;
+    const port = new URL(ws).port;
+    const deadline = Date.now() + 60000;
+    let pageUrl = '';
+    while (Date.now() < deadline) {
+      try {
+        const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+        const hit = list.find((item) => item.type === 'page' && /index\.html/.test(item.url || ''));
+        if (hit) { pageUrl = hit.url; break; }
+      } catch { /* port is up before the window */ }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!pageUrl) throw new Error('main window did not open');
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+    const pages = browser.contexts().flatMap((context) => context.pages());
+    page = pages.find((item) => item.url().includes('index.html')) || pages[0];
+    if (!page) throw new Error('CDP connected without a page');
+    await page.waitForFunction(() => document.querySelectorAll('#bot-list .bot-row').length === 4, null, { timeout: 30000 });
     await page.waitForFunction(() => document.querySelectorAll('#remote-sessions .session-item').length >= 1, null, { timeout: 20000 });
     await page.screenshot({ path: shot });
     const status = (await page.locator('#remote-status').innerText()).trim();
@@ -100,7 +133,9 @@ async function main() {
     if (page) await page.screenshot({ path: shot }).catch(() => {});
     throw error;
   } finally {
-    if (app) await app.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
+    if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
+    else child.kill();
     server.close();
   }
 }
