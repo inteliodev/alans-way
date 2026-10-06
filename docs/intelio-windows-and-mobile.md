@@ -111,6 +111,22 @@ That rule is interface-scoped. Do not add the port on the public interface, and 
 
 This installer restarts `intelio-pwa.service` only. It does not restart `hermes-gateway`. A new agent’s `/p/<profile>` route appears after the phone asks, and you confirm, `systemctl --user restart hermes-gateway`. That restart drops Telegram for a moment.
 
+## Twilio phone bridge
+
+Caddy on the VPS is the public front. `https://2-24-110-12.sslip.io/twilio/*` proxies to `127.0.0.1:8650/twilio/*` with the path preserved, WebSocket upgrades, and a 64KB body limit. The bridge process listens on loopback only. It does not open a firewall port.
+
+`mobile/phone/bridge.cjs` checks `X-Twilio-Signature` against `PHONE_PUBLIC_BASE` plus the path (`https://2-24-110-12.sslip.io/twilio/sms`, `/voice`, and `wss://2-24-110-12.sslip.io/twilio/relay`). A request signed for any other host is rejected. SMS for a number in `PHONE_NUMBER_PROFILES` is forwarded, raw body and signature unchanged, to that profile's `/webhooks/twilio`. Voice answers only `PHONE_ALLOWED_CALLERS` (default `+19188991650`) with ConversationRelay; every other caller gets `<Reject reason="rejected"/>`. The relay uses a one-time nonce from that answer, opens a Hermes session titled `Phone call`, and streams a short spoken reply. Logs mask numbers and never include the request body or a profile key.
+
+`bash mobile/deploy/install-phone-bridge.sh` installs the user service `intelio-phone-bridge.service` and reads `~/.config/intelio-phone/env` (mode 600). A later run leaves that file in place. `--dry-run` prints the loopback bind and the Caddy paths and writes nothing. The installer does not edit Caddy, does not open UFW, and does not restart `hermes-gateway`. Set `SMS_WEBHOOK_URL=https://2-24-110-12.sslip.io/twilio/sms` on each profile that should receive texts, then restart the gateway yourself when you want Hermes to check that same signature.
+
+```
+PHONE_PUBLIC_BASE=https://2-24-110-12.sslip.io/twilio
+PHONE_ALLOWED_CALLERS=+19188991650
+PHONE_NUMBER_PROFILES=+1918...=intelio,+1...=prc
+```
+
+Twilio's voice webhook is `https://2-24-110-12.sslip.io/twilio/voice` and the SMS webhook is `https://2-24-110-12.sslip.io/twilio/sms`.
+
 Open `http://intelio-vps.tail9c1007.ts.net:8643` (or `https://` after `tailscale cert`) from a phone that is on the tailnet as an allowed login. The page opens signed in. The gear in the top bar and the Settings row in the drawer open voice mode, the Tailscale sign-in, appearance, and the version. Appearance follows the phone until you tap Light or Dark; that choice is stored in `localStorage` as `intelio-theme` and updates the status bar. Each agent is a dotted thought-orb from `inteliodev/thinking-orbs` at `de85557ca220332586d070d8788c0e1d6e877a0d` (MIT, Jakub Antalik). Intelio is the connecting constellation, PRC is solving, Alignment is the searching globe, HHP is weaving, and Kid A is composing. Any other profile id picks one of the remaining types (working, listening, breathing, shaping) from a hash, and keeps a soft halo in its hue. Lists hold a still frame of that signature. The home hero, the chat, and the call play the live activity when the agent is working, searching, listening, or speaking, and otherwise drift gently in the signature type. The home-screen icon is a still Intelio constellation on the site’s dark background. Home and the drawer list the Hermes profiles on this machine. Chats and calls for a profile go to the shared gateway at `/p/<profile>/`. New agent asks for a lowercase name, an optional one-line description, and an optional profile to copy skills from. It does not copy credentials. The bottom bar is Chat and Sessions. Library appears when `GET /v1/skills` succeeds, and Goals when `GET /api/jobs` succeeds. There is no Ideas tab. Telegram, app, and CLI sessions are the same list the desktop uses. Screenshot layouts with several profiles are sample data, labeled SAMPLE DATA, and only run when the bind is loopback.
 
 ## What you do

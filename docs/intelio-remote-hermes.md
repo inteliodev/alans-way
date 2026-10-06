@@ -60,6 +60,8 @@ Settings → **Remote Hermes (VPS)**:
 
 The phone client reads `~/.hermes/profiles/intelio/.env` on the VPS (mode 600) and signs the browser in by Tailscale login. It does not need this import file.
 
+Calls and texts use a separate loopback process, `mobile/phone/bridge.cjs`, on `127.0.0.1:8650`. Caddy at `https://2-24-110-12.sslip.io/twilio/*` is the public front. See [Windows and the phone](intelio-windows-and-mobile.md).
+
 Open the chat with Window → **Remote Hermes (VPS)** (`Cmd+Shift+H`) or the
 Settings button. The left list shows sessions from every surface (filter by
 Telegram / App / CLI / Cron); pick one to read and continue it, or **New**.

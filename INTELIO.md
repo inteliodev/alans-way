@@ -88,7 +88,7 @@ cd desktop && npm run check
 ## Not wired
 
 - A git submodule for `inteliodev/intelio-harness`. This checkout vendors commit `996267ba526254310a029e3c63825561e470c654` because the private repo was not cloneable from here. The files are that commit's export.
-- Spawning a local Hermes gateway or TUI. The app only probes `hermes --version`. For chat it is a client of the VPS Hermes instead: see [Remote Hermes (VPS) mode](docs/intelio-remote-hermes.md).
+- Spawning a local Hermes gateway or TUI. The app only probes `hermes --version`. For chat it is a client of the VPS Hermes instead: see [Remote Hermes (VPS) mode](docs/intelio-remote-hermes.md). The Twilio bridge on the VPS is also a client of that gateway: Caddy at `https://2-24-110-12.sslip.io/twilio/*` proxies to `127.0.0.1:8650`. See [Windows and the phone](docs/intelio-windows-and-mobile.md).
 - Installing profile `skills` into Hermes, or hiding panes based on `panels`. Both are shown in Settings.
 - The companion Mac file server (`hermes_companion.mac_server`) still uses its own `--workspace` and still refuses non-Darwin hosts. Call `alans_way.files.bind_folders` before pointing it at a folder if you want the profile bound there.
 - Telegram sign-in, a live VPS, and noVNC. Those stay empty or disconnected until you sign in and paste a viewer URL.
