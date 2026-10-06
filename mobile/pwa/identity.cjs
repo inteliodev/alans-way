@@ -40,7 +40,8 @@ function parseAllowlist(raw) {
 }
 
 function profileKeyPath({ profile = '', env = process.env, home = os.homedir() } = {}) {
-  if (env.INTELIO_PWA_KEY_FILE) return env.INTELIO_PWA_KEY_FILE;
+  const primary = String(env.INTELIO_HERMES_PROFILE || 'intelio');
+  if (env.INTELIO_PWA_KEY_FILE && (!profile || profile === primary)) return env.INTELIO_PWA_KEY_FILE;
   if (profile) return path.join(home, '.hermes', 'profiles', profile, '.env');
   return path.join(home, '.hermes', '.env');
 }

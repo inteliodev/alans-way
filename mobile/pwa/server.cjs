@@ -16,6 +16,8 @@ const { resolveRepoRoot } = require('../../desktop/src/intelio/paths.cjs');
 const { readBrandPng, scalePng } = require('../../desktop/src/intelio/png-icon.cjs');
 const { createVoiceRuntime } = require('./voice.cjs');
 const { normalizeIp, parseAllowlist, profileKeyPath, readProfileKey, createIdentity } = require('./identity.cjs');
+const { renderOrbPng } = require('./orbs.cjs');
+const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
 const STATIC = {
@@ -81,8 +83,9 @@ const SAMPLE_MESSAGES = {
 };
 
 function icons() {
-  const avatar = path.join(PUBLIC, 'avatars', 'intelio.png');
-  const png = fs.existsSync(avatar) ? fs.readFileSync(avatar) : readBrandPng(resolveRepoRoot());
+  let png;
+  try { png = renderOrbPng('intelio', 512); }
+  catch { png = readBrandPng(resolveRepoRoot()); }
   return {
     '/icon-192.png': scalePng(png, 192, 192),
     '/icon-512.png': scalePng(png, 512, 512),
@@ -164,20 +167,22 @@ function createPwaServer({
   allowedLogins = parseAllowlist(process.env.INTELIO_PWA_ALLOWED_LOGINS),
   identify = null,
   log = (line) => process.stderr.write(`${line}\n`),
+  profileHome = process.env.HOME || undefined,
+  profileRun = undefined,
+  profileOps = null,
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
   const upstreamUrl = assertUpstream(upstream);
   const normalized = normalizeRemoteConfig({ host: '127.0.0.1', port: 8642, profile });
   const profileName = normalized.profile;
-  const prefix = profileName ? `/p/${profileName}` : '';
   const sessions = new Map();
   const authFor = new WeakMap();
   const pendingCookies = new WeakMap();
   const iconBytes = icons();
   const runtime = voice || createVoiceRuntime();
   const identity = createIdentity();
-  let cachedKey = profileKey || '';
+  const cachedKeys = new Map();
   let keyError = '';
   let audioApi = false;
   let listedProfiles = null;
@@ -195,22 +200,35 @@ function createPwaServer({
     if (!session || session.exp <= now()) return null;
     return session;
   }
-  function bearerKey() {
-    if (cachedKey) return cachedKey;
+  function bearerKey(profileId) {
+    const id = profileId || profileName;
+    if (cachedKeys.has(id)) return cachedKeys.get(id);
     if (sample) throw new Error('Sample mode does not call Hermes.');
-    if (keyError) throw new Error(keyError);
+    if (profileOps && profileOps.keyFor) {
+      const key = profileOps.keyFor(id);
+      if (!key) throw new Error('Profile key is not available.');
+      cachedKeys.set(id, key);
+      return key;
+    }
+    if (id === profileName && profileKey) {
+      cachedKeys.set(id, profileKey);
+      return profileKey;
+    }
+    if (keyError && id === profileName) throw new Error(keyError);
     try {
-      cachedKey = readProfileKey(profileKeyPath({ profile: profileName }));
-      return cachedKey;
+      const key = readProfileKey(profileKeyPath({ profile: id }));
+      cachedKeys.set(id, key);
+      return key;
     } catch (error) {
-      keyError = String(error.message || 'Profile key is not available.');
-      throw new Error(keyError);
+      const message = String(error.message || 'Profile key is not available.');
+      if (id === profileName) keyError = message;
+      throw new Error(message);
     }
   }
   async function learnFeatures() {
     if (featuresKnown || sample) return;
     try {
-      const probe = await fetchImpl(hermesUrl('/v1/capabilities'), { headers: { Authorization: `Bearer ${bearerKey()}`, Accept: 'application/json' }, redirect: 'error' });
+      const probe = await fetchImpl(hermesUrl(profileName, '/v1/capabilities'), { headers: { Authorization: `Bearer ${bearerKey(profileName)}`, Accept: 'application/json' }, redirect: 'error' });
       const text = await probe.text();
       let json = {};
       if (probe.ok) { try { json = JSON.parse(text); } catch { json = {}; } }
@@ -265,6 +283,14 @@ function createPwaServer({
     if (!req.headers.origin) return true;
     try { return new URL(req.headers.origin).host === req.headers.host; } catch { return false; }
   }
+  function mutationOk(req) {
+    if (!req.headers.origin) return false;
+    return originOk(req);
+  }
+  function chosenProfile(req, body) {
+    const raw = String((body && body.profile) || req.headers['x-intelio-profile'] || profileName || 'intelio').trim().toLowerCase();
+    return assertSlug(raw);
+  }
   function send(res, code, body, headers = {}) {
     const payload = Buffer.from(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
     const type = headers['content-type'] || (Buffer.isBuffer(body) ? 'application/octet-stream' : 'application/json; charset=utf-8');
@@ -286,19 +312,20 @@ function createPwaServer({
     if (!raw.length) return {};
     return JSON.parse(raw.toString('utf8'));
   }
-  function hermesUrl(pathname, query) {
+  function hermesUrl(profileId, pathname, query) {
     const url = new URL(upstreamUrl.toString());
-    url.pathname = prefix + pathname;
+    url.pathname = `/p/${profileId}${pathname}`;
     url.search = '';
     for (const [key, value] of Object.entries(query || {})) if (value) url.searchParams.set(key, value);
     return url;
   }
-  async function forward(req, res, pathname, { method = 'GET', body, query, stream = false } = {}) {
+  async function forward(req, res, pathname, { method = 'GET', body, query, stream = false, profileId } = {}) {
     const session = sessionFrom(req);
     if (!session) return send(res, 401, { error: 'Sign in again.' });
-    const response = await fetchImpl(hermesUrl(pathname, query), {
+    const agent = profileId || chosenProfile(req, body);
+    const response = await fetchImpl(hermesUrl(agent, pathname, query), {
       method,
-      headers: { Authorization: `Bearer ${bearerKey()}`, Accept: stream ? 'text/event-stream' : 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { Authorization: `Bearer ${bearerKey(agent)}`, Accept: stream ? 'text/event-stream' : 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined,
       redirect: 'error',
     });
@@ -352,13 +379,13 @@ function createPwaServer({
     return local.vps ? 'vps' : 'web';
   }
 
-  async function hermesTranscribe(audio, contentType) {
+  async function hermesTranscribe(audio, contentType, profileId) {
     const form = new FormData();
     form.append('file', new Blob([audio], { type: contentType || 'audio/wav' }), 'speech.wav');
     form.append('model', 'whisper-1');
-    const response = await fetchImpl(hermesUrl('/v1/audio/transcriptions'), {
+    const response = await fetchImpl(hermesUrl(profileId, '/v1/audio/transcriptions'), {
       method: 'POST',
-      headers: { Authorization: `Bearer ${bearerKey()}` },
+      headers: { Authorization: `Bearer ${bearerKey(profileId)}` },
       body: form,
       redirect: 'error',
     });
@@ -368,10 +395,10 @@ function createPwaServer({
     return { text: String(json.text || '').trim() };
   }
 
-  async function hermesSpeak(text) {
-    const response = await fetchImpl(hermesUrl('/v1/audio/speech'), {
+  async function hermesSpeak(text, profileId) {
+    const response = await fetchImpl(hermesUrl(profileId, '/v1/audio/speech'), {
       method: 'POST',
-      headers: { Authorization: `Bearer ${bearerKey()}`, 'Content-Type': 'application/json', Accept: 'audio/wav, audio/mpeg, application/octet-stream' },
+      headers: { Authorization: `Bearer ${bearerKey(profileId)}`, 'Content-Type': 'application/json', Accept: 'audio/wav, audio/mpeg, application/octet-stream' },
       body: JSON.stringify({ input: text, model: 'tts-1' }),
       redirect: 'error',
     });
@@ -381,30 +408,54 @@ function createPwaServer({
     return { wav, type };
   }
 
-  function realHome(rows) {
-    const listed = Array.isArray(listedProfiles) && listedProfiles.length
-      ? listedProfiles.map((item, index) => ({
-        id: String(item.id || item.name || `profile-${index}`).slice(0, 80),
-        name: String(item.name || item.id || 'Intelio').slice(0, 80),
-        color: TILES[index % TILES.length].color,
-        status: 'online',
-      }))
-      : [{ id: profileName || 'intelio', name: titleCase(profileName || 'intelio'), color: TILES[0].color, status: 'online' }];
-    const conversations = (Array.isArray(rows) ? rows : []).map((row) => ({
-      id: String(row.id || ''),
-      profileId: listed[0].id,
-      group: String(row.source || 'chat').toLowerCase(),
-      title: String(row.title || 'Conversation').slice(0, 120),
-      preview: String(row.preview || row.last_message || row.title || '').slice(0, 180),
-      time: clockLabel(row.updated_at || row.updatedAt || row.created_at),
-      source: String(row.source || ''),
-    })).filter((row) => ID_RE.test(row.id));
-    return { sample: false, label: '', profiles: listed, conversations, skills: [], jobs: [], skillsOk: false, jobsOk: false };
+  async function loadProfiles() {
+    if (profileOps && profileOps.list) return profileOps.list();
+    return listProfiles({ home: profileHome, run: profileRun });
   }
-  async function optionalList(pathname, normalize) {
+  async function sessionsFor(profileId) {
     try {
-      const response = await fetchImpl(hermesUrl(pathname), {
-        headers: { Authorization: `Bearer ${bearerKey()}`, Accept: 'application/json' },
+      const response = await fetchImpl(hermesUrl(profileId, '/api/sessions', { limit: '100', offset: '0' }), {
+        headers: { Authorization: `Bearer ${bearerKey(profileId)}`, Accept: 'application/json' },
+        redirect: 'error',
+      });
+      const text = await response.text();
+      if (!response.ok) return [];
+      let json = {};
+      try { json = JSON.parse(text); } catch { json = {}; }
+      const rows = json.data || json.sessions || [];
+      return (Array.isArray(rows) ? rows : []).map((row) => ({
+        id: String(row.id || ''),
+        profileId,
+        group: String(row.source || 'chat').toLowerCase(),
+        title: String(row.title || 'Conversation').slice(0, 120),
+        preview: String(row.preview || row.last_message || row.title || '').slice(0, 180),
+        time: clockLabel(row.updated_at || row.updatedAt || row.created_at),
+        source: String(row.source || ''),
+      })).filter((row) => ID_RE.test(row.id));
+    } catch {
+      return [];
+    }
+  }
+  async function realHome() {
+    let listed = [];
+    try { listed = await loadProfiles(); } catch { listed = []; }
+    if (!Array.isArray(listed) || !listed.length) {
+      listed = [{ id: profileName || 'intelio', name: displayName(profileName || 'intelio'), description: '', status: 'online' }];
+    }
+    const profiles = listed.slice(0, 40).map((item) => ({
+      id: String(item.id || '').slice(0, 32),
+      name: String(item.name || displayName(item.id) || 'Agent').slice(0, 80),
+      description: String(item.description || '').slice(0, 240),
+      status: item.status || 'online',
+    })).filter((item) => item.id && item.id !== 'default');
+    const conversations = [];
+    for (const agent of profiles) conversations.push(...await sessionsFor(agent.id));
+    return { sample: false, label: '', profiles, conversations, skills: [], jobs: [], skillsOk: false, jobsOk: false };
+  }
+  async function optionalList(profileId, pathname, normalize) {
+    try {
+      const response = await fetchImpl(hermesUrl(profileId, pathname), {
+        headers: { Authorization: `Bearer ${bearerKey(profileId)}`, Accept: 'application/json' },
         redirect: 'error',
       });
       const text = await response.text();
@@ -439,17 +490,10 @@ function createPwaServer({
       if (req.method === 'GET' && url.pathname === '/api/home') {
         if (sample) return send(res, 200, SAMPLE_HOME);
         await learnFeatures();
-        const response = await fetchImpl(hermesUrl('/api/sessions', { limit: '100', offset: '0' }), {
-          headers: { Authorization: `Bearer ${bearerKey()}`, Accept: 'application/json' },
-          redirect: 'error',
-        });
-        const text = await response.text();
-        if (!response.ok) return send(res, response.status, { error: 'Hermes did not return conversations.' });
-        let json = {};
-        try { json = JSON.parse(text); } catch { json = {}; }
-        const home = realHome(json.data || json.sessions || []);
-        const skills = await optionalList('/v1/skills', normalizeSkills);
-        const jobs = await optionalList('/api/jobs', normalizeJobs);
+        const home = await realHome();
+        const primary = home.profiles[0]?.id || profileName;
+        const skills = await optionalList(primary, '/v1/skills', normalizeSkills);
+        const jobs = await optionalList(primary, '/api/jobs', normalizeJobs);
         home.skills = skills.list;
         home.jobs = jobs.list;
         home.skillsOk = skills.ok;
@@ -458,15 +502,41 @@ function createPwaServer({
       }
       if (req.method === 'GET' && url.pathname === '/api/skills') {
         if (sample) return send(res, 200, { data: SAMPLE_HOME.skills, sample: true, label: 'SAMPLE DATA' });
-        const skills = await optionalList('/v1/skills', normalizeSkills);
+        const skills = await optionalList(chosenProfile(req), '/v1/skills', normalizeSkills);
         if (!skills.ok) return send(res, 404, { error: 'This Hermes has no skills list.' });
         return send(res, 200, { data: skills.list });
       }
       if (req.method === 'GET' && url.pathname === '/api/jobs') {
         if (sample) return send(res, 200, { data: SAMPLE_HOME.jobs, sample: true, label: 'SAMPLE DATA' });
-        const jobs = await optionalList('/api/jobs', normalizeJobs);
+        const jobs = await optionalList(chosenProfile(req), '/api/jobs', normalizeJobs);
         if (!jobs.ok) return send(res, 404, { error: 'This Hermes has no scheduled jobs.' });
         return send(res, 200, { data: jobs.list });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/profiles') {
+        if (!mutationOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
+        const body = await readBody(req, 8192);
+        if (sample) {
+          const slug = assertSlug(body.name);
+          const summary = String(body.description || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 240);
+          return send(res, 200, { id: slug, name: displayName(slug), description: summary, needsGatewayRestart: true, sample: true, label: 'SAMPLE DATA' });
+        }
+        const created = profileOps && profileOps.create
+          ? await profileOps.create(body)
+          : await createProfile({ name: body.name, description: body.description, cloneFrom: body.cloneFrom, home: profileHome, run: profileRun });
+        return send(res, 200, {
+          id: created.id,
+          name: created.name,
+          description: created.description || '',
+          needsGatewayRestart: true,
+        });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/gateway/restart') {
+        if (!mutationOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
+        await readBody(req, 1024).catch(() => ({}));
+        if (sample) return send(res, 200, { ok: true, sample: true, label: 'SAMPLE DATA' });
+        if (profileOps && profileOps.restart) await profileOps.restart();
+        else await restartGateway({ run: profileRun });
+        return send(res, 200, { ok: true });
       }
       if (req.method === 'GET' && url.pathname === '/api/voice') {
         return send(res, 200, await voiceStatus());
@@ -476,9 +546,10 @@ function createPwaServer({
         if (audio.length < 16) return send(res, 400, { error: 'That recording was empty.' });
         const engine = await resolveEngine(engineChoice(req));
         if (engine === 'web') return send(res, 503, { error: 'Use the on-phone speech engine.', fallback: 'web' });
+        const agent = chosenProfile(req);
         try {
           const result = engine === 'hermes'
-            ? await hermesTranscribe(audio, req.headers['content-type'])
+            ? await hermesTranscribe(audio, req.headers['content-type'], agent)
             : await runtime.transcribe(audio);
           return send(res, 200, { text: result.text || '' });
         } catch (error) {
@@ -493,8 +564,9 @@ function createPwaServer({
         if (!text) return send(res, 400, { error: 'Nothing to speak.' });
         const engine = await resolveEngine(engineChoice(req));
         if (engine === 'web') return send(res, 503, { error: 'Use the on-phone speech engine.', fallback: 'web' });
+        const agent = chosenProfile(req, body);
         try {
-          const spoken = engine === 'hermes' ? await hermesSpeak(text) : await runtime.synthesize(text);
+          const spoken = engine === 'hermes' ? await hermesSpeak(text, agent) : await runtime.synthesize(text);
           const wav = spoken.wav || spoken;
           const type = spoken.type || 'audio/wav';
           return send(res, 200, wav, { 'content-type': type.includes('audio') ? type : 'audio/wav' });
@@ -503,7 +575,7 @@ function createPwaServer({
         }
       }
       if (req.method === 'GET' && url.pathname === '/api/sessions') {
-        return await forward(req, res, '/api/sessions', { query: { source: url.searchParams.get('source') || '', limit: '100', offset: '0' } });
+        return await forward(req, res, '/api/sessions', { query: { source: url.searchParams.get('source') || '', limit: '100', offset: '0' }, profileId: chosenProfile(req) });
       }
       const messages = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages$/);
       if (req.method === 'GET' && messages && ID_RE.test(messages[1])) {
@@ -511,7 +583,7 @@ function createPwaServer({
           if (!sessionFrom(req)) return send(res, 401, { error: 'Sign in again.' });
           return send(res, 200, { data: SAMPLE_MESSAGES[messages[1]], sample: true, label: 'SAMPLE DATA' });
         }
-        return await forward(req, res, `/api/sessions/${messages[1]}/messages`, { query: { inline_images: 'false' } });
+        return await forward(req, res, `/api/sessions/${messages[1]}/messages`, { query: { inline_images: 'false' }, profileId: chosenProfile(req) });
       }
       const chat = url.pathname.match(/^\/api\/sessions\/([^/]+)\/chat$/);
       if (req.method === 'POST' && chat && ID_RE.test(chat[1])) {
@@ -522,22 +594,20 @@ function createPwaServer({
           res.end('event: assistant.delta\ndata: {"delta":"SAMPLE DATA reply."}\n\n');
           return;
         }
-        return await forward(req, res, `/api/sessions/${chat[1]}/chat/stream`, { method: 'POST', body: { input: String(body.input || '').slice(0, 100000) }, stream: true });
+        return await forward(req, res, `/api/sessions/${chat[1]}/chat/stream`, { method: 'POST', body: { input: String(body.input || '').slice(0, 100000) }, stream: true, profileId: chosenProfile(req, body) });
       }
       if (req.method === 'POST' && url.pathname === '/api/sessions') {
         const body = await readBody(req, 4096);
         if (sample) {
           if (!sessionFrom(req)) return send(res, 401, { error: 'Sign in again.' });
-          return send(res, 200, { id: 'sample-lamp', title: String(body.title || 'Intelio').slice(0, 200), sample: true, label: 'SAMPLE DATA' });
+          return send(res, 200, { id: 'sample-lamp', title: String(body.title || 'Intelio').slice(0, 200), profileId: body.profile || 'intelio', sample: true, label: 'SAMPLE DATA' });
         }
-        return await forward(req, res, '/api/sessions', { method: 'POST', body: { title: String(body.title || '').slice(0, 200) } });
+        return await forward(req, res, '/api/sessions', { method: 'POST', body: { title: String(body.title || '').slice(0, 200) }, profileId: chosenProfile(req, body) });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/avatars/')) {
         const name = path.basename(url.pathname);
         if (!/^[a-z0-9-]+\.png$/.test(name)) return send(res, 404, { error: 'Not found.' });
-        const file = path.join(PUBLIC, 'avatars', name);
-        if (!file.startsWith(path.join(PUBLIC, 'avatars') + path.sep) || !fs.existsSync(file)) return send(res, 404, { error: 'Not found.' });
-        const payload = fs.readFileSync(file);
+        const payload = renderOrbPng(name.slice(0, -4), 256);
         res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'image/png', 'content-length': payload.length, 'cache-control': 'public, max-age=86400' });
         return res.end(payload);
       }
@@ -556,7 +626,8 @@ function createPwaServer({
       }
       return send(res, 404, { error: 'Not found.' });
     } catch (error) {
-      return send(res, 400, { error: String(error?.message || 'Bad request').slice(0, 200) });
+      const code = Number(error?.status) || 400;
+      return send(res, code >= 400 && code < 600 ? code : 400, { error: String(error?.message || 'Bad request').slice(0, 200) });
     }
   }
 

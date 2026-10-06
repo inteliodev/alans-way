@@ -27,6 +27,8 @@
     jobs: [],
     skillsOk: false,
     jobsOk: false,
+    thinking: false,
+    speaking: false,
   };
   let audioCtx = null;
   let mic = null;
@@ -142,33 +144,87 @@
   }
 
   const AVATARS = {
-    intelio: '/avatars/intelio.png',
-    prc: '/avatars/prc.png',
-    alignment: '/avatars/alignment.png',
-    hhp: '/avatars/hhp.png',
-    'kid a': '/avatars/kid-a.png',
-    'kid-a': '/avatars/kid-a.png',
-    kida: '/avatars/kid-a.png',
+    intelio: ['#7a5cff', '#3de1ff'],
+    prc: ['#059669', '#2dd4bf'],
+    alignment: ['#1d4ed8', '#7dd3fc'],
+    hhp: ['#d97706', '#fbbf24'],
+    'kid-a': ['#e879f9', '#fb7185'],
+    'kid a': ['#e879f9', '#fb7185'],
+    kida: ['#e879f9', '#fb7185'],
   };
+  let orbSeq = 0;
 
-  function avatarSrc(profile) {
-    const keys = [profile?.id, profile?.name].map((value) => String(value || '').trim().toLowerCase());
-    for (const key of keys) if (AVATARS[key]) return AVATARS[key];
-    return AVATARS.intelio;
+  function hashHue(id) {
+    let hash = 2166136261;
+    const text = String(id || 'intelio');
+    for (let i = 0; i < text.length; i += 1) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+    return (hash >>> 0) % 360;
   }
 
-  const FACE_PX = { avatar: 72, 'avatar sm': 36, 'avatar lg': 148, face: 32, tile: 96 };
+  function orbColors(profile) {
+    const key = String(profile?.id || profile?.name || 'intelio').trim().toLowerCase();
+    if (AVATARS[key]) return AVATARS[key];
+    const hue = hashHue(key);
+    return [`hsl(${hue} 78% 52%)`, `hsl(${(hue + 36) % 360} 85% 68%)`];
+  }
+
+  const FACE_PX = { avatar: 72, 'avatar sm': 36, 'avatar lg': 148, face: 32, tile: 96, pip: 28, mark: 96 };
+  const CLIENT_VERSION = 'intelio-pwa-5';
 
   function face(profile, className) {
-    const img = document.createElement('img');
     const name = className || 'avatar';
     const px = FACE_PX[name] || 72;
-    img.src = avatarSrc(profile);
-    img.alt = '';
-    img.className = name;
-    img.width = px;
-    img.height = px;
-    return img;
+    const id = String(profile?.id || profile?.name || 'intelio');
+    const [core, edge] = orbColors(profile);
+    const uid = `g${orbSeq += 1}`;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.setAttribute('width', String(px));
+    svg.setAttribute('height', String(px));
+    svg.className.baseVal = `orb ${name}`;
+    svg.dataset.profile = id;
+    svg.setAttribute('aria-hidden', 'true');
+    if ((state.thinking || state.speaking) && id === state.bot.id) svg.classList.add('live');
+    svg.innerHTML = `<defs><radialGradient id="${uid}" cx="34%" cy="30%" r="72%"><stop offset="0%" stop-color="#ffffff" stop-opacity="0.85"/><stop offset="18%" stop-color="${core}"/><stop offset="100%" stop-color="${edge}"/></radialGradient></defs><circle cx="50" cy="50" r="36" fill="url(#${uid})"/><ellipse cx="38" cy="34" rx="14" ry="8" fill="#ffffff" opacity="0.28"/>`;
+    return svg;
+  }
+
+  function storedTheme() {
+    const saved = localStorage.getItem('intelio-theme');
+    return saved === 'light' || saved === 'dark' ? saved : '';
+  }
+
+  function systemTheme() {
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+
+  function currentTheme() {
+    return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+  }
+
+  function setTheme(mode, persist) {
+    const next = mode === 'light' ? 'light' : 'dark';
+    if (persist) localStorage.setItem('intelio-theme', next);
+    document.documentElement.dataset.theme = next;
+    const color = next === 'light' ? '#f4f4f6' : '#070708';
+    document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+      meta.setAttribute('content', color);
+      meta.removeAttribute('media');
+    });
+    const apple = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+    if (apple) apple.setAttribute('content', next === 'light' ? 'default' : 'black-translucent');
+  }
+
+  function paintLive() {
+    const on = state.thinking || state.speaking;
+    document.querySelectorAll('svg.orb').forEach((node) => {
+      node.classList.toggle('live', on && node.dataset.profile === state.bot.id);
+    });
+  }
+
+  function profileHeaders(profileId, extra) {
+    const id = profileId || state.bot?.id || '';
+    return { ...(extra || {}), ...(id ? { 'x-intelio-profile': id } : {}) };
   }
 
   function haptic() {
@@ -203,7 +259,7 @@
   document.addEventListener('pointerdown', () => { unlockAudio().catch(() => {}); });
 
   function callbarVisible() {
-    return state.call.active && state.view !== 'call' && state.view !== 'login' && state.view !== 'icons';
+    return state.call.active && state.view !== 'call' && state.view !== 'login' && state.view !== 'icons' && state.view !== 'settings';
   }
 
   function paintCallbar() {
@@ -268,6 +324,7 @@
     if (state.error) screen.append(el('div', 'toast', state.error));
     if (state.view === 'call') screen.append(callView());
     else if (state.view === 'icons') screen.append(iconsView());
+    else if (state.view === 'settings') screen.append(settingsView());
     else {
       screen.append(topBar());
       const stage = el('div', 'stage');
@@ -289,13 +346,8 @@
 
   function loginView() {
     const wrap = el('div', 'login');
-    const mark = document.createElement('img');
-    mark.src = '/icon-192.png';
-    mark.alt = '';
-    mark.className = 'mark';
-    mark.width = 96;
-    mark.height = 96;
-    wrap.append(statusBar(), mark, el('h1', '', 'Intelio'), el('p', 'credit', 'Alan’s Way'), el('p', 'note', state.error || 'Checking Tailscale…'));
+    const orb = face({ id: 'intelio', name: 'Intelio' }, 'mark');
+    wrap.append(statusBar(), orb, el('h1', '', 'Intelio'), el('p', 'credit', 'Alan’s Way'), el('p', 'note', state.error || 'Checking Tailscale…'));
     return wrap;
   }
 
@@ -324,7 +376,7 @@
     gear.type = 'button';
     gear.setAttribute('aria-label', 'Settings');
     gear.append(icon('gear'));
-    gear.addEventListener('click', () => openSheet('settings'));
+    gear.addEventListener('click', () => openSettings());
     bar.append(menu);
     if (state.view === 'chat' || state.tab === 'sessions') {
       const hero = el('div', 'hero');
@@ -342,6 +394,7 @@
   function sessionsView() {
     const list = el('div', 'feed');
     list.id = 'list';
+    list.append(agentStrip());
     const rows = visibleChats();
     if (!rows.length) list.append(el('p', 'empty', state.sample ? 'No sample conversations.' : 'No conversations yet.'));
     for (const row of rows) list.append(sessionCard(row));
@@ -469,9 +522,27 @@
     gear.type = 'button';
     gear.setAttribute('aria-label', 'Settings');
     gear.append(icon('gear'));
-    gear.addEventListener('click', () => { state.drawer = false; openSheet('settings'); });
+    gear.addEventListener('click', () => openSettings());
     head.append(gear);
-    panel.append(head, el('div', 'kicker', 'TABS'));
+    panel.append(head);
+    const settingsRow = el('button', 'navbtn');
+    settingsRow.type = 'button';
+    settingsRow.append(icon('gear'), el('span', '', 'Settings'));
+    settingsRow.addEventListener('click', () => openSettings());
+    panel.append(settingsRow);
+    panel.append(el('div', 'kicker', 'AGENTS'));
+    for (const profile of state.home.profiles) {
+      const button = el('button', `navbtn${profile.id === state.bot.id ? ' on' : ''}`);
+      button.type = 'button';
+      button.append(face(profile, 'pip'), el('span', '', profile.name || profile.id));
+      button.addEventListener('click', () => selectProfile(profile));
+      panel.append(button);
+    }
+    const create = el('button', 'navbtn');
+    create.type = 'button';
+    create.append(icon('plus'), el('span', '', 'New agent'));
+    create.addEventListener('click', () => { state.drawer = false; openSheet('agent'); });
+    panel.append(create, el('div', 'kicker', 'TABS'));
     for (const [id, label, glyph] of tabs()) {
       const button = el('button', `navbtn${(id === 'chat' ? state.view === 'chat' : state.tab === id && state.view !== 'chat') ? ' on' : ''}`);
       button.type = 'button';
@@ -514,7 +585,7 @@
 
   function iconsView() {
     const wrap = el('div', 'icons');
-    const names = [['Intelio', 'intelio'], ['PRC', 'prc'], ['Alignment', 'alignment'], ['HHP', 'hhp'], ['Kid A', 'kid-a']];
+    const names = [['Intelio', 'intelio'], ['PRC', 'prc'], ['Alignment', 'alignment'], ['HHP', 'hhp'], ['Kid A', 'kid-a'], ['Lumen', 'lumen'], ['Nimbus', 'nimbus']];
     for (const [label, id] of names) {
       const figure = document.createElement('figure');
       figure.append(face({ id }, 'tile'), el('figcaption', '', label));
@@ -581,7 +652,7 @@
     captions.id = 'captions';
     fillCaptions(captions, state.captions);
     const controls = el('div', 'controls');
-    const gear = roundButton('gear', () => openSheet('settings'));
+    const gear = roundButton('gear', () => openSettings());
     const speaker = roundButton('speaker', () => { state.call.speaker = !state.call.speaker; if (!state.call.speaker) bargeIn(); render(); });
     if (state.call.speaker) speaker.classList.add('on');
     const mute = roundButton('mic', () => { state.call.muted = !state.call.muted; render(); });
@@ -690,7 +761,7 @@
   }
 
   async function loadMessages(id, target) {
-    const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/messages`);
+    const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/messages`, { headers: profileHeaders(state.bot?.id) });
     const body = await response.json().catch(() => ({ data: [] }));
     const lines = (body.data || []).map((message) => ({
       role: message.role || 'assistant',
@@ -704,7 +775,7 @@
 
   async function startChatWith(profile) {
     state.bot = profile;
-    const response = await fetch('/api/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: profile.name || 'Intelio' }) });
+    const response = await fetch('/api/sessions', { method: 'POST', headers: profileHeaders(profile.id, { 'content-type': 'application/json' }), body: JSON.stringify({ title: profile.name || 'Intelio', profile: profile.id }) });
     const body = await response.json().catch(() => ({}));
     const id = body.id || (body.data && body.data.id);
     if (!id) { state.error = body.error || 'Could not start a chat.'; render(); return; }
@@ -716,32 +787,52 @@
     render();
   }
 
-  function openSheet(name, extra) {
-    state.sheet = name;
-    const existing = document.getElementById('sheet');
-    if (existing) existing.remove();
-    const sheet = el('div', 'sheet');
-    sheet.id = 'sheet';
-    const card = el('div', 'card');
-    if (name === 'settings') card.append(settingsCard());
-    else if (name === 'tool') card.append(toolSheet(extra || {}));
-    else card.append(newCard());
-    sheet.append(card);
-    sheet.addEventListener('click', (event) => { if (event.target === sheet) sheet.remove(); });
-    app.append(sheet);
+  function agentStrip() {
+    const strip = el('div', 'agents');
+    for (const profile of state.home.profiles) {
+      const button = el('button', `agent${profile.id === state.bot.id ? ' on' : ''}`);
+      button.type = 'button';
+      button.append(face(profile, 'avatar sm'), el('span', '', profile.name || profile.id));
+      button.addEventListener('click', () => selectProfile(profile));
+      strip.append(button);
+    }
+    return strip;
   }
 
-  function toolSheet(extra) {
-    const frag = document.createDocumentFragment();
-    frag.append(el('h2', '', extra.title || 'Tool'));
-    frag.append(el('p', '', extra.text || ''));
-    frag.append(el('p', '', extra.status || 'Done'));
-    return frag;
+  function selectProfile(profile) {
+    haptic();
+    state.bot = profile;
+    state.drawer = false;
+    state.view = 'home';
+    state.tab = 'sessions';
+    render();
   }
 
-  function settingsCard() {
+  function openSettings() {
+    haptic();
+    if (state.view !== 'settings') {
+      state.returnView = state.view;
+      state.returnTab = state.tab;
+    }
+    state.drawer = false;
+    state.view = 'settings';
+    render();
+  }
+
+  function closeSettings() {
+    state.view = state.returnView && state.returnView !== 'settings' ? state.returnView : 'home';
+    state.tab = state.returnTab || (state.view === 'chat' ? 'chat' : 'sessions');
+    render();
+  }
+
+  function signInLine() {
+    if (state.sample) return 'SAMPLE DATA. Signed in with Tailscale. The profile key stays on the VPS.';
+    if (state.login && state.login !== 'sample') return `Signed in with Tailscale as ${state.login}. The profile key stays on the VPS.`;
+    return 'Signed in with Tailscale. The profile key stays on the VPS.';
+  }
+
+  function voiceFields() {
     const frag = document.createDocumentFragment();
-    frag.append(el('h2', '', 'Voice'));
     const choices = [
       ['auto', `Auto (${state.engines.recommended || 'web'})`],
       ['hermes', 'Hermes audio'],
@@ -762,8 +853,154 @@
       frag.append(row);
     }
     frag.append(el('p', '', 'Auto prefers Hermes when this profile advertises audio. Otherwise it uses faster-whisper and Piper on the VPS. On this phone, iOS may send microphone audio to Apple, and a locked screen pauses the mic. Calls need HTTPS from a tailscale certificate and a tap before audio can play.'));
-    frag.append(el('p', '', state.login && state.login !== 'sample' ? `Signed in with Tailscale as ${state.login}.` : 'Signed in with Tailscale. The profile key stays on the VPS.'));
     return frag;
+  }
+
+  function settingsView() {
+    const wrap = el('div', 'settings');
+    const top = el('header', 'topbar');
+    const back = el('button', 'iconbtn');
+    back.type = 'button';
+    back.setAttribute('aria-label', 'Back');
+    back.append(icon('back'));
+    back.addEventListener('click', () => closeSettings());
+    const title = el('h1', 'settings-title', 'Settings');
+    top.append(back, title);
+    wrap.append(top);
+    wrap.append(el('h2', '', 'Voice'));
+    wrap.append(voiceFields());
+    wrap.append(el('h2', '', 'Sign-in'));
+    wrap.append(el('p', '', signInLine()));
+    wrap.append(el('h2', '', 'Appearance'));
+    const toggle = el('button', 'theme-toggle');
+    toggle.id = 'theme-toggle';
+    toggle.type = 'button';
+    const paintToggle = () => {
+      const light = currentTheme() === 'light';
+      toggle.textContent = light ? 'Light' : 'Dark';
+      toggle.setAttribute('aria-pressed', light ? 'true' : 'false');
+    };
+    paintToggle();
+    toggle.addEventListener('click', () => {
+      setTheme(currentTheme() === 'light' ? 'dark' : 'light', true);
+      paintToggle();
+    });
+    wrap.append(toggle, el('p', '', 'Follows this phone until you tap. The choice is saved on this device.'));
+    wrap.append(el('h2', '', 'About'));
+    wrap.append(el('p', '', 'Intelio · Alan’s Way'));
+    wrap.append(el('p', 'version', `Version ${CLIENT_VERSION}`));
+    return wrap;
+  }
+
+  function openSheet(name, extra) {
+    state.sheet = name;
+    const existing = document.getElementById('sheet');
+    if (existing) existing.remove();
+    const sheet = el('div', 'sheet');
+    sheet.id = 'sheet';
+    const card = el('div', 'card');
+    if (name === 'settings') card.append(settingsCard());
+    else if (name === 'tool') card.append(toolSheet(extra || {}));
+    else if (name === 'agent') card.append(agentCard());
+    else if (name === 'restart') card.append(restartCard());
+    else card.append(newCard());
+    sheet.append(card);
+    sheet.addEventListener('click', (event) => { if (event.target === sheet) sheet.remove(); });
+    app.append(sheet);
+  }
+
+  function toolSheet(extra) {
+    const frag = document.createDocumentFragment();
+    frag.append(el('h2', '', extra.title || 'Tool'));
+    frag.append(el('p', '', extra.text || ''));
+    frag.append(el('p', '', extra.status || 'Done'));
+    return frag;
+  }
+
+  function settingsCard() {
+    const frag = document.createDocumentFragment();
+    frag.append(el('h2', '', 'Voice'));
+    frag.append(voiceFields());
+    frag.append(el('p', '', signInLine()));
+    return frag;
+  }
+
+  function agentCard() {
+    const frag = document.createDocumentFragment();
+    frag.append(el('h2', '', 'New agent'));
+    const name = document.createElement('input');
+    name.id = 'agent-name';
+    name.placeholder = 'Name';
+    name.autocomplete = 'off';
+    name.maxLength = 32;
+    const description = document.createElement('input');
+    description.id = 'agent-description';
+    description.placeholder = 'One-line description';
+    description.maxLength = 240;
+    const select = document.createElement('select');
+    select.id = 'agent-from';
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = 'Start blank';
+    select.append(blank);
+    for (const profile of state.home.profiles) {
+      const option = document.createElement('option');
+      option.value = profile.id;
+      option.textContent = `Start from ${profile.name || profile.id}`;
+      select.append(option);
+    }
+    const save = el('button', 'block', 'Create agent');
+    save.type = 'button';
+    save.addEventListener('click', () => createAgent(name.value, description.value, select.value));
+    frag.append(name, description, select, save);
+    frag.append(el('p', '', 'A new agent uses the shared Codex sign-in. Its route appears after the gateway restarts.'));
+    return frag;
+  }
+
+  async function createAgent(name, description, cloneFrom) {
+    const response = await fetch('/api/profiles', {
+      method: 'POST',
+      headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ name, description, cloneFrom }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      state.error = body.error || 'Could not create that agent.';
+      render();
+      return;
+    }
+    const created = { id: body.id, name: body.name || body.id, description: body.description || '', status: 'online' };
+    if (!state.home.profiles.some((item) => item.id === created.id)) state.home.profiles.push(created);
+    state.bot = created;
+    document.getElementById('sheet')?.remove();
+    render();
+    if (body.needsGatewayRestart) openSheet('restart');
+  }
+
+  function restartCard() {
+    const frag = document.createDocumentFragment();
+    frag.append(el('h2', '', 'Restart the gateway?'));
+    frag.append(el('p', '', 'The new agent is saved. Restarting the gateway makes its route available. Telegram reconnects briefly.'));
+    const yes = el('button', 'block', 'Restart gateway');
+    yes.type = 'button';
+    yes.addEventListener('click', () => confirmRestart());
+    const no = el('button', 'block quiet', 'Not now');
+    no.type = 'button';
+    no.addEventListener('click', () => { document.getElementById('sheet')?.remove(); render(); });
+    frag.append(yes, no);
+    return frag;
+  }
+
+  async function confirmRestart() {
+    const response = await fetch('/api/gateway/restart', {
+      method: 'POST',
+      headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
+      body: '{}',
+    });
+    const body = await response.json().catch(() => ({}));
+    document.getElementById('sheet')?.remove();
+    state.error = response.ok ? '' : (body.error || 'The gateway did not restart.');
+    render();
   }
 
   function newCard() {
@@ -948,7 +1185,7 @@
       body = await blobToWav(blob);
       type = 'audio/wav';
     } catch { /* keep the recorder container */ }
-    const response = await fetch('/api/voice/stt', { method: 'POST', headers: { 'content-type': type, 'x-intelio-engine': engine() }, body });
+    const response = await fetch('/api/voice/stt', { method: 'POST', headers: profileHeaders(state.bot?.id, { 'content-type': type, 'x-intelio-engine': engine() }), body });
     const json = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(json.error || 'Could not transcribe.');
@@ -966,10 +1203,13 @@
     for (const bucket of buckets()) bucket.push(pending);
     paintThread();
     unspoken = '';
+    state.thinking = true;
+    paintLive();
+    try {
     const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/chat`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ input: text }),
+      headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ input: text, profile: state.bot?.id || '' }),
     });
     if (!response.ok || !response.body) {
       pending.text = 'The reply did not start.';
@@ -1008,6 +1248,10 @@
       pumpSpeech();
     }
     paintThread();
+    } finally {
+      state.thinking = false;
+      paintLive();
+    }
   }
 
   async function readSse(response, onEvent) {
@@ -1053,20 +1297,27 @@
   async function pumpSpeech() {
     if (pumping) return;
     pumping = true;
+    state.speaking = true;
+    paintLive();
     const token = ttsToken;
-    while (speakQueue.length && token === ttsToken && state.call.speaker && state.call.active) {
-      const sentence = speakQueue.shift();
-      try { await speakOne(sentence, token); } catch { /* keep the conversation going */ }
+    try {
+      while (speakQueue.length && token === ttsToken && state.call.speaker && state.call.active) {
+        const sentence = speakQueue.shift();
+        try { await speakOne(sentence, token); } catch { /* keep the conversation going */ }
+      }
+    } finally {
+      pumping = false;
+      state.speaking = false;
+      paintLive();
     }
-    pumping = false;
   }
 
   async function speakOne(sentence, token) {
     if (resolvedEngine() === 'web') return speakWeb(sentence, token);
     const response = await fetch('/api/voice/tts', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-intelio-engine': engine() },
-      body: JSON.stringify({ text: sentence }),
+      headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json', 'x-intelio-engine': engine() }),
+      body: JSON.stringify({ text: sentence, profile: state.bot?.id || '' }),
     });
     if (token !== ttsToken) return;
     if (response.status === 503) return speakWeb(sentence, token);
@@ -1219,10 +1470,32 @@
     } else if (name === 'icons') {
       state.call.active = false;
       state.view = 'icons';
+    } else if (name === 'settings') {
+      state.call.active = false;
+      state.view = 'settings';
+      state.drawer = false;
+    } else if (name === 'agent') {
+      state.call.active = false;
+      state.view = 'home';
+      state.tab = 'sessions';
+      state.drawer = false;
+      render();
+      openSheet('agent');
+      return true;
     }
     render();
     return true;
   };
+
+  const savedTheme = storedTheme();
+  if (savedTheme) setTheme(savedTheme, false);
+  else {
+    setTheme(systemTheme(), false);
+    const media = window.matchMedia('(prefers-color-scheme: light)');
+    const followSystem = () => { if (!storedTheme()) setTheme(systemTheme(), false); };
+    if (media.addEventListener) media.addEventListener('change', followSystem);
+    else if (media.addListener) media.addListener(followSystem);
+  }
 
   fetch('/session').then((response) => {
     if (response.status === 401) {

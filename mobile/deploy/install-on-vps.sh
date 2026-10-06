@@ -216,3 +216,4 @@ else
 fi
 echo "If this user service should survive logout: sudo loginctl enable-linger \"$USER\""
 echo "Do not add a public firewall rule for this port."
+echo "This installer does not restart hermes-gateway. The phone asks before: systemctl --user restart hermes-gateway"
