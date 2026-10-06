@@ -57,7 +57,8 @@ test('the example profile loads through the Python loader and does not echo .env
     assert.equal(session.public.safety.yolo, false);
     assert.equal(session.public.safety.consequential, 'ask');
     assert.deepEqual(session.public.launchArgv, ['hermes', '-p', 'example']);
-    assert.equal(session.public.hermes.pinCommit, 'ebadb5462e46c168a7eb097895faa647493e0a26');
+    assert.equal(session.public.hermes.pinCommit, '5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662');
+    assert.equal(session.public.pinVerifiedOn, '2026-10-03');
     if (session.public.hermes.commandOk) assert.ok(['commit', 'differs', 'unverified'].includes(session.public.hermes.match));
     else {
       assert.equal(session.public.hermes.match, 'unavailable');
@@ -74,7 +75,7 @@ test('a missing profile is a refusal, not a successful report', () => {
   const missing = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-missing-'));
   const session = loadIntelio({ profileDir: missing, repo });
   assert.equal(session.ok, false);
-  assert.match(session.error, /refusing to start/);
+  assert.match(session.error, /refused to start/);
   assert.equal(session.public.ok, false);
 });
 

@@ -1,4 +1,4 @@
-"""Bound local file reads to a profile's allowed_folders."""
+"""Bound local file reads to folders named by a profile."""
 
 from __future__ import annotations
 
@@ -10,6 +10,29 @@ VAULT_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".kdbx"}
 
 class FileBound(PermissionError):
     """A path is outside the profile or looks like a vault file."""
+
+
+def bind_folders(profile_dir: Path, names) -> list[str]:
+    """Resolve relative folder names from the real loader into directories inside the profile."""
+    root = Path(profile_dir).resolve()
+    if not isinstance(names, (list, tuple)):
+        raise FileBound("path is outside allowed_folders")
+    bound = []
+    for name in names:
+        if not isinstance(name, str) or not name or name != name.strip():
+            raise FileBound("path is outside allowed_folders")
+        if Path(name).is_absolute() or ".." in Path(name).parts or "\\" in name or ":" in name:
+            raise FileBound("path is outside allowed_folders")
+        try:
+            candidate = (root / name).resolve()
+        except (OSError, RuntimeError):
+            raise FileBound("path is outside allowed_folders") from None
+        if candidate != root and root not in candidate.parents:
+            raise FileBound("path is outside allowed_folders")
+        if candidate.is_symlink() or not candidate.is_dir():
+            raise FileBound("path is outside allowed_folders")
+        bound.append(str(candidate))
+    return bound
 
 
 def ensure_allowed(path: Path, allowed_folders: list[str]) -> Path:

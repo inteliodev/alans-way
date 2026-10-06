@@ -1,4 +1,4 @@
-"""Intelio safety defaults. These tighten the profile; they never loosen it."""
+"""Ask-first defaults for the Alan's Way fork. These never loosen a profile."""
 
 from __future__ import annotations
 
@@ -42,13 +42,12 @@ def enforce(safety) -> dict:
     if safety is None:
         safety = {}
     if not isinstance(safety, dict):
-        raise ValueError("refusing to start: safety must be a mapping")
+        raise ValueError("safety must be a mapping")
     if safety.get("yolo") is True:
-        raise ValueError("refusing to start: YOLO is not allowed")
+        raise ValueError("YOLO is not allowed")
     consequential = safety.get("consequential", "ask")
     if consequential != "ask":
-        raise ValueError("refusing to start: consequential actions must stay ask-first")
-    # Environment flags cannot enable YOLO. Callers pass only the profile document.
+        raise ValueError("consequential actions must stay ask-first")
     return {
         "yolo": False,
         "consequential": "ask",
@@ -76,11 +75,7 @@ def classify_url(url: str):
 
 
 def navigation_allowed(url: str, origins: list[str], app_pages: tuple[str, ...] = ()) -> bool:
-    """Empty origins add no extra gate. A set list denies every other http(s) origin.
-
-    Consequential URLs are a separate ask-first check (classify_url). This
-    function only answers the browsing-zone question.
-    """
+    """Empty origins add no extra gate. A set list denies every other http(s) origin."""
     if url in app_pages:
         return True
     if not origins:

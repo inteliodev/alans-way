@@ -1,5 +1,6 @@
-# Example Intelio profile. Client secrets belong in an uncommitted .env
-# next to this file. The loader never reads .env.
+# Example Intelio profile. Valid against intelio-harness schema/profile.schema.json.
+# Secrets belong in an uncommitted .env next to this file. The loader never reads .env.
+# Alan's Way extras (Hermes profile name, browsing zone, safety) live in alans-way.yaml.
 name: Example
 panels:
   - telegram
@@ -8,8 +9,3 @@ panels:
 skills: []
 allowed_folders:
   - files
-hermes_profile: example
-browsing_origins: []
-safety:
-  yolo: false
-  consequential: ask

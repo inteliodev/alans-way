@@ -1,9 +1,7 @@
-# Hermes pin consumed by Alan's Way.
-# sync_status stand-in: inteliodev/intelio-harness was not readable from this
-# environment (GitHub 404 on 2026-10-05). This commit is NousResearch/hermes-agent
-# main as of that date (ebadb5462e46c168a7eb097895faa647493e0a26). Replace this
-# file with pin/hermes.yaml from the harness repo before treating it as Hayden's pin.
+# Data pin for a separate Hermes install.
+# This file is not Hermes source. `hermes update` does not edit it.
+# This repository changes the pin only when this file changes.
 upstream: NousResearch/hermes-agent
 repository: https://github.com/NousResearch/hermes-agent
-commit: ebadb5462e46c168a7eb097895faa647493e0a26
-sync_status: stand-in
+commit: "5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662"
+verified_on: "2026-10-03"

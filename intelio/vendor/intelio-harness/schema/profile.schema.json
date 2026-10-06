@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://intelio.co/harness/profile.schema.json",
+  "$id": "https://github.com/inteliodev/intelio-harness/schema/profile.schema.json",
   "title": "Intelio profile",
+  "description": "Intelio-owned profile schema. A profile directory holds one profile.yaml that matches this document.",
   "type": "object",
   "additionalProperties": false,
   "required": ["name", "panels", "skills", "allowed_folders"],
@@ -9,37 +10,31 @@
     "name": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 80,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$"
+      "description": "Display name of this profile."
     },
     "panels": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$" }
+      "description": "Panel names this profile opens.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "skills": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._/:-]*$" }
+      "description": "Skill names this profile enables.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "allowed_folders": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
-    },
-    "hermes_profile": {
-      "type": "string",
-      "pattern": "^$|^[a-z0-9][a-z0-9_-]{0,63}$",
-      "description": "When set, the shell probes and launches with hermes -p <name>. Empty means hermes with no -p. Matches the Hermes profile id pattern."
-    },
-    "browsing_origins": {
-      "type": "array",
-      "description": "Optional per-bot browsing zone. Empty means no extra origin gate. When non-empty, agent navigation outside these origins is denied.",
-      "items": { "type": "string", "minLength": 1, "maxLength": 256 }
-    },
-    "safety": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "yolo": { "type": "boolean", "const": false },
-        "consequential": { "const": "ask" }
+      "description": "Folder names inside the profile directory that this profile may use. Relative names only.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(?!/)(?!.*\\.\\.)(?!.*:)(?!.*\\\\).+"
       }
     }
   }

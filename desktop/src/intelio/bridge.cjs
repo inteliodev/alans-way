@@ -47,7 +47,7 @@ function failure(message, extra = {}) {
       brand: fallbackBrand(),
       hermes: { present: false, commandOk: false, match: 'unavailable', version: null, commit: null, pinCommit: '', error: '', probeArgv: [], summary: 'profile not loaded' },
       attribution: "Alan's Way by Alex Hansen. Hermes Agent by Nous Research.",
-      pinSyncStatus: '',
+      pinVerifiedOn: '',
       secretsFilePresent: false,
     },
   };
@@ -100,8 +100,8 @@ function toSession(report, source) {
       summary: hermes.summary || 'unavailable',
       upstream: report.pin?.upstream || '',
     },
-attribution: report.attribution || "Alan's Way by Alex Hansen. Hermes Agent by Nous Research.",
-      pinSyncStatus: report.pin?.sync_status || '',
+      attribution: report.attribution || "Alan's Way by Alex Hansen. Hermes Agent by Nous Research.",
+      pinVerifiedOn: report.pin?.verified_on || '',
       secretsFilePresent: report.secrets_file_present === true,
     };
   return { ok: true, error: '', browsingOrigins: publicState.browsingOrigins, safety: enforced, public: publicState };
@@ -109,10 +109,15 @@ attribution: report.attribution || "Alan's Way by Alex Hansen. Hermes Agent by N
 
 function loadIntelio({ argv = process.argv, prefs, profileDir, repo = repoRoot, python = process.env.INTELIO_PYTHON || 'python3' } = {}) {
   const resolved = profileDir ? { dir: path.resolve(profileDir), source: 'settings' } : resolveProfileDir({ argv, prefs, repo });
-  const env = { ...process.env, PYTHONPATH: [path.join(repo, 'intelio', 'python'), process.env.PYTHONPATH || ''].filter(Boolean).join(path.delimiter), PYTHONDONTWRITEBYTECODE: '1', PYTHONNOUSERSITE: '1' };
+  const env = { ...process.env, PYTHONPATH: [
+    path.join(repo, 'intelio', 'python'),
+    path.join(repo, 'intelio', 'vendor', 'intelio-harness', 'src'),
+    process.env.PYTHONPATH || '',
+  ].filter(Boolean).join(path.delimiter), PYTHONDONTWRITEBYTECODE: '1', PYTHONNOUSERSITE: '1' };
   let result;
   try {
-    result = spawnSync(python, ['-m', 'intelio_harness', resolved.dir], {
+    // alans_way calls the real intelio_harness loader, then adds the fork sidecar.
+    result = spawnSync(python, ['-m', 'alans_way', resolved.dir], {
       cwd: repo, env, encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024,
     });
   } catch (error) {
@@ -139,6 +144,19 @@ function publicIntelioState(session) {
 }
 
 function pngIcon() {
+  const svgPath = path.join(repoRoot, 'intelio', 'vendor', 'intelio-harness', 'brand', 'icon.svg');
+  try {
+    const svg = fs.readFileSync(svgPath, 'utf8');
+    const match = svg.match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/);
+    if (match && !/script|javascript:|onload=/i.test(svg)) {
+      const embedded = Buffer.from(match[1], 'base64');
+      if (embedded.subarray(0, 8).toString('hex') === '89504e470d0a1a0a') return embedded;
+    }
+  } catch { /* fall through to the generated mark */ }
+  return generatedPng();
+}
+
+function generatedPng() {
   const zlib = require('node:zlib');
   const size = 64;
   const background = [0x0a, 0x0a, 0x0a, 0xff];

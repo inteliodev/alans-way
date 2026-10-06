@@ -36,7 +36,7 @@
       `Hermes command: ${(intelio.launchArgv || ['hermes']).join(' ')}`,
       intelio.hermes ? `Pin ${intelio.hermes.pinCommit || 'missing'} · ${intelio.hermes.summary || 'unavailable'}` : '',
       intelio.hermes?.version ? `Installed Hermes: ${intelio.hermes.version.split('\n')[0]}` : '',
-      intelio.pinSyncStatus ? `Pin sync: ${intelio.pinSyncStatus}` : '',
+      intelio.pinVerifiedOn ? `Verified ${intelio.pinVerifiedOn}` : '',
       `Safety: YOLO off, consequential actions ask-first, credentials vault-blind.`,
       `Browsing zone: ${intelio.browsingOrigins?.length ? intelio.browsingOrigins.join(', ') : 'not set — upstream tab rules only'}`,
       `Allowed folders: ${intelio.allowedFolders?.length ? intelio.allowedFolders.join(', ') : 'none'}`,

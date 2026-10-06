@@ -1,10 +1,18 @@
 /* Intelio chrome. Tokens come from the harness brand file; hairlines use the line color at low opacity so the dark shell stays readable. */
+/* Copies of intelio/vendor/intelio-harness/brand/fonts, so the page CSP can load them. */
 @font-face {
   font-family: "Geist";
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("fonts/geist-sans-latin-400-normal.woff2") format("woff2");
+  src: url("fonts/geist-sans.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/geist-mono.woff2") format("woff2");
 }
 :root {
   --bg: #0a0a0a;

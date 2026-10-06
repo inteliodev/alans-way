@@ -48,6 +48,9 @@ jobs:
       - name: Exercise installed CLI and real local protocol
         run: python scripts/smoke_installed.py
       - name: Test installed package
-        run: python -m unittest discover -s tests -v
+        run: |
+          python -m pip install 'PyYAML>=6' 'pytest>=8'
+          python -m unittest discover -s tests -v
+          python -m pytest --rootdir intelio/vendor/intelio-harness intelio/vendor/intelio-harness/tests
       - name: Publication safety checks
         run: python scripts/check_publication.py
