@@ -1,4 +1,4 @@
-const CACHE = 'intelio-pwa-3';
+const CACHE = 'intelio-pwa-4';
 const FILES = ['/', '/index.html', '/app.css', '/app.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/avatars/intelio.png', '/avatars/prc.png', '/avatars/alignment.png', '/avatars/hhp.png', '/avatars/kid-a.png'];
 
 self.addEventListener('install', (event) => {

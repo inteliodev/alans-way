@@ -157,11 +157,17 @@
     return AVATARS.intelio;
   }
 
+  const FACE_PX = { avatar: 72, 'avatar sm': 36, 'avatar lg': 148, face: 32, tile: 96 };
+
   function face(profile, className) {
     const img = document.createElement('img');
+    const name = className || 'avatar';
+    const px = FACE_PX[name] || 72;
     img.src = avatarSrc(profile);
     img.alt = '';
-    img.className = className || 'avatar';
+    img.className = name;
+    img.width = px;
+    img.height = px;
     return img;
   }
 
@@ -196,22 +202,29 @@
 
   document.addEventListener('pointerdown', () => { unlockAudio().catch(() => {}); });
 
+  function callbarVisible() {
+    return state.call.active && state.view !== 'call' && state.view !== 'login' && state.view !== 'icons';
+  }
+
   function paintCallbar() {
-    let bar = document.getElementById('callbar');
-    if (!state.call.active) {
-      if (bar) bar.hidden = true;
+    const bar = document.getElementById('callbar');
+    if (!callbarVisible()) {
+      if (bar) bar.remove();
       return;
     }
-    if (!bar) {
-      bar = el('div', 'callbar');
-      bar.id = 'callbar';
-      app.append(bar);
+    let host = bar;
+    if (!host) {
+      host = el('div', 'callbar');
+      host.id = 'callbar';
+      const tab = document.querySelector('.tabbar');
+      if (tab) tab.before(host);
+      else return;
     }
-    bar.hidden = false;
-    bar.replaceChildren();
+    host.hidden = false;
+    host.replaceChildren();
     const tap = el('button', 'tap');
     tap.type = 'button';
-    tap.append(waveform(), face(state.bot, 'face'));
+    tap.append(face(state.bot, 'face'), waveform());
     tap.addEventListener('click', () => { state.view = 'call'; render(); });
     const speaker = roundButton('speaker', () => { state.call.speaker = !state.call.speaker; if (!state.call.speaker) bargeIn(); paintCallbar(); });
     if (state.call.speaker) speaker.classList.add('on');
@@ -222,12 +235,12 @@
     end.setAttribute('aria-label', 'End call');
     end.append(el('span', 'x', '×'));
     end.addEventListener('click', () => endCall());
-    bar.append(tap, speaker, mute, end);
+    host.append(tap, speaker, mute, end);
   }
 
   function waveform() {
     const wave = el('div', state.call.paused || state.call.muted ? 'wave paused' : 'wave');
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < 8; i++) {
       const bar = document.createElement('i');
       bar.style.animationDelay = `${(i % 7) * 0.07}s`;
       wave.append(bar);
@@ -244,13 +257,12 @@
   }
 
   function render() {
-    const prior = document.getElementById('callbar');
     app.replaceChildren();
     if (state.view === 'login') {
       app.append(loginView());
       return;
     }
-    const screen = el('div', `screen${state.call.active && state.view !== 'call' ? ' has-bar' : ''}`);
+    const screen = el('div', 'screen');
     screen.append(statusBar());
     if (state.sample) screen.append(sampleFlag());
     if (state.error) screen.append(el('div', 'toast', state.error));
@@ -269,7 +281,6 @@
       if (state.drawer) screen.append(drawer());
     }
     app.append(screen);
-    if (prior) app.append(prior);
     paintCallbar();
     ensureTimer();
     const thread = document.getElementById('thread') || document.getElementById('captions');
@@ -282,6 +293,8 @@
     mark.src = '/icon-192.png';
     mark.alt = '';
     mark.className = 'mark';
+    mark.width = 96;
+    mark.height = 96;
     wrap.append(statusBar(), mark, el('h1', '', 'Intelio'), el('p', 'credit', 'Alan’s Way'), el('p', 'note', state.error || 'Checking Tailscale…'));
     return wrap;
   }
@@ -504,7 +517,7 @@
     const names = [['Intelio', 'intelio'], ['PRC', 'prc'], ['Alignment', 'alignment'], ['HHP', 'hhp'], ['Kid A', 'kid-a']];
     for (const [label, id] of names) {
       const figure = document.createElement('figure');
-      figure.append(face({ id }, 'avatar lg'), el('figcaption', '', label));
+      figure.append(face({ id }, 'tile'), el('figcaption', '', label));
       wrap.append(figure);
     }
     return wrap;
