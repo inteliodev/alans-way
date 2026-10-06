@@ -8,7 +8,6 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const { chromium } = require('playwright-core');
 
 const KEYS = {
   intelio: 'i'.repeat(32),
@@ -16,6 +15,42 @@ const KEYS = {
   alignment: 'a'.repeat(32),
   hhp: 'h'.repeat(32),
 };
+
+function openCdp(url) {
+  const ws = new WebSocket(url);
+  let seq = 0;
+  const pending = new Map();
+  const opened = new Promise((resolve, reject) => {
+    ws.addEventListener('open', () => resolve());
+    ws.addEventListener('error', () => reject(new Error(`CDP socket failed for ${url}`)));
+  });
+  ws.addEventListener('message', (event) => {
+    const raw = typeof event.data === 'string' ? event.data : Buffer.from(event.data).toString();
+    const msg = JSON.parse(raw);
+    if (!msg.id || !pending.has(msg.id)) return;
+    const waiter = pending.get(msg.id);
+    pending.delete(msg.id);
+    if (msg.error) waiter.reject(new Error(msg.error.message || 'CDP error'));
+    else waiter.resolve(msg.result);
+  });
+  return {
+    async send(method, params, ms = 10000) {
+      await opened;
+      const id = ++seq;
+      const result = new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        setTimeout(() => {
+          if (!pending.has(id)) return;
+          pending.delete(id);
+          reject(new Error(`${method} timed out after ${ms}ms`));
+        }, ms);
+      });
+      ws.send(JSON.stringify({ id, method, params }));
+      return result;
+    },
+    close() { try { ws.close(); } catch { /* already closed */ } },
+  };
+}
 
 function listen() {
   const server = http.createServer((req, res) => {
@@ -80,8 +115,7 @@ async function main() {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: false,
   });
-  let browser;
-  let page;
+  let cdp;
   let errBuf = '';
   const waitForDevtools = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`DevTools port did not open\n${errBuf.slice(-2000)}`)), 60000);
@@ -101,39 +135,59 @@ async function main() {
   try {
     const ws = await waitForDevtools;
     const port = new URL(ws).port;
-    const deadline = Date.now() + 60000;
-    let pageUrl = '';
+    const deadline = Date.now() + 30000;
+    let target = null;
     while (Date.now() < deadline) {
       try {
         const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-        const hit = list.find((item) => item.type === 'page' && /index\.html/.test(item.url || ''));
-        if (hit) { pageUrl = hit.url; break; }
+        target = list.find((item) => item.type === 'page' && /index\.html/.test(item.url || '') && item.webSocketDebuggerUrl);
+        if (target) break;
       } catch { /* port is up before the window */ }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    if (!pageUrl) throw new Error('main window did not open');
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-    const pages = browser.contexts().flatMap((context) => context.pages());
-    page = pages.find((item) => item.url().includes('index.html')) || pages[0];
-    if (!page) throw new Error('CDP connected without a page');
-    await page.waitForFunction(() => document.querySelectorAll('#bot-list .bot-row').length === 4, null, { timeout: 30000 });
-    await page.waitForFunction(() => document.querySelectorAll('#remote-sessions .session-item').length >= 1, null, { timeout: 20000 });
-    await page.screenshot({ path: shot });
-    const status = (await page.locator('#remote-status').innerText()).trim();
-    const profile = (await page.locator('#intelio-profile').innerText()).trim();
-    const agents = await page.locator('#bot-list .bot-row').count();
-    const sessions = await page.locator('#remote-sessions .session-item').count();
-    process.stdout.write(`e2e agents=${agents} sessions=${sessions} status=${JSON.stringify(status)} profile=${JSON.stringify(profile)}\n`);
-    if (agents !== 4) throw new Error(`expected 4 agents, saw ${agents}`);
-    if (sessions < 1) throw new Error(`expected a session, saw ${sessions}`);
+    if (!target) throw new Error('main window did not open');
+    cdp = openCdp(target.webSocketDebuggerUrl);
+    await cdp.send('Runtime.enable');
+    await cdp.send('Page.enable');
+    const read = async () => {
+      const result = await cdp.send('Runtime.evaluate', {
+        expression: `(() => ({
+          agents: document.querySelectorAll('#bot-list .bot-row').length,
+          sessions: document.querySelectorAll('#remote-sessions .session-item').length,
+          status: (document.getElementById('remote-status') || {}).textContent || '',
+          profile: (document.getElementById('intelio-profile') || {}).textContent || '',
+        }))()`,
+        returnByValue: true,
+      });
+      if (result.exceptionDetails) {
+        const detail = result.exceptionDetails.exception && result.exceptionDetails.exception.description
+          || result.exceptionDetails.text
+          || 'page evaluate failed';
+        throw new Error(detail);
+      }
+      return result.result.value;
+    };
+    let view = { agents: 0, sessions: 0, status: '', profile: '' };
+    const until = Date.now() + 30000;
+    while (Date.now() < until) {
+      view = await read();
+      if (view.agents === 4 && view.sessions >= 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    const png = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(shot, Buffer.from(png.data, 'base64'));
+    const status = String(view.status || '').trim();
+    const profile = String(view.profile || '').trim();
+    process.stdout.write(`e2e agents=${view.agents} sessions=${view.sessions} status=${JSON.stringify(status)} profile=${JSON.stringify(profile)}\n`);
+    if (view.agents !== 4) throw new Error(`expected 4 agents, saw ${view.agents}`);
+    if (view.sessions < 1) throw new Error(`expected a session, saw ${view.sessions}`);
     if (/not defined|unreachable|HTTP |No key|No API|failed|error/i.test(status)) throw new Error(`status line: ${status}`);
     if (/not defined|Loading/i.test(profile)) throw new Error(`profile line: ${profile}`);
     process.stdout.write(`screenshot ${shot}\n`);
   } catch (error) {
-    if (page) await page.screenshot({ path: shot }).catch(() => {});
     throw error;
   } finally {
-    if (browser) await browser.close().catch(() => {});
+    if (cdp) cdp.close();
     if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
     else child.kill();
     server.close();
