@@ -11,7 +11,7 @@ noVNC connection. It is one shared desktop, not separate desktop streams.
 Use Node 22+ on the VPS, a working X11 desktop/VNC viewer, and an installed GUI
 Chromium. Install this repository in a stable directory and run
 `npm ci --omit=dev --ignore-scripts` in `desktop/`. The examples below assume
-`git clone https://github.com/capthvnsen/alans-way /opt/hermes-alans-way/browser`
+`git clone https://github.com/inteliodev/alans-way /opt/hermes-alans-way/browser`
 (the plugin's `setup.sh` uses the same path when run as root). Keep Hermes' Python environment
 and dependencies separate. Use a dedicated browser profile; existing browser
 windows/profiles need not be altered.
@@ -38,6 +38,21 @@ override it for both services and the SSH request command. Create mode-0600
 ```
 
 Prefer running Chromium as an ordinary desktop user with its sandbox enabled.
+The desktop user is not root. Broker port 9465 and Chromium CDP port 9223 stay
+on `127.0.0.1`; the host refuses a public bind or a remote-debugging address
+other than `127.0.0.1`.
+
+Intelio safety uses the same rules as the Mac app. Set `INTELIO_SIDECAR` or
+`intelioSidecar` in `config.json` to an `alans-way.yaml` path. If neither is
+set, the host uses the strict defaults (no YOLO, consequential actions
+ask-first, no extra browsing zone). `INTELIO_YOLO` is ignored. A sidecar with
+`yolo: true` or a consequential mode other than `ask` refuses to start. Agent
+opens and navigations to payment hosts or `/checkout`, `/payment`, and
+`/billing` return `approval_required`. A non-empty `browsing_origins` list
+denies every other origin. Human navigation is not zone-gated. Clone this
+fork (`intelio/forks.json`), not the upstream repository.
+
+
 Snap installations require a profile path inside their permitted user data
 directory. Match `DISPLAY` and session environment to the VNC desktop. Both
 debugging and broker ports must remain loopback-only; SSH transports commands.
@@ -82,6 +97,7 @@ Requires=hermes-alans-way-chromium.service
 Type=simple
 User=desktop
 Environment=DISPLAY=:99
+Environment=INTELIO_SIDECAR=/opt/hermes-alans-way/browser/intelio/profiles/example/alans-way.yaml
 ExecStart=/usr/bin/node /opt/hermes-alans-way/browser/desktop/scripts/vps-browser-host.cjs serve
 Restart=on-failure
 RestartSec=5

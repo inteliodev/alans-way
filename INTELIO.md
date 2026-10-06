@@ -58,6 +58,19 @@ These are on for every profile the shell loads. A sidecar that sets `yolo: true`
 - Credentials stay vault-blind. Neither loader reads `.env`. Probe errors are redacted. Bot-visible state does not include the env file.
 - `browsing_origins` in `alans-way.yaml`, when non-empty, denies agent navigation outside those origins. An empty list adds no extra zone. `allowed_folders` in `profile.yaml` are relative names. Alan's Way resolves them inside the profile directory before a local read. The example profile allows `files` (named `files` because the repo gitignore ignores every `workspace/` directory).
 
+## VPS (Intelio)
+
+Install the browser host from this fork. The clone URL and the agent bootstrap URL live in [`intelio/forks.json`](intelio/forks.json) (`https://github.com/inteliodev/alans-way` and `https://github.com/inteliodev/alans-way-agents`). Settings → Copy setup command and Copy setup prompt read that file. Upstream credit stays on Alex Hansen's original repository; the commands that fetch code do not.
+
+The VPS broker (`127.0.0.1:9465`) and Chromium CDP (`127.0.0.1:9223`) enforce the same agent navigation policy as the Mac shell, through `desktop/src/intelio/safety.cjs`. Point `INTELIO_SIDECAR` or `intelioSidecar` in the broker `config.json` at an `alans-way.yaml`. If neither is set, the host uses the strict defaults: no YOLO, consequential actions ask-first, and no extra browsing zone. `INTELIO_YOLO` is ignored. `yolo: true` or a consequential mode other than `ask` refuses to start the broker. Agent navigation to payment hosts or `/checkout`, `/payment`, and `/billing` returns `approval_required`. Human navigation is not origin-gated. Both ports stay on loopback.
+
+Reach the desktop only over Tailscale. Nothing in this path is public:
+
+- x11vnc listens on localhost.
+- websockify and noVNC listen on the tailnet address or localhost.
+- The Hostinger firewall leaves only port 22 open.
+- The graphical session runs as a non-root desktop user.
+
 ## Checks
 
 ```sh

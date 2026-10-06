@@ -10,7 +10,7 @@ not been verified.
 2. Assign an existing or new Telegram bot through native messaging setup. Verify
    its numeric ID with `getMe` and keep a single active owner of its token. Follow
    [agent setup](agent-setup.md) for profile and connector identity rules.
-3. Install the [agent plugin](https://github.com/capthvnsen/alans-way-agents)
+3. Install the [agent plugin](https://github.com/inteliodev/alans-way-agents)
    on the gateway host using its documented configuration and native plugin/hook
    registration. Start with manual status/handoff verification before enabling
    optional proactive behavior. Each installation has its own credentials and

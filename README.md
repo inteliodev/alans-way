@@ -25,7 +25,7 @@ A desktop app for people running [Hermes Agent](https://github.com/NousResearch/
 - **Agents get their own browser, not yours.** Bot tabs are separate Chromium views — your mouse, keyboard, clipboard, and other apps are never touched.
 - **Grab the wheel anytime.** "Take over" a tab and every queued agent action on it is cancelled instantly.
 - **A window into the VPS.** A mini preview of your server's desktop floats in the corner. Drag it anywhere, hide it, or click to take control.
-- **Shut your laptop, keep working.** With the [agent plugin](https://github.com/capthvnsen/alans-way-agents), *new* browser work routes to the VPS when the Mac is unreachable. An in-flight Mac action fails visibly; its live tab stays on the Mac and can be inspected or resumed after reconnecting. Work already running on the VPS continues. (Backend checkpoint/restore plumbing exists, but the app exposes no cross-host handoff button yet.)
+- **Shut your laptop, keep working.** With the [agent plugin](https://github.com/inteliodev/alans-way-agents), *new* browser work routes to the VPS when the Mac is unreachable. An in-flight Mac action fails visibly; its live tab stays on the Mac and can be inspected or resumed after reconnecting. Work already running on the VPS continues. (Backend checkpoint/restore plumbing exists, but the app exposes no cross-host handoff button yet.)
 - **Explicit permissions.** Bots only see tabs you own or grant. Extension account pages are human-only. Nothing is shared unless you share it.
 
 ## The two repos
@@ -33,7 +33,7 @@ A desktop app for people running [Hermes Agent](https://github.com/NousResearch/
 | Repo | What it is | Who installs it |
 |---|---|---|
 | **alans-way** (this one) | The Mac desktop app + companion CLI | You, on your Mac |
-| [alans-way-agents](https://github.com/capthvnsen/alans-way-agents) | The plugin: proactivity, workspace skill, auto-routing | Your Hermes gateway (VPS) |
+| [alans-way-agents](https://github.com/inteliodev/alans-way-agents) | The plugin: proactivity, workspace skill, auto-routing | Your Hermes gateway (VPS) |
 
 The app works without the plugin (manual tab sharing), and the plugin falls back to VPS-only browsing when the app isn't running.
 
@@ -79,7 +79,7 @@ Set up Alan's Way on this machine and connect it to my Mac.
 1. If Tailscale isn't installed or connected here, install it
    (tailscaled + `tailscale up`). Tell me this machine's tailnet name/IP.
    My Mac's SSH address is: <your-mac-tailscale>
-2. git clone https://github.com/capthvnsen/alans-way-agents
+2. git clone https://github.com/inteliodev/alans-way-agents
 3. Run: ./alans-way-agents/setup.sh --bot-id <your-telegram-bot-id> \
      --mac-ssh '<your-mac-tailscale>' --restart
    Answer its prompts; if it asks to bind a primary route, pick the bot
@@ -89,7 +89,7 @@ Set up Alan's Way on this machine and connect it to my Mac.
    don't install it yourself.
 ```
 
-The same prompt lives in [docs/setup-prompt.md](https://github.com/capthvnsen/alans-way-agents/blob/main/docs/setup-prompt.md), and the plugin's `workspace-setup` skill teaches installed agents the playbook.
+The same prompt lives in [docs/setup-prompt.md](https://github.com/inteliodev/alans-way-agents/blob/main/docs/setup-prompt.md), and the plugin's `workspace-setup` skill teaches installed agents the playbook.
 
 ## Upgrading
 
@@ -97,7 +97,7 @@ Fresh installs and upgrades follow the same path: pull the repo, `cd desktop && 
 
 ## Honest boundaries
 
-- **Alpha software.** Tested on the author's setup; yours may differ. Bugs → [issues](https://github.com/capthvnsen/alans-way/issues).
+- **Alpha software.** Tested on the author's setup; yours may differ. Bugs → [issues](https://github.com/inteliodev/alans-way/issues).
 - Agents think on the VPS. The Mac lends them a browser tab — it does **not** become their general-purpose computer.
 - Agent input goes through Chromium's debugger into one tab — it never moves your real cursor or types into other apps.
 - One exception: in the VPS preview, "Take control" mode *does* send your clicks to the remote desktop — that's the point of it.
@@ -118,6 +118,6 @@ Design docs live in [`docs/`](docs/) — [setup for agents](docs/setup-for-agent
 
 ## License
 
-Desktop app: [GPL-3.0](desktop/LICENSE) · Companion CLI: [MIT](LICENSE) · Agent plugin: [MIT](https://github.com/capthvnsen/alans-way-agents/blob/main/LICENSE)
+Desktop app: [GPL-3.0](desktop/LICENSE) · Companion CLI: [MIT](LICENSE) · Agent plugin: [MIT](https://github.com/inteliodev/alans-way-agents/blob/main/LICENSE)
 
 Independent community project. Not affiliated with Nous Research.

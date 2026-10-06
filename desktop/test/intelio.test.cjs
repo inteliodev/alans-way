@@ -7,6 +7,8 @@ const { originAllowed } = require('../src/intelio/origins.cjs');
 const { safetyDefaults, classifyUrl, agentNavigationDecision, redact } = require('../src/intelio/safety.cjs');
 const { loadIntelio, pngIcon } = require('../src/intelio/bridge.cjs');
 const { linuxDemoEnabled, rendererSandbox } = require('../src/intelio/linux-demo.cjs');
+const { loadVpsPolicy, assertLoopbackBrowser } = require('../src/intelio/sidecar.cjs');
+const { app, agents, agentsSetup } = require('../src/intelio/forks.cjs');
 
 const repo = path.resolve(__dirname, '../..');
 const example = path.join(repo, 'intelio', 'profiles', 'example');
@@ -92,4 +94,40 @@ test('window icon is a real PNG', () => {
   const png = pngIcon();
   assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
   assert.ok(png.length > 32);
+});
+
+test('the VPS sidecar uses strict defaults and refuses YOLO', () => {
+  const defaults = loadVpsPolicy({ sidecarPath: '' });
+  assert.deepEqual(defaults.origins, []);
+  assert.equal(defaults.safety.yolo, false);
+  assert.equal(defaults.safety.consequential, 'ask');
+  const examplePolicy = loadVpsPolicy({ sidecarPath: path.join(example, 'alans-way.yaml') });
+  assert.deepEqual(examplePolicy.origins, []);
+  assert.equal(examplePolicy.safety.consequential, 'ask');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-sidecar-'));
+  const file = path.join(dir, 'alans-way.yaml');
+  fs.writeFileSync(file, 'browsing_origins:\n  - https://github.com/\n  - https://example.com:8443\nsafety:\n  yolo: false\n  consequential: ask\n');
+  assert.deepEqual(loadVpsPolicy({ sidecarPath: file }).origins, ['https://github.com', 'https://example.com:8443']);
+  fs.writeFileSync(file, 'safety:\n  yolo: true\n');
+  assert.throws(() => loadVpsPolicy({ sidecarPath: file }), /YOLO is not allowed/);
+  fs.writeFileSync(file, 'safety:\n  consequential: auto\n');
+  assert.throws(() => loadVpsPolicy({ sidecarPath: file }), /ask-first/);
+  fs.writeFileSync(file, 'api_token: nope\n');
+  assert.throws(() => loadVpsPolicy({ sidecarPath: file }), /unknown fields/);
+  fs.symlinkSync(file, path.join(dir, 'link.yaml'));
+  assert.throws(() => loadVpsPolicy({ sidecarPath: path.join(dir, 'link.yaml') }), /missing/);
+  assert.throws(() => loadVpsPolicy({ sidecarPath: path.join(dir, 'absent.yaml') }), /missing/);
+  assert.throws(() => assertLoopbackBrowser({ cdpUrl: 'http://example.invalid:9223' }), /loopback/);
+  assert.throws(() => assertLoopbackBrowser({ cdpUrl: 'http://127.0.0.1:9223', browserArgs: ['--remote-debugging-address=example.invalid'] }), /127\.0\.0\.1/);
+  assert.throws(() => assertLoopbackBrowser({ cdpUrl: 'http://127.0.0.1:9223', host: 'example.invalid' }), /127\.0\.0\.1 only/);
+});
+
+test('setup URLs come from intelio/forks.json', () => {
+  assert.equal(app, 'https://github.com/inteliodev/alans-way');
+  assert.equal(agents, 'https://github.com/inteliodev/alans-way-agents');
+  assert.equal(agentsSetup, 'https://raw.githubusercontent.com/inteliodev/alans-way-agents/main/setup.sh');
+  const main = fs.readFileSync(path.join(repo, 'desktop/src/main.cjs'), 'utf8');
+  assert.equal(main.includes('capthvnsen'), false);
+  assert.match(main, /agentsSetup/);
+  assert.match(main, /require\('\.\/intelio\/forks\.cjs'\)/);
 });

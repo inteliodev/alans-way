@@ -30,7 +30,7 @@ sidecar.
 the sidecar and the `hermes --version` probe. A short `upstream <sha>` token or
 `+N.g<sha>` describe suffix is compared to the full pin by prefix. A different
 short SHA is `differs` (`installed <sha> vs pin <8 hex>`), not an unverified
-probe. It does not reimplement pin or profile parsing. The desktop app runs `python -m alans_way <profile_dir>` with
+probe. It does not reimplement pin or profile parsing. The VPS browser broker loads the same `alans-way.yaml` (or the strict defaults) and calls `desktop/src/intelio/safety.cjs` before an agent navigation. The desktop app runs `python -m alans_way <profile_dir>` with
 `PYTHONPATH` set to both `intelio/python` and
 `intelio/vendor/intelio-harness/src`. The raw contract check is:
 

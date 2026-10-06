@@ -9,7 +9,14 @@
 # outside the bundle and survive upgrades. Safe to re-run.
 set -eu
 
-REPO_URL="https://github.com/capthvnsen/alans-way"
+# Canonical clone URL is intelio/forks.json. The default matches that file so a
+# curled copy of this script still clones the Intelio fork.
+REPO_URL="https://github.com/inteliodev/alans-way"
+FORKS="$(CDPATH= cd -- "$(dirname "$0")" && pwd)/../intelio/forks.json"
+if [ -f "$FORKS" ]; then
+  PARSED=$(sed -n 's/^[[:space:]]*"app"[[:space:]]*:[[:space:]]*"\(https:\/\/github.com\/inteliodev\/alans-way\)".*/\1/p' "$FORKS")
+  [ -n "$PARSED" ] && REPO_URL="$PARSED"
+fi
 DIR="${ALANS_WAY_DIR:-$HOME/alans-way}"
 APP_NAME="alans-way-localapp"
 DEST="/Applications/$APP_NAME.app"

@@ -93,7 +93,7 @@ is not in `/Applications` — repeat stage 1.
 On the VPS:
 
 ```sh
-git clone https://github.com/capthvnsen/alans-way-agents ~/alans-way-agents || git -C ~/alans-way-agents pull
+git clone https://github.com/inteliodev/alans-way-agents ~/alans-way-agents || git -C ~/alans-way-agents pull
 ~/alans-way-agents/setup.sh --bot-id <BOT_ID> --mac-ssh "$MAC_SSH" --timezone "$MAC_TZ" --restart
 ```
 
@@ -160,4 +160,4 @@ desktop connection** in the app.
 
 More detail: [deployment](deployment.md), [VPS browser](../desktop/docs/vps-browser.md),
 [security model](mac-security.md), and the plugin's
-[setup prompt](https://github.com/capthvnsen/alans-way-agents/blob/main/docs/setup-prompt.md).
+[setup prompt](https://github.com/inteliodev/alans-way-agents/blob/main/docs/setup-prompt.md).

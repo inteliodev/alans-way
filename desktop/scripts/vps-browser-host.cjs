@@ -10,6 +10,7 @@ const { CDP } = require('../src/cdp.cjs');
 const { normalizeUrl, requireActor, requireAgentRead, requireAgentClaim, reviewedHandoff, isAuthorized } = require('../src/core.cjs');
 const { createAgentInput, tintScript, botAccent } = require('../src/agent-input.cjs');
 const { snapshotExpression, settleSnapshot, checkpointExpression, restoreExpression } = require('../src/browser-page.cjs');
+const { loadVpsPolicy, resolveSidecarPath, assertLoopbackBrowser, agentUrlDecision } = require('../src/intelio/sidecar.cjs');
 const root =
   process.env.HERMES_VPS_BROWSER_DATA || path.join(os.homedir(), '.local', 'share', 'hermes-alans-way', 'browser');
 const configFile = path.join(root, 'config.json'),
@@ -68,6 +69,13 @@ async function request(input) {
 }
 async function serve() {
   const cfg = JSON.parse(fs.readFileSync(configFile));
+  // INTELIO_YOLO is ignored. A sidecar that asks for YOLO or auto-approval refuses to start.
+  const policy = loadVpsPolicy({ sidecarPath: resolveSidecarPath(cfg) });
+  assertLoopbackBrowser(cfg);
+  const assertAgentUrl = (url) => {
+    const decision = agentUrlDecision(url, policy);
+    if (!decision.ok) throw fail(decision.error, decision.status);
+  };
   let cdp;
   try {
     cdp = await CDP.connect(cfg.cdpUrl);
@@ -164,6 +172,7 @@ async function serve() {
     if (!botId || botId.length > 100) throw fail('X-Hermes-Bot is required.');
     if (tabs.size >= 40) throw fail('Close a VPS browser tab before opening another.');
     const url = normalizeUrl(body.url);
+    if (!human) assertAgentUrl(url);
     const { targetId } = await cdp.send('Target.createTarget', {
       url: 'about:blank',
       newWindow: true,
@@ -185,10 +194,17 @@ async function serve() {
       await tab.view.webContents.command('Page.enable');
       await tab.view.webContents.command('Page.navigate', { url });
       await loaded(tab, url);
+      if (tab.controller === 'agent') assertAgentUrl(tab.url);
       if (tab.controller === 'agent') await tab.view.webContents.executeJavaScript(tintScript(true)).catch(() => {});
       await persist();
       return tab;
     } catch (e) {
+      if (e.status === 403 || e.status === 409) {
+        await tab.view.webContents.command('Page.navigate', { url: 'about:blank' }).catch(() => {});
+        tab.url = 'about:blank';
+        await persist().catch(() => {});
+        throw e;
+      }
       throw fail('VPS tab opened but navigation needs review. List its state before retrying.', 502);
     }
   }
@@ -234,12 +250,16 @@ async function serve() {
     const s = await wc.executeJavaScript('({url:location.href,title:document.title})').catch(() => null);
     if (s) Object.assign(tab, s);
   }
-  async function history(tab, action) {
+  async function history(tab, action, agent) {
     const wc = tab.view.webContents;
     if (action === 'reload') return settle(tab, () => wc.command('Page.reload'));
     const h = await wc.command('Page.getNavigationHistory');
     const e = h.entries[h.currentIndex + (action === 'back' ? -1 : 1)];
-    if (e) await settle(tab, () => wc.command('Page.navigateToHistoryEntry', { entryId: e.id }));
+    if (e) {
+      if (agent && e.url) assertAgentUrl(e.url);
+      await settle(tab, () => wc.command('Page.navigateToHistoryEntry', { entryId: e.id }));
+      if (agent) assertAgentUrl(tab.url);
+    }
   }
   async function vpsPerform(tab, body, botId, overseer, depth = 0) {
     const wc = tab.view.webContents;
@@ -336,6 +356,7 @@ async function serve() {
         throw fail('Unsupported CDP method. Allowed domains: Page, Runtime, Input, Emulation, Network, DOM, DOMSnapshot, Accessibility, CSS, Log, Fetch, Storage.');
       const params = body.params && typeof body.params === 'object' ? body.params : {};
       if (JSON.stringify(params).length > 64000) throw fail('cdp params too large (max 64KB).');
+      if (method === 'Page.navigate' && params.url != null) assertAgentUrl(String(params.url));
       let value = await Promise.race([
         wc.command(method, params),
         new Promise((_, reject) => setTimeout(() => reject(fail('cdp timed out after 20s.', 408)), 20000)),
@@ -348,12 +369,15 @@ async function serve() {
     else if (body.action === 'navigate') {
       await input.clear(tab);
       requireActor(tab, botId, body.epoch, true, overseer);
-      await wc.command('Page.navigate', { url: normalizeUrl(body.url) });
-      await loaded(tab, normalizeUrl(body.url));
+      const target = normalizeUrl(body.url);
+      assertAgentUrl(target);
+      await wc.command('Page.navigate', { url: target });
+      await loaded(tab, target);
+      assertAgentUrl(tab.url);
     } else if (['back', 'forward', 'reload'].includes(body.action)) {
       await input.clear(tab);
       requireActor(tab, botId, body.epoch, true, overseer);
-      await history(tab, body.action);
+      await history(tab, body.action, true);
     } else throw fail('Unsupported VPS action.');
     if (body.action !== 'move') tab.refs.clear();
     return { dispatched: true };
@@ -364,6 +388,22 @@ async function serve() {
       const tab = [...tabs.values()].find((t) => t.targetId === info.targetId);
       if (tab) {
         const moved = info.url !== tab.url;
+        if (moved && tab.controller === 'agent') {
+          const decision = agentUrlDecision(info.url, policy);
+          if (!decision.ok) {
+            tab.error = decision.error;
+            tab.url = 'about:blank';
+            tab.refs.clear();
+            if (!tab.intelioBouncing) {
+              tab.intelioBouncing = true;
+              tab.view.webContents.command('Page.navigate', { url: 'about:blank' })
+                .finally(() => { tab.intelioBouncing = false; })
+                .catch(() => {});
+            }
+            persist().catch(() => {});
+            return;
+          }
+        }
         tab.url = info.url;
         tab.title = info.title;
         tab.refs.clear();
@@ -506,6 +546,7 @@ async function serve() {
       }
       if ((human || overseer || botId === tab.botId) && req.method === 'POST' && m[2] === 'control') {
         const body = await read(req);
+        if (body.controller === 'agent') assertAgentUrl(tab.url || 'about:blank');
         if (!human && body.controller === 'agent') { requireAgentClaim(tab); tab.handoff = reviewedHandoff(tab.handoff); }
         if (human && body.handoff?.phase === 'handed_off')
           tab.handoff = {
@@ -600,7 +641,12 @@ async function serve() {
       send(e.status || 400, { error: e.message });
     }
   });
-  server.listen(cfg.port || 9465, '127.0.0.1', () => {
+  const port = Number.isInteger(cfg.port) ? cfg.port : 9465;
+  server.on('error', (error) => {
+    process.stderr.write(error.message + '\n');
+    process.exit(1);
+  });
+  server.listen(port, '127.0.0.1', () => {
     write(connectionFile, { url: 'http://127.0.0.1:' + server.address().port, token, protocol: 1, host: 'vps' });
     process.stderr.write('VPS browser host ready on loopback.\n');
   });

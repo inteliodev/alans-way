@@ -17,6 +17,7 @@ const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { applyLinuxDemo, rendererSandbox } = require('./intelio/linux-demo.cjs');
 const { agentNavigationDecision } = require('./intelio/safety.cjs');
 const { loadIntelio, publicIntelioState, pngIcon } = require('./intelio/bridge.cjs');
+const { agents, agentsSetup } = require('./intelio/forks.cjs');
 
 if (!applyLinuxDemo(app)) app.enableSandbox();
 app.setName("alans-way-localapp");
@@ -598,7 +599,7 @@ function registerIpc() {
         const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
         clipboard.writeText([
           "# Alan's Way setup — paste into a terminal on the host running your Hermes gateway",
-          `curl -fsSL https://raw.githubusercontent.com/capthvnsen/alans-way-agents/main/setup.sh | bash -s -- --bot-id ${q(botId)}${bot ? ` --bot-name ${q(bot.name.replace(/'/g, ''))}` : ''}${macSsh ? ` --mac-ssh ${q(macSsh)}` : ''} --restart`,
+          `curl -fsSL ${agentsSetup} | bash -s -- --bot-id ${q(botId)}${bot ? ` --bot-name ${q(bot.name.replace(/'/g, ''))}` : ''}${macSsh ? ` --mac-ssh ${q(macSsh)}` : ''} --restart`,
           '# The bootstrap installs the plugin + hook, configures the browser connector,',
           '# offers to bind the primary route, restarts the gateway, and verifies itself.',
         ].join('\n'));
@@ -609,7 +610,7 @@ function registerIpc() {
         const macSsh = (prefs.macSshHost || '').trim();
         clipboard.writeText(`Set up Alan's Way on this machine and connect it to my Mac.
 1. If Tailscale isn't installed or connected here, install it (tailscaled + \`tailscale up\`). Tell me this machine's tailnet name/IP when done. My Mac's SSH address is: ${macSsh || '<my-mac-tailscale>'}.
-2. Fetch the bootstrap: git clone https://github.com/capthvnsen/alans-way-agents (or \`git -C alans-way-agents pull\` if already cloned).
+2. Fetch the bootstrap: git clone ${agents} (or \`git -C alans-way-agents pull\` if already cloned).
 3. Run: ./alans-way-agents/setup.sh --bot-id '${botId || '<telegram-bot-id>'}' --mac-ssh '${macSsh || '<my-mac-tailscale>'}' --restart — answer its prompts; if it asks to bind a primary route, pick the bot matching this chat.
 4. Report: plugin status, whether the browser host started, the workspace_browser block location, and anything it flagged. Then run ./alans-way-agents/setup.sh --verify and paste me the summary.
 5. If the VPS needs a desktop/VNC stack for the browser host and none exists, tell me the exact apt commands it printed — don't install the display stack on your own.`);
