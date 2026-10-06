@@ -177,7 +177,43 @@ class PinCheckTests(unittest.TestCase):
             env = self._stub(Path(tmp), f"echo upstream {other}\nexit 0\n")
             report = load_report(EXAMPLE, pin_path=HARNESS / "pin" / "hermes.yaml", environ=env)
         self.assertEqual(report["hermes"]["match"], "differs")
-        self.assertEqual(report["hermes"]["summary"], "installed Hermes does not match the pin")
+        self.assertEqual(report["hermes"]["commit"], other)
+        self.assertEqual(report["hermes"]["summary"], f"installed {other} vs pin {PIN[:8]}")
+
+    def test_real_short_version_line_is_a_mismatch(self):
+        # Captured from `hermes -p default --version`. The install directory
+        # line uses /Users/user so a personal home path is not stored here.
+        version = (
+            "Hermes Agent v0.21.5+7027.g7b36288 (2026.9.24) · upstream 7b362884\n"
+            "Install directory: /Users/user/.hermes/hermes-agent\n"
+            "Install method: git\n"
+            "Python: 3.14.7\n"
+            "OpenAI SDK: 2.24.0\n"
+            "Up to date\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            # echo is a shell builtin. The probe PATH is only this directory,
+            # so an external cat would print nothing and look like "no commit".
+            env = self._stub(Path(tmp), "echo '" + version.rstrip("\n") + "'\nexit 0\n")
+            report = load_report(EXAMPLE, pin_path=HARNESS / "pin" / "hermes.yaml", environ=env)
+        hermes = report["hermes"]
+        self.assertTrue(hermes["command_ok"])
+        self.assertEqual(hermes["match"], "differs")
+        self.assertEqual(hermes["commit"], "7b362884")
+        self.assertEqual(hermes["summary"], "installed 7b362884 vs pin 5d3c0597")
+        self.assertNotIn("no commit", hermes["summary"])
+
+    def test_short_prefix_of_the_pin_matches(self):
+        short = PIN[:8]
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._stub(
+                Path(tmp),
+                f"echo 'Hermes Agent v0.1.0+1.g{PIN[:7]} · upstream {short}'\nexit 0\n",
+            )
+            report = load_report(EXAMPLE, pin_path=HARNESS / "pin" / "hermes.yaml", environ=env)
+        self.assertEqual(report["hermes"]["match"], "commit")
+        self.assertEqual(report["hermes"]["commit"], PIN)
+        self.assertEqual(report["hermes"]["summary"], "installed commit matches the pin")
 
     def test_success_without_a_commit_is_unverified(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -27,8 +27,10 @@ safety, and the Hermes profile name (`hermes -p`) live in an optional
 sidecar.
 
 `intelio/python/alans_way` calls `intelio_harness.load_profile` and then applies
-the sidecar and the `hermes --version` probe. It does not reimplement pin or
-profile parsing. The desktop app runs `python -m alans_way <profile_dir>` with
+the sidecar and the `hermes --version` probe. A short `upstream <sha>` token or
+`+N.g<sha>` describe suffix is compared to the full pin by prefix. A different
+short SHA is `differs` (`installed <sha> vs pin <8 hex>`), not an unverified
+probe. It does not reimplement pin or profile parsing. The desktop app runs `python -m alans_way <profile_dir>` with
 `PYTHONPATH` set to both `intelio/python` and
 `intelio/vendor/intelio-harness/src`. The raw contract check is:
 

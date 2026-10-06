@@ -10,7 +10,46 @@ import subprocess
 from alans_way.safety import redact
 
 _SHA = re.compile(r"\b([0-9a-f]{40})\b")
+_UPSTREAM_SHA = re.compile(r"\bupstream\s+([0-9a-f]{7,40})\b")
+_DESCRIBE_SHA = re.compile(r"\+\d+\.g([0-9a-f]{7,40})\b")
 _PROFILE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def installed_sha(text: str) -> str | None:
+    """Pull a commit from `upstream <sha>` or a `+N.g<sha>` describe suffix.
+
+    A full 40-character SHA still counts. When both forms are present and one
+    extends the other, the longer one is kept.
+    """
+    if not isinstance(text, str) or not text:
+        return None
+    lowered = text.lower()
+    candidates = _UPSTREAM_SHA.findall(lowered) + _DESCRIBE_SHA.findall(lowered) + _SHA.findall(lowered)
+    chosen = ""
+    for item in candidates:
+        if not chosen:
+            chosen = item
+            continue
+        if item.startswith(chosen) or chosen.startswith(item):
+            if len(item) > len(chosen):
+                chosen = item
+            continue
+        if len(chosen) == 40:
+            continue
+        if len(item) == 40:
+            chosen = item
+    return chosen or None
+
+
+def matches_pin(pin_commit: str, found: str) -> bool:
+    """True when the installed SHA is the pin or a prefix of it (or the reverse)."""
+    if not isinstance(pin_commit, str) or not isinstance(found, str):
+        return False
+    pin = pin_commit.lower()
+    short = found.lower()
+    if _SHA.fullmatch(pin) is None or re.fullmatch(r"[0-9a-f]{7,40}", short) is None:
+        return False
+    return pin.startswith(short) or short.startswith(pin)
 
 
 def launch_argv(hermes_profile: str) -> list[str]:
@@ -58,19 +97,19 @@ def probe_hermes(hermes_profile: str, pin_commit: str, environ: dict | None = No
         base["error"] = redact(stderr.strip())[:300] or f"probe failed (exit {proc.returncode})"
         base["summary"] = f"probe failed (exit {proc.returncode})"
         return base
-    found = _SHA.findall(stdout)
+    found = installed_sha(stdout)
     base["version"] = redact(stdout.strip())[:500]
     base["command_ok"] = True
     base["error"] = None
-    if pin_commit in found:
+    if found and matches_pin(pin_commit, found):
         base["match"] = "commit"
         base["commit"] = pin_commit
         base["summary"] = "installed commit matches the pin"
         return base
     if found:
         base["match"] = "differs"
-        base["commit"] = found[0]
-        base["summary"] = "installed Hermes does not match the pin"
+        base["commit"] = found
+        base["summary"] = f"installed {found} vs pin {pin_commit[:8]}"
         return base
     base["match"] = "unverified"
     base["summary"] = "Hermes responded, but the output has no commit to compare with the pin"

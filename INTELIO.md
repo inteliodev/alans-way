@@ -23,7 +23,7 @@ That command needs PyYAML (`pip install 'PyYAML>=6'`), which is the harness depe
 PYTHONPATH=intelio/python:intelio/vendor/intelio-harness/src python -m alans_way intelio/profiles/example
 ```
 
-`hermes_profile: example` in that sidecar maps to `hermes -p example`. An empty value maps to `hermes` with no `-p`. The app probes `hermes -p <name> --version` (or `hermes --version`) and shows the real pin commit next to that result. It does not start a Hermes chat. See [intelio/SYNC.md](intelio/SYNC.md).
+`hermes_profile: example` in that sidecar maps to `hermes -p example`. An empty value maps to `hermes` with no `-p`. The app probes `hermes -p <name> --version` (or `hermes --version`) and shows the real pin commit next to that result. A short `upstream <sha>` token or `+N.g<sha>` describe suffix is compared to the pin by prefix, so a different short SHA is a mismatch rather than an unverified probe. It does not start a Hermes chat. See [intelio/SYNC.md](intelio/SYNC.md).
 
 ## Run the desktop app
 
