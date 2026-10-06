@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { importRemoteHermesKey, keyFromImport, keysFromImport } = require('../src/intelio/remote-hermes-main.cjs');
+const { importRemoteHermesKey, keyFromImport, keysFromImport, profileNames, VNC_KEY } = require('../src/intelio/remote-hermes-main.cjs');
 
 const digest = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 
@@ -91,6 +91,49 @@ test('multi-line import stores each profile key and keeps API_SERVER_KEY as inte
   assert.equal(stored.intelio, Buffer.from(digest(intelio), 'hex').toString('base64'));
   assert.equal(stored.prc, Buffer.from(digest(prc), 'hex').toString('base64'));
   assert.equal(stored.alignment, Buffer.from(digest(alignment), 'hex').toString('base64'));
+});
+
+test('a vnc= line is stored encrypted and is not a profile', () => {
+  assert.equal(VNC_KEY, 'vnc');
+  const intelio = 'a'.repeat(32);
+  const password = 'desk-pass';
+  const text = `intelio=${intelio}\nvnc="${password}"\nVNC=${'x'.repeat(20)}\nshort=abcd\n`;
+  const parsed = keysFromImport(text);
+  assert.equal(digest(parsed.intelio), digest(intelio));
+  assert.equal(digest(parsed.vnc), digest('x'.repeat(20)));
+  assert.equal(parsed[password], undefined);
+  assert.deepEqual(profileNames(parsed), ['intelio']);
+  assert.equal(keysFromImport('vnc=\n').vnc, undefined);
+  assert.equal(digest(keysFromImport('vnc="desk-pass"\n').vnc), digest('desk-pass'));
+  assert.equal(digest(keysFromImport('vnc=short-one\n').vnc), digest('short-one'));
+  let present = true;
+  const stored = {};
+  const safeStorage = { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(digest(value), 'hex') };
+  const fsImpl = {
+    existsSync: () => present,
+    statSync: () => ({ size: Buffer.byteLength(text) }),
+    readFileSync: () => text,
+    openSync: () => 4,
+    writeSync: (fd, buf) => { assert.equal(buf.every((byte) => byte === 0), true); },
+    fsyncSync: () => {},
+    closeSync: () => {},
+    unlinkSync: () => { present = false; },
+  };
+  const result = importRemoteHermesKey({
+    file: '/tmp/remote-hermes-key.import',
+    profile: 'intelio',
+    safeStorage,
+    readKeys: () => stored,
+    writeKeys: (keys) => Object.assign(stored, keys),
+    fsImpl,
+  });
+  assert.equal(result.imported, true);
+  assert.equal(result.vnc, true);
+  assert.deepEqual(result.profiles, ['intelio']);
+  assert.equal(JSON.stringify(result).includes(password), false);
+  assert.equal(JSON.stringify(result).includes('x'.repeat(20)), false);
+  assert.equal(stored.vnc, Buffer.from(digest('x'.repeat(20)), 'hex').toString('base64'));
+  assert.equal(present, false);
 });
 
 test('a missing keychain leaves the import file in place', () => {

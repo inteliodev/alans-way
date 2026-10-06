@@ -62,7 +62,7 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             TAG="$GITHUB_REF_NAME"
           else
-            TAG="v0.3.3-intelio-windows"
+            TAG="v0.3.4-intelio-windows"
           fi
           NOTES="Unsigned per-user Intelio installer (NSIS, x64). Private draft only — do not publish this release. Windows SmartScreen: More info, then Run anyway. See docs/intelio-windows-and-mobile.md."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

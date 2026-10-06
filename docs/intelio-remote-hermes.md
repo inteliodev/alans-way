@@ -52,10 +52,10 @@ Settings → **Remote Hermes (VPS)**:
   (for an SSH tunnel to the VPS) are accepted; anything
   else is refused before a request is made.
 - Port: `8642`. Profile: `intelio` (`default` = unprefixed routes).
-- API keys: you do not type them. Place `remote-hermes-key.import` in the app data folder (`Hermes Workspace`) before launch. The file can hold several lines, `<profile>=<key>`. A legacy `API_SERVER_KEY=...` line, or a single raw key, is the intelio key. Intelio encrypts every usable line with Electron
-  `safeStorage` (Windows DPAPI, macOS Keychain, or libsecret) in `remote-hermes-keys.json` (mode 600), securely deletes the import file, and shows **Connected to VPS Hermes**. Each `/p/<profile>` route accepts only that profile’s key. Keys are
+- API keys: you do not type them. Place `remote-hermes-key.import` in the app data folder (`Hermes Workspace`) before launch. The file can hold several lines, `<profile>=<key>`. A legacy `API_SERVER_KEY=...` line, or a single raw key, is the intelio key. A `vnc=` line is the VPS desktop password. Intelio encrypts it with the profile keys and supplies it when the noVNC pane asks. It is not a Hermes profile and it is not placed in the viewer URL. If that line is absent, the password prompt stays. Intelio encrypts every usable line with Electron
+  `safeStorage` (Windows DPAPI, macOS Keychain, or libsecret) in `remote-hermes-keys.json` (mode 600), securely deletes the import file, and shows **Connected to VPS Hermes**. Each `/p/<profile>` route accepts only that profile’s key. Profile keys are
   only used in the main process. They are never sent to a renderer, never logged,
-  and redacted from errors. A rotated key replaces the stored one when a new import file is present at the next launch.
+  and redacted from errors. The desktop password is handed only to the VPS desktop pane, through noVNC’s credentials callback, and is not logged. A rotated key replaces the stored one when a new import file is present at the next launch.
 - A fresh Windows install starts in this mode already (that host, port 8642, profile `intelio`) even when there is no preferences file. Saved settings that omit the host keep that default. An explicit off switch stays off. With a keystore present, the main window lists those agents and does not show the Telegram sign-in note. If the VPS cannot be reached, or a profile key is rejected, the window shows that error instead of staying on “Loading…”. The first launch also asks for Tailscale if it is missing. See [Windows and the phone](intelio-windows-and-mobile.md).
 
 The phone client reads `~/.hermes/profiles/intelio/.env` on the VPS (mode 600) and signs the browser in by Tailscale login. It does not need this import file.

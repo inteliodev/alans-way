@@ -34,7 +34,15 @@ function connect(value) {
       connected = false; api.command('remote-control',{enabled:false}).catch(()=>{}); $('connection-dot').classList.remove('connected'); showEmpty('Desktop disconnected', 'Check Tailscale and your desktop viewer, then reconnect.'); status('disconnected');
     });
     rfb.addEventListener('credentialsrequired', () => {
-      $('credentials').classList.remove('hidden'); $('vnc-password').focus();
+      const asked = version;
+      api.command('remote-vnc-password').then((password) => {
+        if (asked !== connectionVersion) return;
+        if (password) { rfb.sendCredentials({ password }); return; }
+        $('credentials').classList.remove('hidden'); $('vnc-password').focus();
+      }).catch(() => {
+        if (asked !== connectionVersion) return;
+        $('credentials').classList.remove('hidden'); $('vnc-password').focus();
+      });
     });
     rfb.addEventListener('securityfailure', () => { if (version === connectionVersion) { showEmpty('Connection needs attention', 'The desktop rejected the connection. Check the viewer URL and credentials.', 'Connection settings'); status('authentication failed'); } });
   } catch (error) { showEmpty('Unable to connect', error.message, 'Connection settings'); status('disconnected'); }

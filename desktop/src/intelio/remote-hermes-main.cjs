@@ -14,7 +14,14 @@ function unquote(value) {
   return String(value || '').trim().replace(/^['"]|['"]$/g, '');
 }
 
-/** Several `profile=key` lines. A lone raw line, or `API_SERVER_KEY=`, is the intelio key. */
+/** Import-file name for the VPS desktop password. Not a Hermes profile. */
+const VNC_KEY = 'vnc';
+
+function profileNames(keys) {
+  return Object.keys(keys || {}).filter((name) => name !== VNC_KEY);
+}
+
+/** Several `profile=key` lines. A lone raw line, or `API_SERVER_KEY=`, is the intelio key. `vnc=` is the desktop password. */
 function keysFromImport(text) {
   const lines = String(text || '').replace(/^\uFEFF/, '').split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
   const keys = {};
@@ -27,10 +34,14 @@ function keysFromImport(text) {
     const named = line.match(/^(?:export\s+)?([A-Za-z0-9_-]+)\s*=\s*(.*)$/);
     if (!named) continue;
     const value = unquote(named[2]);
+    if (/^vnc$/i.test(named[1])) {
+      if (value.length >= 1 && value.length <= 256) keys[VNC_KEY] = value;
+      continue;
+    }
     if (value.length < 16) continue;
     if (/^API_SERVER_KEY$/i.test(named[1])) { keys.intelio = value; continue; }
     const profile = named[1].trim().toLowerCase();
-    if (!PROFILE_RE.test(profile)) continue;
+    if (!PROFILE_RE.test(profile) || profile === VNC_KEY) continue;
     keys[profile] = value;
   }
   return keys;
@@ -61,17 +72,17 @@ function importRemoteHermesKey({ file, profile, safeStorage, readKeys, writeKeys
     return { imported: false, refused: true };
   }
   const parsed = keysFromImport(fsImpl.readFileSync(file, 'utf8'));
-  const names = Object.keys(parsed);
-  if (!names.length) {
+  const names = profileNames(parsed);
+  if (!names.length && !parsed[VNC_KEY]) {
     secureDelete(file, fsImpl);
     return { imported: false, refused: true };
   }
   if (!safeStorage || !safeStorage.isEncryptionAvailable()) return { imported: false, unavailable: true };
   const keys = readKeys();
-  for (const name of names) keys[name] = safeStorage.encryptString(parsed[name]).toString('base64');
+  for (const name of Object.keys(parsed)) keys[name] = safeStorage.encryptString(parsed[name]).toString('base64');
   writeKeys(keys);
   secureDelete(file, fsImpl);
-  return { imported: true, profiles: names, notice: 'Connected to VPS Hermes', profile: profile || names[0] };
+  return { imported: true, profiles: names, vnc: Boolean(parsed[VNC_KEY]), notice: 'Connected to VPS Hermes', profile: profile || names[0] };
 }
 
 function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs, savePreferences, getMainWindow, root, rendererSandbox, icon, background }) {
@@ -88,6 +99,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     fs.renameSync(`${keyFile()}.tmp`, keyFile());
   }
   async function getKey(profile) {
+    if (profile === VNC_KEY) return '';
     const stored = readKeys()[profile || 'default'];
     if (!stored || !safeStorage.isEncryptionAvailable()) return '';
     try { return safeStorage.decryptString(Buffer.from(stored, 'base64')); } catch { return ''; }
@@ -97,7 +109,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return normalizeRemoteConfig(prefs.remoteHermes || {});
   }
   const client = createRemoteHermesClient({ getConfig: config, getKey });
-  const mainData = createRemoteMain({ getConfig: config, getKey, keyNames: () => Object.keys(readKeys()) });
+  const mainData = createRemoteMain({ getConfig: config, getKey, keyNames: () => profileNames(readKeys()) });
   let versionLabel = '';
   function watchVersion(onUpdate) {
     const run = () => {
@@ -143,7 +155,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     const keys = readKeys();
     let encryptionAvailable = false;
     try { encryptionAvailable = safeStorage.isEncryptionAvailable(); } catch (e) { error = error || e.message; }
-    return { ...cfg, hasKey: Boolean(keys[cfg.profile || 'default']), profilesWithKeys: Object.keys(keys), encryptionAvailable, error, versionLabel };
+    return { ...cfg, hasKey: Boolean(keys[cfg.profile || 'default']), profilesWithKeys: profileNames(keys), hasVncPassword: Boolean(keys[VNC_KEY]), encryptionAvailable, error, versionLabel };
   }
 
   function trusted(event) {
@@ -239,7 +251,18 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return chatWindow;
   }
 
-  return { register, command, open, publicState, watchVersion, startupNotice: () => startupNotice };
+  async function vncPassword() {
+    const stored = readKeys()[VNC_KEY];
+    if (!stored) return '';
+    try {
+      if (!safeStorage.isEncryptionAvailable()) return '';
+      return safeStorage.decryptString(Buffer.from(stored, 'base64'));
+    } catch {
+      return '';
+    }
+  }
+
+  return { register, command, open, publicState, watchVersion, vncPassword, startupNotice: () => startupNotice };
 }
 
-module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, keysFromImport, secureDelete };
+module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, keysFromImport, profileNames, secureDelete, VNC_KEY };

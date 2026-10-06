@@ -601,6 +601,9 @@ function registerIpc() {
       case 'preview-drop': if (win && !win.isDestroyed()) win.webContents.send('workspace:preview-drop'); break;
       case 'remote-control': prefs.remoteControl = value.enabled === true; break;
       case 'remote-status': remoteStatus = String(value.status).slice(0, 50); break;
+      case 'remote-vnc-password':
+        if (event.sender !== remoteView?.webContents) throw new Error('Untrusted workspace request.');
+        return remoteHermes?.vncPassword?.() || '';
       case 'remote-paste': if (!prefs.remoteControl || remoteStatus!=='connected') throw new Error('Take control of the connected VPS desktop first.'); return clipboard.readText().slice(0,20000);
       case 'fullscreen': win.setFullScreen(!win.isFullScreen()); break;
       case 'open-settings': win.webContents.send('workspace:settings'); break;

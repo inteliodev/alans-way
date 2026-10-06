@@ -70,7 +70,7 @@
   /** Remote Hermes (VPS): this app as a client of the single Hermes on the VPS, over Tailscale only. */
   function appendRemoteHermes(body, { element, command, toast }) {
     body.append(element('h3', '', 'Remote Hermes (VPS)'));
-    body.append(element('p', 'settings-note', 'When Remote Hermes is on, the main window lists each profile and chats through that profile’s VPS sessions. The host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The import file remote-hermes-key.import can hold several lines, one profile=key per line. A legacy API_SERVER_KEY= line, or a single raw key, is the intelio key. Each profile only accepts its own key. Intelio encrypts them and deletes that file. You do not type the keys.'));
+    body.append(element('p', 'settings-note', 'When Remote Hermes is on, the main window lists each profile and chats through that profile’s VPS sessions. The host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The import file remote-hermes-key.import can hold several lines, one profile=key per line. A legacy API_SERVER_KEY= line, or a single raw key, is the intelio key. A vnc= line is the VPS desktop password, stored the same way and sent when the desktop asks. It is not a profile, and it is not put in the viewer URL. Each profile only accepts its own key. Intelio encrypts them and deletes that file. You do not type the keys or the desktop password.'));
     const status = element('p', 'settings-note', 'Loading…');
     const tail = element('p', 'settings-note', 'Checking Tailscale…');
     tail.id = 'remote-hermes-tailscale';
