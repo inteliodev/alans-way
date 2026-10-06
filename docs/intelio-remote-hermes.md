@@ -52,14 +52,13 @@ Settings → **Remote Hermes (VPS)**:
   (for an SSH tunnel to the VPS) are accepted; anything
   else is refused before a request is made.
 - Port: `8642`. Profile: `intelio` (`default` = unprefixed routes).
-- API key: paste the profile's key once. It is encrypted with Electron
-  `safeStorage` (Windows DPAPI, macOS Keychain, or libsecret) in `remote-hermes-keys.json` (mode 600) and is
+- API key: you do not type it. Place `remote-hermes-key.import` in the app data folder (`Hermes Workspace`) before launch. Intelio encrypts it with Electron
+  `safeStorage` (Windows DPAPI, macOS Keychain, or libsecret) in `remote-hermes-keys.json` (mode 600), securely deletes the import file, and shows **Connected to VPS Hermes**. The key is
   only used in the main process. It is never sent to a renderer, never logged,
-  and redacted from errors.
-- A fresh Windows install starts in this mode already (that host, port 8642, profile `intelio`) and asks for Tailscale if it is missing. The key is still entered once. See [Windows and the phone](intelio-windows-and-mobile.md).
+  and redacted from errors. A rotated key replaces the stored one when a new import file is present at the next launch.
+- A fresh Windows install starts in this mode already (that host, port 8642, profile `intelio`) and asks for Tailscale if it is missing. See [Windows and the phone](intelio-windows-and-mobile.md).
 
-To read the key on the VPS without echoing it into shell history:
-`ssh intelio-vps 'grep ^API_SERVER_KEY= ~/.hermes/profiles/intelio/.env | cut -d= -f2-' | pbcopy`.
+The phone client reads `~/.hermes/profiles/intelio/.env` on the VPS (mode 600) and signs the browser in by Tailscale login. It does not need this import file.
 
 Open the chat with Window → **Remote Hermes (VPS)** (`Cmd+Shift+H`) or the
 Settings button. The left list shows sessions from every surface (filter by

@@ -51,7 +51,7 @@ function parseStatus(stdout) {
 }
 
 function firstRunMessage(status) {
-  const where = 'Remote Hermes starts pointed at intelio-vps.tail9c1007.ts.net port 8642, profile intelio. Paste that profile’s API key once in Settings. Windows stores it with DPAPI.';
+  const where = 'Remote Hermes starts pointed at intelio-vps.tail9c1007.ts.net port 8642, profile intelio. If remote-hermes-key.import is in the app data folder, Intelio stores it with the OS keychain and deletes the file. You do not type the key.';
   if (!status?.installed) {
     return { message: 'Install Tailscale to reach Hermes.', detail: `Intelio talks to the VPS Hermes over Tailscale only. ${where}`, install: true };
   }

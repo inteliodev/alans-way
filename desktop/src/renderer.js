@@ -497,11 +497,17 @@ $('splitter').onpointerdown = (event) => {
   const end = () => { $('splitter').classList.remove('active'); $('splitter').removeEventListener('pointermove', handleMove); $('splitter').removeEventListener('pointerup', end); command('settings', { chatWidth: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--chat-width')) }); };
   $('splitter').addEventListener('pointermove', handleMove); $('splitter').addEventListener('pointerup', end);
 };
-api.onState(render);
 api.onPointer?.(point => window.HermesAvatars.receivePointer(point));
 api.onFocusAddress(() => { $('address').focus(); $('address').select(); });
 api.onSettings?.(showSettings);
 api.onFocusWorkspace?.(() => { if (state?.showBrowser === false) return; focusMode = !focusMode; $('shell').classList.toggle('focus-workspace', focusMode); scheduleLayout(); });
 new ResizeObserver(scheduleLayout).observe($('shell'));
 window.addEventListener('resize', () => { positionPreview(); scheduleLayout(); });
-api.getState().then(render).catch((error) => toast(error.message));
+let remoteNoticeShown = false;
+function showRemoteNotice(next) {
+  if (remoteNoticeShown || !next?.remoteHermesNotice) return;
+  remoteNoticeShown = true;
+  toast(next.remoteHermesNotice);
+}
+api.onState((next) => { showRemoteNotice(next); render(next); });
+api.getState().then((next) => { showRemoteNotice(next); render(next); }).catch((error) => toast(error.message));

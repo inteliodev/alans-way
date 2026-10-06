@@ -1,8 +1,10 @@
 'use strict';
 /**
  * Tailnet-only phone client for the VPS Hermes.
- * The profile API key is accepted once at POST /session, kept in memory, and
- * never written into the static JavaScript or onto disk.
+ * Sign-in is the caller's Tailscale login. The profile API key is read from
+ * a mode-600 env file on this host and never written into the page or a cookie.
+ * Voice audio is transcribed and spoken here (or by Hermes, if that profile
+ * advertises audio). The page never sees the key.
  */
 const fs = require('node:fs');
 const http = require('node:http');
@@ -12,6 +14,8 @@ const crypto = require('node:crypto');
 const { isTailnetOrLoopbackHost, normalizeRemoteConfig, DEFAULT_PORT } = require('../../desktop/src/intelio/remote-hermes.cjs');
 const { resolveRepoRoot } = require('../../desktop/src/intelio/paths.cjs');
 const { readBrandPng, scalePng } = require('../../desktop/src/intelio/png-icon.cjs');
+const { createVoiceRuntime } = require('./voice.cjs');
+const { normalizeIp, parseAllowlist, profileKeyPath, readProfileKey, createIdentity } = require('./identity.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
 const STATIC = {
@@ -25,6 +29,45 @@ const STATIC = {
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json' };
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
+const AUDIO_LIMIT = 8 * 1024 * 1024;
+
+const TILES = [
+  { id: 'intelio', name: 'Intelio', color: '#ff8a1f', status: 'online' },
+  { id: 'finance', name: 'Finance', color: '#2ecc71', status: 'busy' },
+  { id: 'recruiting', name: 'Recruiting', color: '#1abc9c', status: 'away' },
+];
+
+const SAMPLE_HOME = {
+  sample: true,
+  label: 'SAMPLE DATA',
+  profiles: TILES,
+  conversations: [
+    { id: 'sample-intelio', profileId: 'intelio', group: 'work', title: 'Intelio', preview: 'Need your yes on the Friday all-hands deck.', time: '7:34 PM', inCall: true },
+    { id: 'sample-outreach', profileId: 'recruiting', group: 'work', title: 'Outreach', preview: '8 intros drafted — sitting in the CRM till you review.', time: '11:16 AM' },
+    { id: 'sample-launch', profileId: 'intelio', group: 'work', title: 'Website launch', preview: 'Checkout is clean on staging. Three bugs left.', time: '11:02 AM' },
+    { id: 'sample-support', profileId: 'finance', group: 'work', title: 'Support', preview: 'Acme is wobbling. Drafted a Thursday check-in.', time: '2:20 PM' },
+    { id: 'sample-marketing', profileId: 'recruiting', group: 'work', title: 'Marketing', preview: 'Launch post is live. First 200 impressions.', time: '1:05 PM' },
+    { id: 'sample-renewal', profileId: 'finance', group: 'work', title: 'Acme renewal', preview: 'Support: Acme is wobbling. Drafted a Thursday note.', time: '9:40 AM' },
+  ],
+};
+
+const SAMPLE_MESSAGES = {
+  'sample-lamp': [
+    { role: 'user', content: 'I\'m redoing the office. Can you find me a nice vintage desk lamp? Ideally brass, under $150.' },
+    { role: 'activity', content: 'Searched 3 marketplaces' },
+    { role: 'assistant', content: 'Best three: a 1960s brass banker\'s lamp ($95), a restored Bauhaus task lamp ($140), and an art-deco swing arm ($120). The banker\'s lamp is in the cleanest condition.' },
+    { role: 'choice', content: 'Go with the banker\'s lamp.' },
+    { role: 'assistant', content: 'Ordered — arriving Thursday. I sent the receipt to Finance for expenses.' },
+    { role: 'time', content: '7:34 PM' },
+    { role: 'assistant', content: 'Need your yes on the Friday all-hands deck.' },
+  ],
+  'sample-intelio': [
+    { role: 'user', content: 'Hey, so I forgot what were the takeaways and action items from today\'s stand-up?' },
+    { role: 'assistant', content: 'Three takeaways. The API migration is on track for Friday, but the auth service needs a security review before we ship. Dana\'s handling that review. And the staging deploy got pushed to Thursday.' },
+    { role: 'assistant', content: 'All right.' },
+    { role: 'user', content: 'Tell Dana that I\'m going to get' },
+  ],
+};
 
 function icons() {
   const png = readBrandPng(resolveRepoRoot());
@@ -45,12 +88,29 @@ function readCookie(header, name) {
   return '';
 }
 
+function loopbackBind(bind) {
+  const host = String(bind || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
 function assertUpstream(raw) {
   const url = new URL(raw);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Hermes URL must be http(s).');
   if (url.username || url.password) throw new Error('Hermes URL must not carry credentials.');
   if (!isTailnetOrLoopbackHost(url.hostname)) throw new Error('Hermes URL must stay on the tailnet or loopback.');
   return url;
+}
+
+function titleCase(name) {
+  const raw = String(name || 'intelio');
+  return raw.slice(0, 1).toUpperCase() + raw.slice(1);
+}
+
+function clockLabel(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
 function createPwaServer({
@@ -62,24 +122,107 @@ function createPwaServer({
   keyPath = process.env.INTELIO_PWA_KEY || '',
   fetchImpl = globalThis.fetch,
   now = () => Date.now(),
+  sample = process.env.INTELIO_PWA_SAMPLE === '1',
+  voice = null,
+  profileKey = '',
+  allowedLogins = parseAllowlist(process.env.INTELIO_PWA_ALLOWED_LOGINS),
+  identify = null,
+  log = (line) => process.stderr.write(`${line}\n`),
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
+  if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
   const upstreamUrl = assertUpstream(upstream);
   const normalized = normalizeRemoteConfig({ host: '127.0.0.1', port: 8642, profile });
   const profileName = normalized.profile;
   const prefix = profileName ? `/p/${profileName}` : '';
   const sessions = new Map();
-  const failures = new Map();
+  const authFor = new WeakMap();
+  const pendingCookies = new WeakMap();
   const iconBytes = icons();
+  const runtime = voice || createVoiceRuntime();
+  const identity = createIdentity();
+  let cachedKey = profileKey || '';
+  let keyError = '';
+  let audioApi = false;
+  let listedProfiles = null;
+  let featuresKnown = false;
+  const denialLogAt = new Map();
 
   function prune() {
     for (const [token, session] of sessions) if (session.exp <= now()) sessions.delete(token);
   }
   function sessionFrom(req) {
+    if (authFor.has(req)) return authFor.get(req);
     prune();
     const token = readCookie(req.headers.cookie, 'intelio_session');
     const session = token ? sessions.get(token) : null;
     if (!session || session.exp <= now()) return null;
+    return session;
+  }
+  function bearerKey() {
+    if (cachedKey) return cachedKey;
+    if (sample) throw new Error('Sample mode does not call Hermes.');
+    if (keyError) throw new Error(keyError);
+    try {
+      cachedKey = readProfileKey(profileKeyPath({ profile: profileName }));
+      return cachedKey;
+    } catch (error) {
+      keyError = String(error.message || 'Profile key is not available.');
+      throw new Error(keyError);
+    }
+  }
+  async function learnFeatures() {
+    if (featuresKnown || sample) return;
+    try {
+      const probe = await fetchImpl(hermesUrl('/v1/capabilities'), { headers: { Authorization: `Bearer ${bearerKey()}`, Accept: 'application/json' }, redirect: 'error' });
+      const text = await probe.text();
+      let json = {};
+      if (probe.ok) { try { json = JSON.parse(text); } catch { json = {}; } }
+      audioApi = Boolean(json.features && json.features.audio_api);
+      listedProfiles = Array.isArray(json.profiles) ? json.profiles : null;
+    } catch {
+      audioApi = false;
+    }
+    featuresKnown = true;
+  }
+  function queueCookie(req, res, token) {
+    const secure = req.socket.encrypted ? '; Secure' : '';
+    pendingCookies.set(res, `intelio_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}${secure}`);
+  }
+  function cookieHeaders(res) {
+    return pendingCookies.has(res) ? { 'set-cookie': pendingCookies.get(res) } : {};
+  }
+  async function authorize(req, res) {
+    if (sample) {
+      let session = sessionFrom(req);
+      if (!session) {
+        const token = crypto.randomBytes(32).toString('base64url');
+        session = { login: 'sample', exp: now() + SESSION_MS, sample: true };
+        sessions.set(token, session);
+        queueCookie(req, res, token);
+      }
+      authFor.set(req, session);
+      return session;
+    }
+    const ip = normalizeIp(req.socket.remoteAddress);
+    const ident = identify ? await identify(ip) : await identity.identify(ip, allowedLogins);
+    if (!ident || !ident.ok) {
+      const reason = ident?.reason || 'denied';
+      const stamp = `${ip}|${reason}|${ident?.login || ''}`;
+      if (!denialLogAt.has(stamp) || now() - denialLogAt.get(stamp) > 30000) {
+        denialLogAt.set(stamp, now());
+        log(`intelio-pwa denied ${ip || 'unknown'} ${reason}${ident?.login ? ` login=${ident.login}` : ''}`);
+      }
+      return null;
+    }
+    let session = sessionFrom(req);
+    if (!session || session.login !== ident.login) {
+      const token = crypto.randomBytes(32).toString('base64url');
+      session = { login: ident.login, exp: now() + SESSION_MS };
+      sessions.set(token, session);
+      queueCookie(req, res, token);
+    }
+    authFor.set(req, session);
     return session;
   }
   function originOk(req) {
@@ -87,11 +230,12 @@ function createPwaServer({
     try { return new URL(req.headers.origin).host === req.headers.host; } catch { return false; }
   }
   function send(res, code, body, headers = {}) {
-    const payload = Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
-    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'content-length': payload.length, ...headers });
+    const payload = Buffer.from(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
+    const type = headers['content-type'] || (Buffer.isBuffer(body) ? 'application/octet-stream' : 'application/json; charset=utf-8');
+    res.writeHead(code, { ...cookieHeaders(res), 'content-type': type, 'cache-control': 'no-store', 'content-length': payload.length, ...headers });
     res.end(payload);
   }
-  async function readBody(req, limit) {
+  async function readRaw(req, limit) {
     const chunks = [];
     let size = 0;
     for await (const chunk of req) {
@@ -99,8 +243,12 @@ function createPwaServer({
       if (size > limit) throw new Error('Request body is too large.');
       chunks.push(chunk);
     }
-    if (!chunks.length) return {};
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return Buffer.concat(chunks);
+  }
+  async function readBody(req, limit) {
+    const raw = await readRaw(req, limit);
+    if (!raw.length) return {};
+    return JSON.parse(raw.toString('utf8'));
   }
   function hermesUrl(pathname, query) {
     const url = new URL(upstreamUrl.toString());
@@ -114,12 +262,12 @@ function createPwaServer({
     if (!session) return send(res, 401, { error: 'Sign in again.' });
     const response = await fetchImpl(hermesUrl(pathname, query), {
       method,
-      headers: { Authorization: `Bearer ${session.key}`, Accept: stream ? 'text/event-stream' : 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { Authorization: `Bearer ${bearerKey()}`, Accept: stream ? 'text/event-stream' : 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined,
       redirect: 'error',
     });
     if (stream) {
-      res.writeHead(response.status, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
+      res.writeHead(response.status, { ...cookieHeaders(res), 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
       if (!response.body) return res.end();
       const reader = response.body.getReader();
       while (true) {
@@ -130,61 +278,193 @@ function createPwaServer({
       return res.end();
     }
     const text = await response.text();
-    res.writeHead(response.status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    res.writeHead(response.status, { ...cookieHeaders(res), 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(text);
+  }
+
+  function engineChoice(req) {
+    const raw = String(req.headers['x-intelio-engine'] || 'auto').toLowerCase();
+    if (raw === 'hermes' || raw === 'vps' || raw === 'web' || raw === 'auto') return raw;
+    return 'auto';
+  }
+
+  async function voiceStatus() {
+    if (!sample) await learnFeatures();
+    const local = runtime.status ? await runtime.status() : { vps: false, whisper: false, piper: false };
+    const hermesAudio = Boolean(audioApi);
+    let recommended = 'web';
+    if (hermesAudio) recommended = 'hermes';
+    else if (local.vps) recommended = 'vps';
+    return {
+      sample: Boolean(sample),
+      hermesAudio,
+      vps: Boolean(local.vps),
+      web: true,
+      recommended,
+      whisper: local.whisper ? (process.env.INTELIO_VOICE_WHISPER_MODEL || 'base') : '',
+      compute: local.piper || local.whisper ? (process.env.INTELIO_VOICE_WHISPER_COMPUTE || 'int8') : '',
+    };
+  }
+
+  async function resolveEngine(requested) {
+    if (!sample) await learnFeatures();
+    if (requested === 'web') return 'web';
+    if (requested === 'hermes') return audioApi ? 'hermes' : 'vps';
+    if (requested === 'vps') return 'vps';
+    if (audioApi) return 'hermes';
+    const local = runtime.status ? await runtime.status() : { vps: false };
+    return local.vps ? 'vps' : 'web';
+  }
+
+  async function hermesTranscribe(audio, contentType) {
+    const form = new FormData();
+    form.append('file', new Blob([audio], { type: contentType || 'audio/wav' }), 'speech.wav');
+    form.append('model', 'whisper-1');
+    const response = await fetchImpl(hermesUrl('/v1/audio/transcriptions'), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${bearerKey()}` },
+      body: form,
+      redirect: 'error',
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error('Hermes refused the recording.');
+    const json = JSON.parse(text);
+    return { text: String(json.text || '').trim() };
+  }
+
+  async function hermesSpeak(text) {
+    const response = await fetchImpl(hermesUrl('/v1/audio/speech'), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${bearerKey()}`, 'Content-Type': 'application/json', Accept: 'audio/wav, audio/mpeg, application/octet-stream' },
+      body: JSON.stringify({ input: text, model: 'tts-1' }),
+      redirect: 'error',
+    });
+    if (!response.ok) throw new Error('Hermes refused to speak.');
+    const wav = Buffer.from(await response.arrayBuffer());
+    const type = response.headers.get('content-type') || 'audio/wav';
+    return { wav, type };
+  }
+
+  function realHome(rows) {
+    const listed = Array.isArray(listedProfiles) && listedProfiles.length
+      ? listedProfiles.map((item, index) => ({
+        id: String(item.id || item.name || `profile-${index}`).slice(0, 80),
+        name: String(item.name || item.id || 'Intelio').slice(0, 80),
+        color: TILES[index % TILES.length].color,
+        status: 'online',
+      }))
+      : [{ id: profileName || 'intelio', name: titleCase(profileName || 'intelio'), color: TILES[0].color, status: 'online' }];
+    const conversations = (Array.isArray(rows) ? rows : []).map((row) => ({
+      id: String(row.id || ''),
+      profileId: listed[0].id,
+      group: String(row.source || 'chat').toLowerCase(),
+      title: String(row.title || 'Conversation').slice(0, 120),
+      preview: String(row.preview || row.last_message || row.title || '').slice(0, 180),
+      time: clockLabel(row.updated_at || row.updatedAt || row.created_at),
+      source: String(row.source || ''),
+    })).filter((row) => ID_RE.test(row.id));
+    return { sample: false, label: '', profiles: listed, conversations };
   }
 
   async function handle(req, res) {
     if (!originOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
     const url = new URL(req.url, 'http://127.0.0.1');
     try {
-      if (req.method === 'GET' && (url.pathname === '/session' || url.pathname === '/session/')) {
-        return send(res, 200, { ok: Boolean(sessionFrom(req)) });
-      }
       if (req.method === 'POST' && url.pathname === '/session') {
-        const ip = req.socket.remoteAddress || '';
-        const recent = (failures.get(ip) || []).filter((at) => now() - at < 10 * 60 * 1000);
-        if (recent.length >= 8) return send(res, 429, { error: 'Too many sign-in attempts.' });
-        const body = await readBody(req, 4096);
-        const key = String(body.key || '').trim();
-        if (key.length < 16) return send(res, 400, { error: 'That key is too short.' });
-        const probe = await fetchImpl(hermesUrl('/v1/capabilities'), { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' }, redirect: 'error' });
-        if (!probe.ok) {
-          recent.push(now());
-          failures.set(ip, recent);
-          await probe.text().catch(() => '');
-          return send(res, 401, { error: 'That key was refused for this profile.' });
-        }
-        await probe.text().catch(() => '');
-        const token = crypto.randomBytes(32).toString('base64url');
-        sessions.set(token, { key, exp: now() + SESSION_MS });
-        const secure = req.socket.encrypted ? '; Secure' : '';
-        return send(res, 200, { ok: true }, { 'set-cookie': `intelio_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}${secure}` });
+        await readRaw(req, 4096).catch(() => Buffer.alloc(0));
+        return send(res, 405, { error: 'Sign-in uses Tailscale identity.' });
+      }
+      const session = await authorize(req, res);
+      if (!session) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+      if (req.method === 'GET' && (url.pathname === '/session' || url.pathname === '/session/')) {
+        return send(res, 200, { ok: true, login: session.login || '' });
       }
       if (req.method === 'DELETE' && url.pathname === '/session') {
         const token = readCookie(req.headers.cookie, 'intelio_session');
         if (token) sessions.delete(token);
+        authFor.delete(req);
         return send(res, 200, { ok: true }, { 'set-cookie': 'intelio_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0' });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/home') {
+        if (sample) return send(res, 200, SAMPLE_HOME);
+        await learnFeatures();
+        const response = await fetchImpl(hermesUrl('/api/sessions', { limit: '100', offset: '0' }), {
+          headers: { Authorization: `Bearer ${bearerKey()}`, Accept: 'application/json' },
+          redirect: 'error',
+        });
+        const text = await response.text();
+        if (!response.ok) return send(res, response.status, { error: 'Hermes did not return conversations.' });
+        let json = {};
+        try { json = JSON.parse(text); } catch { json = {}; }
+        return send(res, 200, realHome(json.data || json.sessions || []));
+      }
+      if (req.method === 'GET' && url.pathname === '/api/voice') {
+        return send(res, 200, await voiceStatus());
+      }
+      if (req.method === 'POST' && url.pathname === '/api/voice/stt') {
+        const audio = await readRaw(req, AUDIO_LIMIT);
+        if (audio.length < 16) return send(res, 400, { error: 'That recording was empty.' });
+        const engine = await resolveEngine(engineChoice(req));
+        if (engine === 'web') return send(res, 503, { error: 'Use the on-phone speech engine.', fallback: 'web' });
+        try {
+          const result = engine === 'hermes'
+            ? await hermesTranscribe(audio, req.headers['content-type'])
+            : await runtime.transcribe(audio);
+          return send(res, 200, { text: result.text || '' });
+        } catch (error) {
+          return send(res, 503, { error: String(error.message || 'Speech to text failed.').slice(0, 200), fallback: 'web' });
+        }
+      }
+      if (req.method === 'POST' && url.pathname === '/api/voice/tts') {
+        const session = sessionFrom(req);
+        if (!session) return send(res, 401, { error: 'Sign in again.' });
+        const body = await readBody(req, 8192);
+        const text = String(body.text || '').trim().slice(0, 2000);
+        if (!text) return send(res, 400, { error: 'Nothing to speak.' });
+        const engine = await resolveEngine(engineChoice(req));
+        if (engine === 'web') return send(res, 503, { error: 'Use the on-phone speech engine.', fallback: 'web' });
+        try {
+          const spoken = engine === 'hermes' ? await hermesSpeak(text) : await runtime.synthesize(text);
+          const wav = spoken.wav || spoken;
+          const type = spoken.type || 'audio/wav';
+          return send(res, 200, wav, { 'content-type': type.includes('audio') ? type : 'audio/wav' });
+        } catch (error) {
+          return send(res, 503, { error: String(error.message || 'Speech failed.').slice(0, 200), fallback: 'web' });
+        }
       }
       if (req.method === 'GET' && url.pathname === '/api/sessions') {
         return await forward(req, res, '/api/sessions', { query: { source: url.searchParams.get('source') || '', limit: '100', offset: '0' } });
       }
       const messages = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages$/);
       if (req.method === 'GET' && messages && ID_RE.test(messages[1])) {
+        if (sample && SAMPLE_MESSAGES[messages[1]]) {
+          if (!sessionFrom(req)) return send(res, 401, { error: 'Sign in again.' });
+          return send(res, 200, { data: SAMPLE_MESSAGES[messages[1]], sample: true, label: 'SAMPLE DATA' });
+        }
         return await forward(req, res, `/api/sessions/${messages[1]}/messages`, { query: { inline_images: 'false' } });
       }
       const chat = url.pathname.match(/^\/api\/sessions\/([^/]+)\/chat$/);
       if (req.method === 'POST' && chat && ID_RE.test(chat[1])) {
         const body = await readBody(req, 200000);
+        if (sample && messagesLookSample(chat[1])) {
+          if (!sessionFrom(req)) return send(res, 401, { error: 'Sign in again.' });
+          res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache' });
+          res.end('event: assistant.delta\ndata: {"delta":"SAMPLE DATA reply."}\n\n');
+          return;
+        }
         return await forward(req, res, `/api/sessions/${chat[1]}/chat/stream`, { method: 'POST', body: { input: String(body.input || '').slice(0, 100000) }, stream: true });
       }
       if (req.method === 'POST' && url.pathname === '/api/sessions') {
         const body = await readBody(req, 4096);
+        if (sample) {
+          if (!sessionFrom(req)) return send(res, 401, { error: 'Sign in again.' });
+          return send(res, 200, { id: 'sample-lamp', title: String(body.title || 'Intelio').slice(0, 200), sample: true, label: 'SAMPLE DATA' });
+        }
         return await forward(req, res, '/api/sessions', { method: 'POST', body: { title: String(body.title || '').slice(0, 200) } });
       }
       if (req.method === 'GET' && iconBytes[url.pathname]) {
         const payload = iconBytes[url.pathname];
-        res.writeHead(200, { 'content-type': 'image/png', 'content-length': payload.length, 'cache-control': 'public, max-age=86400' });
+        res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'image/png', 'content-length': payload.length, 'cache-control': 'public, max-age=86400' });
         return res.end(payload);
       }
       if (req.method === 'GET' && STATIC[url.pathname]) {
@@ -192,7 +472,7 @@ function createPwaServer({
         const file = path.join(PUBLIC, name);
         const payload = fs.readFileSync(file);
         const ext = path.extname(name);
-        res.writeHead(200, { 'content-type': TYPES[ext] || 'application/octet-stream', 'content-length': payload.length, 'cache-control': name === 'sw.js' ? 'no-cache' : 'public, max-age=300' });
+        res.writeHead(200, { ...cookieHeaders(res), 'content-type': TYPES[ext] || 'application/octet-stream', 'content-length': payload.length, 'cache-control': name === 'sw.js' ? 'no-cache' : 'public, max-age=300' });
         return res.end(payload);
       }
       return send(res, 404, { error: 'Not found.' });
@@ -210,6 +490,11 @@ function createPwaServer({
   return {
     server,
     sessions,
+    sample: Boolean(sample),
+    voice: runtime,
+    warmVoice() {
+      return runtime.warm ? runtime.warm() : Promise.resolve();
+    },
     listen() {
       return new Promise((resolve, reject) => {
         server.once('error', reject);
@@ -219,12 +504,25 @@ function createPwaServer({
   };
 }
 
+function messagesLookSample(id) {
+  return Object.prototype.hasOwnProperty.call(SAMPLE_MESSAGES, id) || id.startsWith('sample-');
+}
+
 module.exports = { createPwaServer };
 
 if (require.main === module) {
+  if (!process.env.INTELIO_HERMES_URL && process.env.INTELIO_PWA_SAMPLE !== '1') {
+    process.stderr.write('Set INTELIO_HERMES_URL to the tailnet address from tailscale ip -4, port 8642. Hermes does not listen on loopback.\n');
+    process.exit(1);
+  }
   const app = createPwaServer();
   app.listen().then((address) => {
     process.stdout.write(`Intelio phone client listening on ${address.address}:${address.port}\n`);
+    if (process.env.INTELIO_VOICE_PYTHON) {
+      app.warmVoice().catch((error) => {
+        process.stderr.write(`Voice engines did not warm: ${error.message}\n`);
+      });
+    }
   }).catch((error) => {
     process.stderr.write(`${error.message}\n`);
     process.exit(1);

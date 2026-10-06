@@ -161,7 +161,8 @@ function getState() {
     autoOpenLinks: prefs.autoOpenLinks !== false,
     activeTabId, browserContentsId: tabs.get(activeTabId)?.view.webContents.id || null, browserTabId: activeTabId === 'vps' ? (tabs.has(browserReturnTabId) ? browserReturnTabId : 'home') : activeTabId, avatarLibrary: avatarStore.library(), avatarPreferences: prefs.avatarPreferences,
     locationDefault: prefs.locationDefault, sitePermissions: prefs.sitePermissions, extensions: extensionStore?.list() || [],
-    fullscreen: win?.isFullScreen() || false, api: { url: apiPort ? `http://127.0.0.1:${apiPort}` : '', ready: !!apiPort, error: apiError } };
+    fullscreen: win?.isFullScreen() || false, api: { url: apiPort ? `http://127.0.0.1:${apiPort}` : '', ready: !!apiPort, error: apiError },
+    remoteHermesNotice: remoteHermes?.startupNotice?.() || '' };
 }
 let lastBotWorkSignature = '';
 // Bots with agent tabs that are dispatching, navigating, or recently acted

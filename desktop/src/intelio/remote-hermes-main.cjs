@@ -9,6 +9,48 @@ const path = require('node:path');
 const { normalizeRemoteConfig, createRemoteHermesClient, redactKey } = require('./remote-hermes.cjs');
 const { checkTailscale, assertInstallUrl, installUrl } = require('./tailscale.cjs');
 
+function keyFromImport(text) {
+  const lines = String(text || '').replace(/^\uFEFF/, '').split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
+  const line = lines[0] || '';
+  const named = line.match(/^(?:export\s+)?API_SERVER_KEY\s*=\s*(.*)$/);
+  const value = (named ? named[1] : line).trim().replace(/^['"]|['"]$/g, '');
+  return value;
+}
+
+function secureDelete(file, fsImpl = fs) {
+  const st = fsImpl.statSync(file);
+  const fd = fsImpl.openSync(file, 'r+');
+  try {
+    const zeros = Buffer.alloc(Math.max(st.size, 1));
+    fsImpl.writeSync(fd, zeros, 0, zeros.length, 0);
+    fsImpl.fsyncSync(fd);
+  } finally {
+    fsImpl.closeSync(fd);
+  }
+  fsImpl.unlinkSync(file);
+}
+
+function importRemoteHermesKey({ file, profile, safeStorage, readKeys, writeKeys, fsImpl = fs }) {
+  if (!fsImpl.existsSync(file)) return { imported: false };
+  const st = fsImpl.statSync(file);
+  if (st.size > 4096) {
+    secureDelete(file, fsImpl);
+    return { imported: false, refused: true };
+  }
+  const key = keyFromImport(fsImpl.readFileSync(file, 'utf8'));
+  if (key.length < 16) {
+    secureDelete(file, fsImpl);
+    return { imported: false, refused: true };
+  }
+  if (!safeStorage || !safeStorage.isEncryptionAvailable()) return { imported: false, unavailable: true };
+  const keys = readKeys();
+  const name = profile || 'default';
+  keys[name] = safeStorage.encryptString(key).toString('base64');
+  writeKeys(keys);
+  secureDelete(file, fsImpl);
+  return { imported: true, notice: 'Connected to VPS Hermes' };
+}
+
 function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs, savePreferences, root, rendererSandbox, icon, background }) {
   let chatWindow = null;
   const keyFile = () => path.join(app.getPath('userData'), 'remote-hermes-keys.json');
@@ -32,6 +74,19 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return normalizeRemoteConfig(prefs.remoteHermes || {});
   }
   const client = createRemoteHermesClient({ getConfig: config, getKey });
+  let startupNotice = '';
+  try {
+    const imported = importRemoteHermesKey({
+      file: path.join(app.getPath('userData'), 'remote-hermes-key.import'),
+      profile: (() => { try { return config().profile || 'default'; } catch { return 'default'; } })(),
+      safeStorage,
+      readKeys,
+      writeKeys,
+    });
+    if (imported.imported) startupNotice = imported.notice;
+  } catch (error) {
+    process.stderr.write(`Remote Hermes key import failed: ${String(error?.message || 'error').replace(/\s+/g, ' ').slice(0, 180)}\n`);
+  }
   let tailscaleCache = { at: 0, value: null };
   async function tailscaleStatus() {
     if (tailscaleCache.value && Date.now() - tailscaleCache.at < 15000) return tailscaleCache.value;
@@ -135,7 +190,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return chatWindow;
   }
 
-  return { register, command, open, publicState };
+  return { register, command, open, publicState, startupNotice: () => startupNotice };
 }
 
-module.exports = { setupRemoteHermes };
+module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, secureDelete };
