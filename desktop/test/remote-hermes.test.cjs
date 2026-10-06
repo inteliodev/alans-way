@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient, remoteHermesDefaults, VPS_HOST } = require('../src/intelio/remote-hermes.cjs');
+const { isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient, remoteHermesDefaults, remoteVersionLabel, VPS_HOST, VNC_URL } = require('../src/intelio/remote-hermes.cjs');
 
 const KEY = 'k'.repeat(64);
 const ip = (...parts) => parts.join('.');
@@ -30,6 +30,14 @@ test('windows first launch defaults to the VPS; other platforms stay opt-in', ()
   assert.deepEqual(remoteHermesDefaults('win32'), { enabled: true, host: VPS_HOST, port: 8642, profile: 'intelio' });
   assert.deepEqual(remoteHermesDefaults('darwin'), { enabled: false, host: '', port: 8642, profile: 'intelio' });
   assert.equal(VPS_HOST, 'intelio-vps.tail9c1007.ts.net');
+  assert.equal(VNC_URL, 'http://intelio-vps.tail9c1007.ts.net:6080/vnc.html');
+});
+
+test('remote status uses the VPS version, or a pin when that is all the remote sends', () => {
+  assert.equal(remoteVersionLabel({ status: 'ok', platform: 'hermes-agent', version: '0.21.5' }), 'hermes-agent 0.21.5');
+  assert.equal(remoteVersionLabel({ platform: 'hermes-agent', version: 'hermes-agent 0.21.5' }), 'hermes-agent 0.21.5');
+  assert.equal(remoteVersionLabel({ commit: '5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662' }), 'pin 5d3c05977bb3');
+  assert.equal(remoteVersionLabel({ status: 'ok' }), '');
 });
 
 test('keys are redacted from errors', () => {
@@ -49,7 +57,7 @@ function stubServer() {
   const seen = [];
   const server = http.createServer((req, res) => {
     seen.push({ method: req.method, url: req.url, auth: req.headers.authorization });
-    if (req.url === '/health') { res.end('{"status":"ok"}'); return; }
+    if (req.url === '/health') { res.end('{"status":"ok","platform":"hermes-agent","version":"0.21.5"}'); return; }
     if (req.headers.authorization !== `Bearer ${KEY}`) { res.statusCode = 401; res.end(`{"error":"invalid key ${req.headers.authorization}"}`); return; }
     if (req.method === 'GET' && req.url.startsWith('/p/intelio/api/sessions?')) {
       res.setHeader('content-type', 'application/json');
@@ -73,7 +81,7 @@ test('client lists shared sessions and streams a turn with the profile key', asy
   const { server, seen, port } = await stubServer();
   try {
     const client = createRemoteHermesClient({ getConfig: () => ({ host: '127.0.0.1', port, profile: 'intelio' }), getKey: async (profile) => (profile === 'intelio' ? KEY : '') });
-    assert.deepEqual(await client.health(), { ok: true, status: 200 });
+    assert.deepEqual(await client.health(), { ok: true, status: 200, platform: 'hermes-agent', version: '0.21.5', label: 'hermes-agent 0.21.5' });
     const list = await client.listSessions({ limit: 5 });
     assert.equal(list.data[0].source, 'telegram');
     const events = [];

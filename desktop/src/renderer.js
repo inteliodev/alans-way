@@ -203,7 +203,11 @@ function render(next) {
   }
   renderTabs(); renderSettingsBots(); renderSitePermissions(); renderExtensions();
   window.IntelioUI?.apply(state);
-  if (nowRemote) $('intelio-profile').textContent = `VPS Hermes · ${state.remoteHermes.host}:${state.remoteHermes.port}`;
+  if (nowRemote) {
+    $('intelio-profile').textContent = `VPS Hermes · ${state.remoteHermes.host}:${state.remoteHermes.port}`;
+    const pin = $('hermes-pin');
+    if (pin) pin.textContent = state.remoteHermes.versionLabel || 'VPS Hermes';
+  }
   const tab = state.tabs.find((item) => item.id === state.activeTabId);
   const remote = state.activeTabId==='vps';
   $('vm-toggle').title = remote ? 'Return to browser' : 'Expand virtual desktop';

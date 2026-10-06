@@ -62,6 +62,8 @@ The phone client reads `~/.hermes/profiles/intelio/.env` on the VPS (mode 600) a
 
 Calls and texts use a separate loopback process, `mobile/phone/bridge.cjs`, on `127.0.0.1:8650`. Caddy at `https://2-24-110-12.sslip.io/twilio/*` is the public front. See [Windows and the phone](intelio-windows-and-mobile.md).
 
+When Remote Hermes is on, the status line under the title is the VPS Hermes version from `GET /health` (`{"platform":"hermes-agent","version":"0.21.5"}` shows as `hermes-agent 0.21.5`). A commit on that response is shown as a short pin. The local pin check is not used, so a laptop without a local Hermes does not say “Hermes pin unavailable”. The VPS desktop preview connects on its own to the existing tailnet noVNC page, `http://intelio-vps.tail9c1007.ts.net:6080/vnc.html`, unless a viewer URL is already saved.
+
 When Remote Hermes is on, the main Intelio window is the client: the agent list, sessions, history, sending, and streaming all use `/p/<profile>/api/sessions` and `/api/sessions/{id}/chat/stream`. The list comes from `/api/home` or `/api/profiles`, then from saved key names, then from the configured profile. Intelio, PRC, Alignment, and HHP keep the phone orb types (connecting, solving, searching, weaving). Sessions from photon/iMessage, Telegram, API, and one-shot stay in that list, each tagged with its source. macOS stays on local Telegram until Remote Hermes is turned on.
 
 Window → **Remote Hermes (VPS)** (`Cmd+Shift+H`) still opens the plain session list for the configured profile.

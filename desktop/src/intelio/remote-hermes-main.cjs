@@ -98,6 +98,23 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   }
   const client = createRemoteHermesClient({ getConfig: config, getKey });
   const mainData = createRemoteMain({ getConfig: config, getKey, keyNames: () => Object.keys(readKeys()) });
+  let versionLabel = '';
+  function watchVersion(onUpdate) {
+    const run = () => {
+      let cfg;
+      try { cfg = config(); } catch { return; }
+      if (!cfg.enabled || !cfg.host) return;
+      client.health().then((health) => {
+        const next = health.label || '';
+        if (!next || next === versionLabel) return;
+        versionLabel = next;
+        if (typeof onUpdate === 'function') onUpdate();
+      }).catch(() => {});
+    };
+    run();
+    const timer = setInterval(run, 60000);
+    if (typeof timer.unref === 'function') timer.unref();
+  }
   let startupNotice = '';
   try {
     const imported = importRemoteHermesKey({
@@ -126,7 +143,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     const keys = readKeys();
     let encryptionAvailable = false;
     try { encryptionAvailable = safeStorage.isEncryptionAvailable(); } catch (e) { error = error || e.message; }
-    return { ...cfg, hasKey: Boolean(keys[cfg.profile || 'default']), profilesWithKeys: Object.keys(keys), encryptionAvailable, error };
+    return { ...cfg, hasKey: Boolean(keys[cfg.profile || 'default']), profilesWithKeys: Object.keys(keys), encryptionAvailable, error, versionLabel };
   }
 
   function trusted(event) {
@@ -222,7 +239,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return chatWindow;
   }
 
-  return { register, command, open, publicState, startupNotice: () => startupNotice };
+  return { register, command, open, publicState, watchVersion, startupNotice: () => startupNotice };
 }
 
 module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, keysFromImport, secureDelete };

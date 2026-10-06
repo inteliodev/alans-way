@@ -60,6 +60,10 @@ function listen() {
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify(body));
     };
+    if (url.pathname === '/health') {
+      json({ status: 'ok', platform: 'hermes-agent', version: '0.21.5' });
+      return;
+    }
     if (url.pathname === '/api/home' || url.pathname === '/api/profiles') {
       if (auth !== `Bearer ${KEYS.intelio}`) { res.statusCode = 401; json({}); return; }
       json({ profiles: [
@@ -155,6 +159,7 @@ async function main() {
           agents: document.querySelectorAll('#bot-list .bot-row').length,
           sessions: document.querySelectorAll('#remote-sessions .session-item').length,
           status: (document.getElementById('remote-status') || {}).textContent || '',
+          pin: (document.getElementById('hermes-pin') || {}).textContent || '',
           profile: (document.getElementById('intelio-profile') || {}).textContent || '',
         }))()`,
         returnByValue: true,
@@ -167,21 +172,25 @@ async function main() {
       }
       return result.result.value;
     };
-    let view = { agents: 0, sessions: 0, status: '', profile: '' };
+    let view = { agents: 0, sessions: 0, status: '', pin: '', profile: '' };
     const until = Date.now() + 30000;
     while (Date.now() < until) {
       view = await read();
-      if (view.agents === 4 && view.sessions >= 1) break;
+      const pin = String(view.pin || '');
+      if (view.agents === 4 && view.sessions >= 1 && /hermes-agent 0\.21\.5/.test(pin) && !/unavailable/i.test(pin)) break;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     const png = await cdp.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(shot, Buffer.from(png.data, 'base64'));
     const status = String(view.status || '').trim();
+    const pin = String(view.pin || '').trim();
     const profile = String(view.profile || '').trim();
-    process.stdout.write(`e2e agents=${view.agents} sessions=${view.sessions} status=${JSON.stringify(status)} profile=${JSON.stringify(profile)}\n`);
+    const bad = /unavailable|not defined|unreachable|HTTP |No key|No API|failed|error/i;
+    process.stdout.write(`e2e agents=${view.agents} sessions=${view.sessions} status=${JSON.stringify(status)} pin=${JSON.stringify(pin)} profile=${JSON.stringify(profile)}\n`);
     if (view.agents !== 4) throw new Error(`expected 4 agents, saw ${view.agents}`);
     if (view.sessions < 1) throw new Error(`expected a session, saw ${view.sessions}`);
-    if (/not defined|unreachable|HTTP |No key|No API|failed|error/i.test(status)) throw new Error(`status line: ${status}`);
+    if (bad.test(status)) throw new Error(`status line: ${status}`);
+    if (bad.test(pin) || !/hermes-agent 0\.21\.5/.test(pin)) throw new Error(`status line: ${pin}`);
     if (/not defined|Loading/i.test(profile)) throw new Error(`profile line: ${profile}`);
     process.stdout.write(`screenshot ${shot}\n`);
   } catch (error) {

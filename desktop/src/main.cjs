@@ -1160,6 +1160,7 @@ else {
     }
     remoteHermes = setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs: () => prefs, savePreferences, getMainWindow: () => win, root: ROOT, rendererSandbox,
       icon: nativeImage.createFromBuffer(pngIcon()), background: intelioSession?.public?.brand?.tokens?.background });
+    remoteHermes.watchVersion(() => broadcast());
     try { parseRemoteUrl(prefs.remoteUrl); } catch { prefs.remoteUrl = ''; }
     fs.mkdirSync(app.getPath('userData'), { recursive: true });
     const browserSession = session.fromPartition('persist:browser');

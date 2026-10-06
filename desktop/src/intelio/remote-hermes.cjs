@@ -23,6 +23,8 @@
  */
 
 const VPS_HOST = 'intelio-vps.tail9c1007.ts.net';
+/** Tailnet-only noVNC already running on the VPS. Not a public address. */
+const VNC_URL = `http://${VPS_HOST}:6080/vnc.html`;
 
 const DEFAULT_PORT = 8642;
 const PROFILE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -81,6 +83,21 @@ function profileBase(config, profileName) {
   const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
   const prefix = profileName && profileName !== 'default' ? `/p/${profileName}` : '';
   return `http://${host}:${config.port}${prefix}`;
+}
+
+/** Status line for remote mode: `hermes-agent 0.21.5`, plus a short pin when the remote sends one. */
+function remoteVersionLabel(body) {
+  if (!body || typeof body !== 'object') return '';
+  const platform = String(body.platform || '').trim();
+  const version = String(body.version || '').trim();
+  const pin = String(body.commit || body.hermes_commit || body.pin || '').trim();
+  const shortPin = /^[0-9a-f]{7,64}$/i.test(pin) ? pin.slice(0, 12) : '';
+  let label = '';
+  if (platform && version && !version.toLowerCase().startsWith(platform.toLowerCase())) label = `${platform} ${version}`;
+  else if (version) label = version;
+  else if (platform) label = platform;
+  if (shortPin) label = label ? `${label} · pin ${shortPin}` : `pin ${shortPin}`;
+  return label.slice(0, 160);
 }
 
 function redactKey(text, key) {
@@ -157,8 +174,29 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
     health: async () => {
       const config = normalizeRemoteConfig(getConfig());
       const host = config.host.includes(':') ? `[${config.host}]` : config.host;
-      const response = await fetchImpl(`http://${host}:${config.port}/health`, { redirect: 'error' });
-      return { ok: response.ok, status: response.status };
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      let response;
+      try {
+        response = await fetchImpl(`http://${host}:${config.port}/health`, { redirect: 'error', signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+      const text = await response.text();
+      let body = {};
+      try { body = JSON.parse(text); } catch { body = {}; }
+      if (!remoteVersionLabel(body) && /^hermes-agent\s+\S+/.test(String(text).trim())) {
+        const [platform, version] = String(text).trim().split(/\s+/);
+        body = { platform, version };
+      }
+      const label = remoteVersionLabel(body);
+      return {
+        ok: response.ok,
+        status: response.status,
+        platform: typeof body.platform === 'string' ? body.platform : '',
+        version: typeof body.version === 'string' ? body.version : '',
+        label,
+      };
     },
     capabilities: () => request('GET', '/v1/capabilities'),
     skills: () => request('GET', '/v1/skills'),
@@ -185,4 +223,4 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
   };
 }
 
-module.exports = { DEFAULT_PORT, PROFILE_RE, VPS_HOST, remoteHermesDefaults, isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient };
+module.exports = { DEFAULT_PORT, PROFILE_RE, VPS_HOST, VNC_URL, remoteHermesDefaults, remoteVersionLabel, isTailnetOrLoopbackHost, normalizeRemoteConfig, baseUrl, redactKey, createSseParser, createRemoteHermesClient };

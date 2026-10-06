@@ -18,6 +18,7 @@ function runPackagedSmoke() {
   });
   if (!plan.remote || plan.telegramSignIn || plan.agents.length !== 4) return 1;
   if (plan.host !== 'intelio-vps.tail9c1007.ts.net' || plan.port !== 8642 || plan.profile !== 'intelio') return 1;
+  if (plan.desktop !== 'http://intelio-vps.tail9c1007.ts.net:6080/vnc.html') return 1;
   const orbs = plan.agents.map((agent) => agent.orb).join(',');
   if (orbs !== 'connecting,solving,searching,weaving') return 1;
   if (agentsFromKeys(['intelio'], 'intelio')[0].orb !== 'connecting') return 1;

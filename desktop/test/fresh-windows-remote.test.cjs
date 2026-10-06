@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { signatureOf } = require('../../mobile/pwa/orbs.cjs');
-const { VPS_HOST } = require('../src/intelio/remote-hermes.cjs');
+const { VPS_HOST, VNC_URL } = require('../src/intelio/remote-hermes.cjs');
 const { freshWindowPlan, loadPreferences } = require('../src/intelio/preferences.cjs');
 const { createRemoteMain } = require('../src/intelio/remote-main-data.cjs');
 const { seedAgents } = require('../src/remote-main.js');
@@ -16,6 +16,7 @@ test('a fresh Windows profile with a keystore is remote and lists the four agent
   assert.equal(plan.host, VPS_HOST);
   assert.equal(plan.port, 8642);
   assert.equal(plan.profile, 'intelio');
+  assert.equal(plan.desktop, VNC_URL);
   assert.deepEqual(plan.agents.map((agent) => [agent.id, agent.orb]), [
     ['intelio', 'connecting'],
     ['prc', 'solving'],
@@ -32,6 +33,7 @@ test('macOS without a settings file stays on local Telegram', () => {
   assert.equal(plan.remote, false);
   assert.equal(plan.telegramSignIn, true);
   assert.equal(plan.host, '');
+  assert.equal(plan.desktop, '');
   assert.deepEqual(plan.agents, []);
 });
 
@@ -63,6 +65,18 @@ test('an incomplete remoteHermes object does not wipe the Windows host, and enab
   assert.equal(missingField.prefs.remoteHermes.host, VPS_HOST);
   assert.equal(missingField.prefs.remoteHermes.enabled, true);
   assert.equal(missingField.prefs.chatWidth, 400);
+  assert.equal(missingField.prefs.remoteUrl, VNC_URL);
+
+  const custom = loadPreferences({
+    text: JSON.stringify({ remoteUrl: 'http://127.0.0.1:6080/vnc.html', remoteHermes: { enabled: true } }),
+    platform: 'win32',
+  });
+  assert.equal(custom.prefs.remoteUrl, 'http://127.0.0.1:6080/vnc.html');
+  const disabled = loadPreferences({
+    text: JSON.stringify({ remoteHermes: { enabled: false, host: VPS_HOST } }),
+    platform: 'win32',
+  });
+  assert.equal(disabled.prefs.remoteUrl, '');
 });
 
 test('a hung /api/home probe falls back to key names instead of waiting', async () => {
