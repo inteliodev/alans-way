@@ -38,18 +38,23 @@ function assertLoopbackCdp(endpoint) {
   return url.origin;
 }
 
-function resolveCdpUrl({ profile, root, explicit, env = process.env, fsImpl = fs } = {}) {
-  const named = explicit || env.INTELIO_CDP_URL || '';
-  if (named) return assertLoopbackCdp(named);
+const SHARED_CDP = 'http://127.0.0.1:9223';
+const NO_PROFILE_BROWSER = 'No per-profile browser. Write bot-desktop/cdp.url for this profile.';
+
+function resolveCdpUrl({ profile, root, explicit, fsImpl = fs } = {}) {
+  // INTELIO_CDP_URL is process-wide. The multiplexed gateway must not point
+  // every profile at that one browser. Only this profile's cdp.url counts.
   const id = String(profile || '').trim().toLowerCase();
   if (root && id) {
-    const file = path.join(root, id, 'bot-desktop', 'cdp.url');
-    try {
-      const stored = fsImpl.readFileSync(file, 'utf8').trim();
-      if (stored) return assertLoopbackCdp(stored);
-    } catch { /* profile has no Bot Desktop CDP file */ }
+    const desktop = path.join(root, id, 'bot-desktop');
+    let stored = '';
+    try { stored = fsImpl.readFileSync(path.join(desktop, 'cdp.url'), 'utf8').trim(); } catch { stored = ''; }
+    if (stored) return assertLoopbackCdp(stored);
+    if (fsImpl.existsSync(path.join(desktop, 'allow-shared-browser'))) return SHARED_CDP;
+    throw new Error(NO_PROFILE_BROWSER);
   }
-  return 'http://127.0.0.1:9223';
+  if (explicit) return assertLoopbackCdp(explicit);
+  throw new Error(NO_PROFILE_BROWSER);
 }
 
 function scrub(message, values) {
@@ -91,17 +96,38 @@ function pageHost(url) {
   try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch { return ''; }
 }
 
+function savedHost(domain) {
+  const raw = String(domain || '').trim();
+  if (!raw) return '';
+  if (raw.includes('://')) return pageHost(raw);
+  return raw.replace(/^www\./, '').split('/')[0].split(':')[0].toLowerCase();
+}
+
+function hostMatches(url, domain) {
+  const host = savedHost(domain);
+  const page = pageHost(url);
+  if (!host || !page) return false;
+  return page === host || page.endsWith(`.${host}`);
+}
+
 function pickTarget(targets, domain) {
   const pages = (targets || []).filter((target) => target && target.type === 'page' && target.targetId);
-  const host = String(domain || '').replace(/^www\./, '').toLowerCase();
-  if (host) {
-    const match = pages.find((target) => {
-      const page = pageHost(target.url);
-      return page === host || page.endsWith(`.${host}`);
-    });
-    if (match) return match;
-  }
-  return pages[0] || null;
+  const host = savedHost(domain);
+  if (!host) return null;
+  return pages.find((target) => hostMatches(target.url, host)) || null;
+}
+
+async function pageUrl(cdp, page, targetId) {
+  try {
+    const info = await cdp.send('Target.getTargetInfo', { targetId });
+    const url = info?.targetInfo?.url || info?.url || '';
+    if (url) return url;
+  } catch { /* the page location is the second check */ }
+  try {
+    const href = await page.executeJavaScript('location.href');
+    if (typeof href === 'string' && href) return href;
+  } catch { /* refuse to type when the host cannot be read */ }
+  return '';
 }
 
 async function fillLogin({
@@ -111,7 +137,6 @@ async function fillLogin({
   domain,
   selectors,
   values,
-  env,
   fsImpl,
   CDPImpl = CDP,
 } = {}) {
@@ -121,23 +146,36 @@ async function fillLogin({
     otp: String(values?.otp || ''),
   };
   const chosen = selectorsFrom(selectors);
+  const site = String(domain || '');
+  if (!savedHost(site)) return { ok: false, filled: false, domain: site, error: 'No matching page.' };
   let endpoint = '';
   try {
-    endpoint = resolveCdpUrl({ profile, root, explicit: cdpUrl, env, fsImpl });
+    endpoint = resolveCdpUrl({ profile, root, explicit: cdpUrl, fsImpl });
     const cdp = await CDPImpl.connect(endpoint);
     try {
       const listed = await cdp.send('Target.getTargets');
-      const target = pickTarget(listed?.targetInfos, domain);
-      if (!target) return { ok: false, filled: false, domain: String(domain || ''), error: 'No browser page.' };
+      const target = pickTarget(listed?.targetInfos, site);
+      if (!target) return { ok: false, filled: false, domain: site, error: 'No matching page.' };
       const page = await cdp.page(target.targetId);
-      const result = await page.executeJavaScript(fillExpression(chosen, fields));
-      const names = Array.isArray(result?.fields) ? result.fields.filter((name) => ['username', 'password', 'otp'].includes(name)) : [];
-      return { ok: result?.filled === true, filled: result?.filled === true, domain: String(domain || ''), fields: names };
+      const typed = [];
+      for (const name of ['username', 'password', 'otp']) {
+        if (!fields[name]) continue;
+        const url = await pageUrl(cdp, page, target.targetId);
+        if (!hostMatches(url, site)) {
+          const error = typed.length ? 'Page left the saved site.' : 'No matching page.';
+          return { ok: false, filled: false, domain: site, error, fields: typed };
+        }
+        const one = { username: '', password: '', otp: '', [name]: fields[name] };
+        const result = await page.executeJavaScript(fillExpression(chosen, one));
+        const names = Array.isArray(result?.fields) ? result.fields : [];
+        if (result?.filled === true && names.includes(name)) typed.push(name);
+      }
+      return { ok: typed.length > 0, filled: typed.length > 0, domain: site, fields: typed };
     } finally {
       try { cdp.socket.close(); } catch { /* already closed */ }
     }
   } catch (error) {
-    return { ok: false, filled: false, domain: String(domain || ''), error: scrub(error?.message, fields) };
+    return { ok: false, filled: false, domain: site, error: scrub(error?.message, fields) };
   }
 }
 
@@ -147,6 +185,7 @@ module.exports = {
   assertLoopbackCdp,
   resolveCdpUrl,
   fillExpression,
+  hostMatches,
   pickTarget,
   fillLogin,
   scrub,

@@ -18,6 +18,7 @@
 set -eu
 
 quiet=0
+missing_logged=""
 
 profiles_root() {
   if [ -n "${HERMES_PROFILES:-}" ]; then
@@ -52,6 +53,26 @@ xauthority_for() {
   return 1
 }
 
+log_missing() {
+  display=$1
+  case " $missing_logged " in
+    *" $display "*) return 0 ;;
+  esac
+  missing_logged="$missing_logged $display"
+  echo "No Chromium window on $display" >&2
+}
+
+clear_missing() {
+  display=$1
+  next=""
+  for item in $missing_logged; do
+    if [ "$item" != "$display" ]; then
+      next="$next $item"
+    fi
+  done
+  missing_logged=$next
+}
+
 maximize_one() {
   display=$1
   case "$display" in
@@ -62,6 +83,8 @@ maximize_one() {
     echo "No X display $display" >&2
     return 1
   fi
+  # A display with no authority file must not inherit the previous display.
+  unset XAUTHORITY
   auth=$(xauthority_for "$display" || true)
   if [ -n "$auth" ]; then
     XAUTHORITY=$auth
@@ -72,9 +95,10 @@ maximize_one() {
   if command -v wmctrl >/dev/null 2>&1; then
     ids=$(wmctrl -l -x 2>/dev/null | awk 'BEGIN{IGNORECASE=1} /chromium|chrome|google-chrome/ {print $1}')
     if [ -z "$ids" ]; then
-      echo "No Chromium window on $display" >&2
+      log_missing "$display"
       return 1
     fi
+    clear_missing "$display"
     for id in $ids; do
       if ! wmctrl -i -r "$id" -b add,maximized_vert,maximized_horz; then
         echo "wmctrl failed on $display" >&2

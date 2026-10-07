@@ -178,6 +178,7 @@ function createPwaServer({
   accessMode = process.env.INTELIO_PWA_ACCESS === '1',
   vaultRoot = process.env.INTELIO_VAULT_ROOT || '',
   filler = null,
+  cdpImpl = null,
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
@@ -367,6 +368,7 @@ function createPwaServer({
         domain: values.domain || body.domain || body.site,
         selectors: body.selectors || values.selectors,
         values: { username: values.username, password: values.password, otp: values.otp },
+        ...(cdpImpl ? { CDPImpl: cdpImpl } : {}),
       });
     } catch {
       return { ok: false, filled: false };

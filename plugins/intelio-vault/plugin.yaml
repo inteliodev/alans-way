@@ -1,5 +1,5 @@
 name: intelio-vault
-version: 0.3.10
+version: 0.3.11
 description: Fill a saved Intelio login by domain. The secret stays on the VPS filler.
 author: Intelio
 provides_tools:

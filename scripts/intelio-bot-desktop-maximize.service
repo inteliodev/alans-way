@@ -3,7 +3,7 @@ Description=Maximize new Chromium windows on Intelio Bot Desktop displays
 
 [Service]
 Type=simple
-Environment=INTELIO_HARNESS_DIR=%h/intelio/alans-way
+Environment=INTELIO_HARNESS_DIR=%h/intelio/alans-way-pwa
 ExecStart=/bin/sh -c 'exec "$INTELIO_HARNESS_DIR/scripts/bot-desktop-maximize.sh" --watch'
 Restart=on-failure
 RestartSec=3
