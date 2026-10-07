@@ -330,7 +330,7 @@ async function main() {
     const read = async () => {
       const result = await cdp.send('Runtime.evaluate', {
         expression: `(() => ({
-          agents: document.querySelectorAll('#bot-list .bot-row').length + (document.querySelector('#lead-card:not(.hidden)') ? 1 : 0),
+          agents: new Set([...document.querySelectorAll('#bot-list .bot-name, #lead-card:not(.hidden) .lead-name')].map((node) => (node.textContent || '').trim()).filter(Boolean)).size,
           sessions: document.querySelectorAll('#sidebar-threads .thread-line').length,
           status: (document.getElementById('remote-status') || {}).textContent || '',
           pin: (document.getElementById('hermes-pin') || {}).textContent || '',
@@ -417,11 +417,11 @@ async function main() {
           const wrap = document.getElementById('sidebar-threads-wrap');
           const agents = document.getElementById('bot-list');
           const rows = list ? [...list.querySelectorAll('.thread-line')] : [];
-          const lead = document.querySelector('#lead-card:not(.hidden)');
+          const names = [...document.querySelectorAll('#bot-list .bot-name, #lead-card:not(.hidden) .lead-name')].map((node) => (node.textContent || '').trim());
           return {
             count: rows.length,
             open: Boolean(wrap && !wrap.classList.contains('hidden')),
-            agentsOpen: Boolean(agents && !agents.classList.contains('hidden') && agents.querySelectorAll('.bot-row').length + (lead ? 1 : 0) === 4),
+            agentsOpen: Boolean(agents && !agents.classList.contains('hidden') && ['intelio', 'PRC', 'Alignment', 'HHP'].every((name) => names.includes(name))),
             title: rows[0] ? (rows[0].textContent || '') : '',
           };
         })()`,
