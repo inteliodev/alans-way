@@ -116,7 +116,8 @@ class ForkReportTests(unittest.TestCase):
         self.assertEqual(report["safety"]["consequential"], "ask")
         self.assertTrue(report["safety"]["vault_blind"])
         self.assertTrue(report["secrets_file_present"])
-        self.assertEqual(report["brand"]["window_title"], "Intelio")
+        # Deliberate lowercase brand; see "Local divergences" in intelio/SYNC.md.
+        self.assertEqual(report["brand"]["window_title"], "intelio")
         self.assertEqual(report["brand"]["tokens"]["font"], "Geist")
         self.assertEqual(report["pin"]["commit"], PIN)
         self.assertEqual(report["pin"]["verified_on"], "2026-10-03")

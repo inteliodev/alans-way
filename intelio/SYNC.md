@@ -14,6 +14,16 @@ That tree is the private repo `inteliodev/intelio-harness` at that commit:
 Geist woff2), `src/intelio_harness/`, `tests/test_loader.py`,
 `examples/example-client/`, `README.md`, and `pyproject.toml`.
 
+That tree is the export of that commit except for the local divergences listed
+below. Each one is deliberate; re-apply it after a fresh export.
+
+## Local divergences from the export
+
+- `brand/window-title.txt` is `intelio` (lowercase). The export says `Intelio`.
+  The user chose the lowercase brand; commit `5b62c20` (0.3.15) made the change
+  and `tests/test_intelio_harness.py` and the vendored `tests/test_loader.py`
+  expect `intelio`.
+
 The pin is the file from that commit. Upstream is `NousResearch/hermes-agent`
 at `5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662`, verified on 2026-10-03. There is
 no `sync_status` field.

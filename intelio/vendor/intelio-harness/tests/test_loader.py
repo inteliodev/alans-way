@@ -124,7 +124,7 @@ def test_repo_has_no_hermes_checkout():
     pin_text = PIN.read_text(encoding="utf-8")
     assert "NousResearch/hermes-agent" in pin_text
     assert len(pin_text) < 2000
-    assert (ROOT / "brand" / "window-title.txt").read_text(encoding="utf-8").strip() == "Intelio"
+    assert (ROOT / "brand" / "window-title.txt").read_text(encoding="utf-8").strip() == "intelio"
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
