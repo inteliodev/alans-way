@@ -402,7 +402,7 @@ test('a wide browser gets the desktop window and a phone stays on the phone shel
     const boot = fs.readFileSync(path.join(__dirname, '../../mobile/pwa/public/desktop-boot.js'), 'utf8');
     assert.match(boot, /max-width: 999px/);
     assert.match(page.body, /\/ui\/intelio\/desktop-voice\.cjs/);
-    assert.match(page.body, /desktop-transport\.js\?v=20/);
+    assert.match(page.body, /desktop-transport\.js\?v=21/);
     assert.match(page.body, /\/ui\/intelio\/model-picker\.cjs/);
     const voiceJs = await request(address.port, 'GET', '/ui/intelio/desktop-voice.cjs');
     assert.equal(voiceJs.status, 200);
@@ -615,6 +615,8 @@ test('model routes use the Hermes catalog on the tailnet and the Access listener
     assert.equal(menu.model, 'codex-live-a');
     assert.equal(menu.provider, 'openai-codex');
     assert.deepEqual(menu.groups.map((group) => group.provider), ['openai-codex', 'anthropic']);
+    assert.deepEqual(menu.groups.map((group) => group.label), ['ChatGPT plan', 'Claude plan']);
+    assert.equal(menu.groups[1].signIn, false);
     assert.equal(listed.body.includes('OPENAI_API_KEY'), false);
     assert.equal(listed.body.includes('gpt-key-only'), false);
     assert.equal(listed.body.includes(KEY), false);
@@ -666,6 +668,102 @@ test('model routes use the Hermes catalog on the tailnet and the Access listener
     assert.equal(other.status, 401);
     assert.equal(other.body.includes(KEY), false);
     assert.equal(other.body.includes(prcKey), false);
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
+    fs.rmSync(vaultRoot, { recursive: true, force: true });
+  }
+});
+
+test('claude sign-in stays on one profile unless the user asks for every agent', async () => {
+  const { EventEmitter } = require('node:events');
+  const os = require('node:os');
+  const { createClaudeSignIn } = require('../src/intelio/claude-signin.cjs');
+  const vaultRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-claude-'));
+  fs.mkdirSync(path.join(vaultRoot, 'intelio'), { recursive: true });
+  fs.writeFileSync(path.join(vaultRoot, 'intelio', 'config.yaml'), "model:\n  provider: 'openai-codex'\n  default: 'codex-live-a'\n");
+  const calls = [];
+  const link = 'https://claude.ai/oauth/authorize?code=true&code_challenge=abc&state=xyz';
+  function spawnImpl(bin, args, options) {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const stdin = [];
+    child.stdin = {
+      write(data) { stdin.push(String(data)); return true; },
+      end() { setTimeout(() => child.emit('close', 0), 5); },
+    };
+    child.kill = () => child.emit('close', 1);
+    calls.push({ bin, args, options, stdin });
+    setTimeout(() => child.stdout.emit('data', Buffer.from(`Authorize Hermes\n  ${link}\n`)), 5);
+    return child;
+  }
+  const signIn = createClaudeSignIn({ spawnImpl, bin: 'hermes-test', home: vaultRoot });
+  const upstream = http.createServer((req, res) => {
+    if (req.headers.authorization !== `Bearer ${KEY}`) { res.statusCode = 401; res.end('{"error":"no"}'); return; }
+    if (req.url === '/p/intelio/api/model/options') {
+      res.end(JSON.stringify({ providers: [{ slug: 'openai-codex', authenticated: true, auth_type: 'oauth', models: ['codex-live-a'] }] }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end('{}');
+  });
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const app = createPwaServer({
+    bind: '127.0.0.1',
+    port: 0,
+    localPort: 0,
+    upstream: `http://127.0.0.1:${upstream.address().port}`,
+    fetchImpl: globalThis.fetch,
+    profileKey: KEY,
+    vaultRoot,
+    identify: allowLocal,
+    accessMode: true,
+    accessVerify: async () => ({ ok: false }),
+    profileOps: { keyFor: (id) => (id === 'prc' ? 'prc-key-not-real-0002' : KEY) },
+    claudeSignIn: signIn,
+  });
+  const address = await app.listen();
+  const access = app.local.address().port;
+  const pasted = 'paste-code-1#statestate';
+  try {
+    const headers = { authorization: `Bearer ${KEY}`, 'x-intelio-profile': 'intelio', 'content-type': 'application/json' };
+    const menu = await request(access, 'GET', '/api/models?profile=intelio', { headers });
+    const groups = JSON.parse(menu.body).groups;
+    assert.equal(groups[1].label, 'Claude plan');
+    assert.equal(groups[1].signIn, true);
+    const started = await request(access, 'POST', '/api/agent/claude-signin', {
+      headers,
+      body: JSON.stringify({ profile: 'intelio', allAgents: false }),
+    });
+    assert.equal(started.status, 200, started.body);
+    assert.equal(JSON.parse(started.body).url, link);
+    assert.deepEqual(calls[0].args, ['--profile', 'intelio', 'auth', 'add', 'anthropic', '--type', 'oauth']);
+    assert.equal(calls[0].options.env.BROWSER, 'true');
+    assert.equal(calls[0].options.env.HOME, vaultRoot);
+    const finished = await request(access, 'POST', '/api/agent/claude-signin', {
+      headers,
+      body: JSON.stringify({ profile: 'intelio', allAgents: false, code: pasted }),
+    });
+    assert.equal(finished.status, 200, finished.body);
+    assert.equal(finished.body.includes(pasted), false);
+    assert.equal(calls[0].stdin.join('').includes(pasted), true);
+    assert.equal(JSON.stringify(calls[0].options).includes(pasted), false);
+    assert.equal(fs.existsSync(path.join(vaultRoot, 'intelio', 'auth.json')), false);
+    const shared = await request(access, 'POST', '/api/agent/claude-signin', {
+      headers,
+      body: JSON.stringify({ profile: 'intelio', allAgents: true }),
+    });
+    assert.equal(shared.status, 200, shared.body);
+    assert.equal(JSON.parse(shared.body).scope, 'all');
+    assert.deepEqual(calls[1].args, ['auth', 'add', 'anthropic', '--type', 'oauth']);
+    const wrong = await request(access, 'POST', '/api/agent/claude-signin', {
+      headers: { authorization: 'Bearer prc-key-not-real-0002', 'x-intelio-profile': 'intelio', 'content-type': 'application/json' },
+      body: JSON.stringify({ profile: 'intelio' }),
+    });
+    assert.equal(wrong.status, 401);
+    assert.equal(wrong.body.includes(pasted), false);
+    assert.equal(calls.length, 2);
   } finally {
     await new Promise((resolve) => app.close(resolve));
     await new Promise((resolve) => upstream.close(resolve));
