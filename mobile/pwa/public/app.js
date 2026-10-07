@@ -28,6 +28,8 @@
     skillsOk: false,
     jobsOk: false,
     thinking: false,
+    readFor: '',
+    readAt: 0,
     bops: null,
     frames: [],
     speaking: false,
@@ -206,13 +208,31 @@
   const FACE_PX = { avatar: 72, 'avatar sm': 36, 'avatar lg': 148, face: 32, tile: 96, pip: 28, mark: 96 };
   const VPS_AGENTS = ['intelio', 'prc', 'alignment', 'hhp'];
   const AGENT_NAMES = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+  function workStatus() {
+    const tasks = (state.bops?.tasks || []).filter((task) => task.status === 'running').length;
+    const steps = (state.messages || []).filter((row) => row.liveStep && row.status === 'Running').length;
+    let count = 0;
+    if (tasks > 1) count = tasks;
+    else if (steps) count = steps;
+    else if (state.thinking || tasks === 1) count = Math.max(tasks, 1);
+    if (!count) return '';
+    return `Working on ${count} ${count === 1 ? 'thing' : 'things'}`;
+  }
+
+  function readText(at) {
+    if (window.IntelioTranscript?.readText) return window.IntelioTranscript.readText(at);
+    const time = new Date(at || Date.now());
+    if (!Number.isFinite(time.getTime())) return '';
+    return `Read ${time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  }
+
   function agentLabel(profile) {
     const id = String(profile?.id || '').trim().toLowerCase();
     if (AGENT_NAMES[id]) return AGENT_NAMES[id];
     const name = String(profile?.name || '').trim();
     return name || 'Intelio';
   }
-  const CLIENT_VERSION = 'intelio-pwa-11';
+  const CLIENT_VERSION = 'intelio-pwa-12';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);
@@ -481,8 +501,11 @@
     if (state.view === 'chat' || state.tab === 'sessions') {
       const hero = el('div', 'hero');
       hero.append(face(state.bot, 'avatar'));
-      const pill = el('button', 'name-pill', agentLabel(state.bot));
+      const pill = el('button', 'name-pill');
       pill.type = 'button';
+      pill.append(el('span', 'name-pill-title', agentLabel(state.bot)));
+      const status = workStatus();
+      if (status) pill.append(el('span', 'name-pill-status', status));
       pill.addEventListener('click', () => { if (state.view !== 'chat') selectTab('chat'); });
       hero.append(pill);
       bar.append(hero);
@@ -1163,10 +1186,20 @@
     return messages.map((message) => ({ kind: 'bubble', role: message.role === 'user' ? 'user' : 'assistant', text: message.text || '' }));
   }
 
+  function threadSource(messages) {
+    const rows = Array.isArray(messages) ? messages.slice() : [];
+    if (!state.readFor || !state.readAt || rows.some((row) => row.role === 'read')) return rows;
+    const at = rows.findIndex((row) => row.role === 'user' && String(row.text || '') === state.readFor);
+    if (at < 0) return rows;
+    rows.splice(at + 1, 0, { role: 'read', text: readText(state.readAt) });
+    return rows;
+  }
+
   function fillThread(thread, messages) {
     thread.replaceChildren();
-    for (const item of threadItems(messages)) {
+    for (const item of threadItems(threadSource(messages))) {
       if (item.kind === 'chip') thread.append(phoneChip(item));
+      else if (item.kind === 'read') thread.append(el('div', 'read-receipt', item.text));
       else if (item.kind === 'time') thread.append(el('div', 'stamp', item.text));
       else if (item.kind === 'choice') {
         const choice = el('button', 'choice', item.text);
@@ -1175,8 +1208,18 @@
         thread.append(choice);
       } else if (item.kind === 'bubble' && item.text) thread.append(el('div', `bubble ${item.role === 'user' ? 'user' : 'bot'}`, item.text));
     }
+    if (state.thinking || (state.bops?.tasks || []).some((task) => task.status === 'running')) {
+      const stop = el('button', 'stop-all', 'Stop all');
+      stop.type = 'button';
+      stop.addEventListener('click', () => {
+        if (window.IntelioBops && state.bops) state.bops = window.IntelioBops.stopAll(state.bops);
+        state.thinking = false;
+        render();
+      });
+      thread.append(stop);
+    }
     const block = bopsBlock();
-    if (block) thread.prepend(block);
+    if (block) thread.append(block);
     if (state.call?.active) thread.prepend(el('div', 'call-pill', `in call ${clock(callElapsed(), 'pill')}`));
     else if (state.call?.endedLabel) thread.prepend(el('div', 'call-pill', state.call.endedLabel));
     queueMicrotask(() => {
@@ -1998,40 +2041,11 @@
     if (!api || !state.bops) return null;
     const caption = state.frames.filter((frame) => frame.taskId === state.bops.focusedId).slice(-1)[0]?.caption || '';
     const view = api.viewModel(state.bops, caption);
-    if (!view.header && !view.handoff && !view.signIn && !(view.statusLines || []).length && view.pills.length < 2) return null;
+    if (!view.handoff && !view.signIn && !(view.statusLines || []).length) return null;
     const bar = el('div', 'bops-bar');
-    const head = el('div', 'bops-head');
-    head.append(el('span', '', view.header || view.preview.badge));
-    if (view.stopAll) {
-      const stop = el('button', 'bops-stop', 'Stop all');
-      stop.type = 'button';
-      stop.addEventListener('click', () => {
-        state.bops = api.stopAll(state.bops);
-        paintThread();
-      });
-      head.append(stop);
-    }
-    bar.append(head);
-    const pills = el('div', 'bops-pills');
-    for (const pill of view.pills) {
-      const button = el('button', `bops-pill${pill.focused ? ' focused' : ''}`, pill.title);
-      button.type = 'button';
-      button.dataset.status = pill.status;
-      button.addEventListener('click', () => {
-        state.bops = api.focusTask(state.bops, pill.id);
-        paintThread();
-      });
-      pills.append(button);
-    }
-    bar.append(pills);
     if (view.handoff) bar.append(el('p', 'bops-handoff', view.handoff.label));
     for (const line of view.statusLines || []) bar.append(el('p', 'bops-status-line', line.text));
     if (view.signIn) bar.append(phoneSignIn(api, view.signIn));
-    const preview = el('div', 'bops-preview');
-    preview.style.setProperty('--bops-highlight', view.preview.highlight);
-    preview.append(el('div', '', view.preview.badge));
-    if (view.preview.caption) preview.append(el('div', '', view.preview.caption));
-    bar.append(preview);
     return bar;
   }
 
@@ -2106,14 +2120,20 @@
       const run = api.startRun({ text, profile: state.bot?.id || 'intelio', agentName: state.bot?.name || 'Intelio' });
       if (run.orchestration === 'app-fan-out' || run.handoff) {
         state.bops = run;
+        state.readFor = text;
+        state.readAt = Date.now();
         pushLine('user', text);
-        paintThread();
+        pushLine('read', readText(state.readAt));
         state.thinking = true;
-        try { await runPhonePlan(api.executionPlan(run)); } finally { state.thinking = false; paintThread(); }
+        render();
+        try { await runPhonePlan(api.executionPlan(run)); } finally { state.thinking = false; render(); }
         return;
       }
     }
+    state.readFor = text;
+    state.readAt = Date.now();
     pushLine('user', text);
+    pushLine('read', readText(state.readAt));
     const pending = { role: 'assistant', text: '', pending: true };
     for (const bucket of buckets()) bucket.push(pending);
     const steps = [];
@@ -2121,17 +2141,20 @@
     const placeSteps = () => {
       for (const bucket of buckets()) {
         for (let i = bucket.length - 1; i >= 0; i -= 1) {
-          if (bucket[i] && bucket[i].liveStep) bucket.splice(i, 1);
+          if (bucket[i] && bucket[i].turnStep) bucket.splice(i, 1);
         }
         const at = bucket.indexOf(pending);
+        const live = pending.pending === true;
         const rows = steps.map((step) => ({
           role: 'activity',
-          liveStep: true,
+          turnStep: true,
+          liveStep: live && step.running === true,
+          live: live,
           text: step.detail || '',
           title: step.name,
           status: step.failed ? 'Failed' : (step.running ? 'Running' : 'Done'),
         }));
-        if (at >= 0) bucket.splice(at, 0, ...rows);
+        if (at >= 0) bucket.splice(at + 1, 0, ...rows);
         else bucket.push(...rows);
       }
       paintThread();
@@ -2188,6 +2211,7 @@
       if (spoken && state.call.active && state.call.speaker) feedSpeech(spoken);
     });
     pending.pending = false;
+    placeSteps();
     if (state.call.active && state.call.speaker && unspoken.trim()) {
       speakQueue.push(unspoken.trim());
       unspoken = '';

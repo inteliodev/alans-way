@@ -101,6 +101,8 @@
     sample: false,
     label: '',
     busy: false,
+    readFor: '',
+    readAt: 0,
     wired: false,
     streaming: null,
     bops: null,
@@ -196,17 +198,41 @@
     }
   }
 
+  function shownAgent(id, name) {
+    const key = String(id || '').trim().toLowerCase();
+    const known = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+    if (known[key]) return known[key];
+    const raw = String(name || '').trim();
+    if (!raw || raw.toLowerCase() === 'intelio') return 'Agent';
+    return raw;
+  }
+
+  function workCount() {
+    const tasks = (ui.bops?.tasks || []).filter((task) => task.status === 'running').length;
+    const steps = (ui.liveSteps || []).filter((step) => step.running).length;
+    if (tasks > 1) return tasks;
+    if (steps) return steps;
+    if (ui.busy || tasks === 1) return Math.max(tasks, 1);
+    return 0;
+  }
+
   function paintHeader() {
     const agent = selectedAgent();
     const title = $('chat-title');
-    if (title) title.textContent = agent ? agent.name : 'VPS Hermes';
+    if (title) title.textContent = agent ? shownAgent(agent.id, agent.name) : 'VPS Hermes';
+    const status = $('chat-status');
+    if (status) {
+      const count = workCount();
+      status.textContent = count ? `Working on ${count} ${count === 1 ? 'thing' : 'things'}` : '';
+      status.classList.toggle('hidden', !count);
+    }
     const avatar = $('chat-avatar');
     if (avatar && agent) {
       avatar.replaceChildren();
       const canvas = el('canvas');
       mountOrb(canvas, agent.id, agent.orb || signatureOf(agent.id), 28, false);
       avatar.append(canvas);
-      avatar.title = agent.name;
+      avatar.title = shownAgent(agent.id, agent.name);
     }
   }
 
@@ -256,9 +282,7 @@
     list.replaceChildren();
     for (const session of mine) {
       const item = el('li', `session-item${session.id === ui.sessionId ? ' active' : ''}`);
-      const meta = el('div', 'session-meta');
-      meta.append(el('span', 'source-pill', session.sourceLabel || session.source || 'session'));
-      item.append(meta, el('div', 'session-title', session.title || session.id));
+      item.append(el('div', 'session-title', session.title || session.id));
       if (session.preview) {
         const shown = root.IntelioTranscript ? root.IntelioTranscript.preview(session.preview) : session.preview;
         if (shown) item.append(el('div', 'session-preview', shown));
@@ -277,14 +301,20 @@
 
   function paintLiveTools() {
     if (!ui.liveTools || !root.IntelioTranscript) return;
-    const messages = (ui.liveSteps || []).map((step) => ({
-      role: 'tool',
-      tool_name: step.name,
-      content: step.detail || '',
-      status: step.failed ? 'Failed' : (step.running ? 'Running' : 'Done'),
+    const items = (ui.liveSteps || []).map((step) => ({
+      kind: 'chip',
+      label: root.IntelioTranscript.labelFor({
+        name: step.name,
+        detail: step.detail || '',
+        running: step.running,
+        failed: step.failed,
+      }),
+      detail: step.detail || '',
+      running: Boolean(step.running),
+      failed: Boolean(step.failed),
     }));
-    const items = root.IntelioTranscript.present(messages).filter((item) => item.kind === 'chip');
     ui.liveTools.replaceChildren(...items.map((item) => chipNode(item)));
+    paintHeader();
   }
 
   function chipNode(item) {
@@ -304,15 +334,40 @@
     } else wrap.append(button);
     return wrap;
   }
+  function readReceipt() {
+    if (!ui.readAt) return null;
+    const text = root.IntelioTranscript?.readText
+      ? root.IntelioTranscript.readText(ui.readAt)
+      : `Read ${new Date(ui.readAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    return text ? el('div', 'read-receipt', text) : null;
+  }
+
   function paintMessages() {
     const pane = $('remote-messages');
     if (!pane) return;
     pane.replaceChildren();
     const items = root.IntelioTranscript ? root.IntelioTranscript.present(ui.messages) : ui.messages.map((message) => ({ kind: 'bubble', role: message.role === 'user' ? 'user' : 'assistant', text: textOf(message.content) }));
+    let pendingUser = '';
+    const flushRead = () => {
+      if (pendingUser && ui.readFor && pendingUser === ui.readFor) {
+        const receipt = readReceipt();
+        if (receipt) pane.append(receipt);
+      }
+      pendingUser = '';
+    };
     for (const item of items) {
-      if (item.kind === 'chip') pane.append(chipNode(item));
+      if (item.kind === 'bubble' && item.role === 'user' && item.text) {
+        flushRead();
+        pane.append(el('div', 'msg user', item.text));
+        pendingUser = item.text;
+        continue;
+      }
+      flushRead();
+      if (item.kind === 'read' && item.text) pane.append(el('div', 'read-receipt', item.text));
+      else if (item.kind === 'chip') pane.append(chipNode(item));
       else if (item.kind === 'bubble' && item.text) pane.append(el('div', `msg ${item.role === 'user' ? 'user' : 'assistant'}`, item.text));
     }
+    flushRead();
     pane.scrollTop = pane.scrollHeight;
     paintBops();
   }
@@ -328,27 +383,18 @@
     const bar = $('bops-bar');
     if (!api || !bar) return;
     const view = ui.bops ? api.viewModel(ui.bops, focusedCaption()) : null;
-    const show = Boolean(view && (view.header || view.handoff || view.signIn || (view.statusLines || []).length || view.pills.length > 1));
+    const show = Boolean(view && (view.handoff || view.signIn || (view.statusLines || []).length));
     bar.classList.toggle('hidden', !show);
     const header = $('bops-header');
-    if (header) header.textContent = view?.header || '';
+    if (header) header.textContent = '';
     const stop = $('bops-stop');
     if (stop) {
-      stop.classList.toggle('hidden', !view?.stopAll);
+      stop.classList.add('hidden');
       stop.onclick = () => stopBops();
     }
     const pills = $('bops-pills');
-    if (pills) {
-      pills.replaceChildren();
-      for (const pill of view?.pills || []) {
-        const button = el('button', `bops-pill${pill.focused ? ' focused' : ''}`, pill.title);
-        button.type = 'button';
-        button.dataset.taskId = pill.id;
-        button.dataset.status = pill.status;
-        button.onclick = () => focusBops(pill.id);
-        pills.append(button);
-      }
-    }
+    if (pills) pills.replaceChildren();
+    paintHeader();
     const handoff = $('bops-handoff');
     if (handoff) {
       handoff.classList.toggle('hidden', !view?.handoff);
@@ -368,18 +414,18 @@
     const preview = view?.preview;
     const badge = $('preview-badge');
     if (badge) {
-      badge.classList.toggle('hidden', !show);
-      badge.textContent = show ? preview.badge : '';
+      badge.classList.toggle('hidden', !view);
+      badge.textContent = view ? preview.badge : '';
     }
     const chrome = $('preview-chrome');
-    if (chrome && preview && show) {
+    if (chrome && preview && view) {
       chrome.dataset.highlight = preview.highlight;
       chrome.style.boxShadow = `inset 0 0 0 2px ${preview.highlight}`;
     }
     const screen = $('preview-screen');
-    if (screen && preview) screen.dataset.taskId = show ? preview.taskId : '';
+    if (screen) screen.dataset.taskId = view ? (preview.taskId || '') : '';
     const live = $('preview-live');
-    if (live) live.textContent = show ? (preview.caption || '') : '';
+    if (live) live.textContent = view ? (preview.caption || '') : '';
   }
 
   function focusBops(id) {
@@ -566,7 +612,16 @@
     paintMessages();
   }
 
+  function stopControl() {
+    const button = el('button', 'stop-all', 'Stop all');
+    button.type = 'button';
+    button.onclick = () => stopBops();
+    return button;
+  }
+
   async function openSession(id) {
+    ui.readFor = '';
+    ui.readAt = 0;
     ui.sessionId = id;
     paintSessions();
     const input = $('remote-input');
@@ -612,7 +667,7 @@
     list.replaceChildren();
     for (const session of rows) {
       const agent = ui.agents.find((item) => item.id === session.profileId);
-      const name = agent?.name || session.profileId || 'Agent';
+      const name = shownAgent(session.profileId, agent?.name);
       const item = el('li', `all-session${session.id === ui.sessionId && session.profileId === ui.selected ? ' active' : ''}`);
       item.dataset.profile = session.profileId || '';
       item.dataset.sessionId = session.id || '';
@@ -622,7 +677,7 @@
       avatar.append(canvas);
       const copy = el('span', 'all-session-copy');
       const top = el('span', 'all-session-top');
-      top.append(el('span', 'agent-name', name), el('span', 'source-pill', session.sourceLabel || session.source || 'session'));
+      top.append(el('span', 'agent-name', name));
       const when = sessionWhen(session);
       if (when) top.append(el('span', 'session-time', when));
       copy.append(top, el('div', 'session-title', session.title || session.id));
@@ -840,17 +895,25 @@
       } catch (error) { setStatus(error.message); return; }
     }
     ui.busy = true;
+    ui.readFor = text;
+    ui.readAt = Date.now();
     input.value = '';
     const pane = $('remote-messages');
     pane?.append(el('div', 'msg user', text));
+    const receipt = readReceipt();
+    if (receipt) pane?.append(receipt);
+    paintHeader();
     if (plan.orchestration === 'app-fan-out') {
-      pane?.append(el('div', 'msg assistant', plan.header || `Working on ${run.tasks.length} things`));
-      setStatus(plan.header);
+      const stop = stopControl();
+      pane?.append(stop);
+      setStatus('');
       try {
         await runPlan(plan, token);
       } finally {
+        stop.remove?.();
         ui.busy = false;
         setStatus('');
+        paintHeader();
       }
       return;
     }
@@ -859,8 +922,9 @@
     ui.liveSteps = [];
     ui.liveTools = el('div', 'tool-live');
     ui.streaming = el('div', 'msg assistant', '');
-    pane?.append(ui.liveTools, ui.streaming);
-    setStatus('Thinking…');
+    const stop = stopControl();
+    pane?.append(ui.streaming, ui.liveTools, stop);
+    setStatus('');
     try {
       const jobs = [root.remoteHermes.request('send', { id: ui.sessionId, profile: ui.selected, input: text })];
       if (plan.handoff) jobs.push(runHandoff(plan.handoff, token));
@@ -875,7 +939,9 @@
     } finally {
       ui.busy = false;
       ui.streaming = null;
+      ui.liveSteps = [];
       setStatus('');
+      paintHeader();
       await loadMessages(ui.sessionId).catch(() => {});
     }
   }

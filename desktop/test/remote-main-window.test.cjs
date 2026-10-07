@@ -156,7 +156,10 @@ test('threads for the selected agent sit under the agents, and the sessions list
   assert.deepEqual([...new Set(rows.map((row) => row.dataset.profile))].sort(), ['alignment', 'hhp', 'intelio', 'prc']);
   assert.ok(rows.some((row) => row.children.some((child) => String(child.className).includes('avatar'))));
   const newest = collectedText(rows[0]);
-  assert.ok(newest.includes('photon/iMessage'));
+  assert.equal(newest.includes('photon/iMessage'), false);
+  assert.equal(newest.includes('Telegram'), false);
+  assert.equal(newest.includes('One-shot'), false);
+  assert.equal(/\bAPI\b/.test(newest), false);
   assert.ok(newest.includes('Outreach'));
   assert.ok(newest.includes('Drafted intros.'));
   assert.ok(/\d/.test(newest));

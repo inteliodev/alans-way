@@ -3,7 +3,11 @@
   const api = window.remoteHermes;
   const $ = (id) => document.getElementById(id);
   const state = { sessions: [], activeId: '', busy: false, streaming: null, streamRaw: '', liveTools: null, liveSteps: [], toolEvents: false, timer: null };
-  const SOURCE_LABEL = { telegram: 'Telegram', api_server: 'App / API', cli: 'CLI', cron: 'Cron', oneshot: 'One-shot' };
+  function visibleName(raw) {
+    const value = String(raw || '').trim();
+    const known = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+    return known[value.toLowerCase()] || value;
+  }
 
   function el(tag, cls, text) { const node = document.createElement(tag); if (cls) node.className = cls; if (text !== undefined) node.textContent = text; return node; }
   function status(text) { $('rh-status').textContent = text; }
@@ -17,8 +21,8 @@
   async function loadState() {
     const s = await api.request('state');
     if (!s.host) { status('Set the VPS host in Settings → Remote Hermes (VPS).'); return false; }
-    if (!s.hasKey) { status(`No API key saved for profile "${s.profile || 'default'}". Add it in Settings.`); return false; }
-    status(`${s.profile || 'default'} @ ${s.host}:${s.port} (Tailscale)`);
+    if (!s.hasKey) { status(`No API key saved for profile "${visibleName(s.profile || 'default')}". Add it in Settings.`); return false; }
+    status(`${visibleName(s.profile || 'default')} @ ${s.host}:${s.port} (Tailscale)`);
     return true;
   }
 
@@ -35,7 +39,9 @@
     list.replaceChildren();
     for (const session of state.sessions) {
       const item = el('li', session.id === state.activeId ? 'active' : '');
-      item.append(el('div', 'source', `${SOURCE_LABEL[session.source] || session.source || 'session'} · ${when(session.started_at)}`), el('div', '', session.title || session.id));
+      const whenText = when(session.started_at);
+      item.append(el('div', '', session.title || session.id));
+      if (whenText) item.append(el('div', 'muted', whenText));
       item.onclick = () => openSession(session.id);
       list.append(item);
     }
@@ -96,7 +102,7 @@
   async function openSession(id) {
     state.activeId = id;
     const session = state.sessions.find((s) => s.id === id);
-    $('rh-title').textContent = session ? `${session.title || session.id} · ${SOURCE_LABEL[session.source] || session.source}` : id;
+    $('rh-title').textContent = session ? (session.title || session.id) : id;
     $('rh-input').disabled = false; $('rh-send').disabled = false;
     renderSessions();
     try { await loadMessages(); } catch (error) { status(error.message); }

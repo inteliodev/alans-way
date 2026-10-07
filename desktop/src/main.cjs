@@ -35,6 +35,7 @@ const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
 
 if (!applyLinuxDemo(app)) app.enableSandbox();
 app.setName('Intelio');
+if (process.platform === 'win32') app.setAppUserModelId('co.intelio.alans-way');
 // Keep existing sessions and connector discovery stable when the product name changes.
 app.setPath('userData', process.env.HERMES_WORKSPACE_DATA
   ? path.resolve(process.env.HERMES_WORKSPACE_DATA)
@@ -1158,6 +1159,10 @@ function createWindow() {
     webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } };
   if (process.platform === 'darwin') { windowOptions.titleBarStyle = 'hiddenInset'; windowOptions.trafficLightPosition = { x: 18, y: 18 }; }
   win = new BrowserWindow(windowOptions);
+  win.on('page-title-updated', (event) => {
+    event.preventDefault();
+    win.setTitle(intelioTitle());
+  });
   telegramView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'telegram-preload.bundle.cjs'), partition: 'persist:telegram', contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } });
   telegramView.setBackgroundColor('#09090a');
   configureContents(telegramView.webContents, true);

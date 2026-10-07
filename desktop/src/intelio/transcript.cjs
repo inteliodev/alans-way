@@ -53,15 +53,27 @@
   }
 
   function labelFor({ name, detail, running, failed, summary }) {
+    const rawName = String(name || '').toLowerCase();
+    if (/outlook/.test(rawName)) return failed ? 'Could not read Outlook' : (running ? 'Reading Outlook' : 'Read Outlook');
+    if (/memory|recall|session[_\s-]?search/.test(rawName)) return failed ? 'Could not search memory' : (running ? 'Searching memory' : 'Searched memory');
     const phrase = String(summary || '').trim();
-    if (phrase && !looksDump(phrase)) {
+    if (phrase && !looksDump(phrase) && phrase.length <= 80) {
       if (running) return `Checking ${phrase.charAt(0).toLowerCase()}${phrase.slice(1)}`;
       if (failed) return phrase;
       return phrase;
     }
     const subject = subjectFor(name, detail);
+    const generic = /^(a page|a tool|a command|files|skills|a question|iMessage setup|Telegram|Slack|Discord|WhatsApp)$/;
+    if (!generic.test(subject)) return failed ? `Could not check ${subject}` : subject;
     if (failed) return `Could not check ${subject}`;
     return `${running ? 'Checking' : 'Checked'} ${subject}`;
+  }
+
+  function readText(at) {
+    const numeric = typeof at === 'number' && at > 0 && at < 1e12 ? at * 1000 : at;
+    const time = new Date(numeric || Date.now());
+    if (!Number.isFinite(time.getTime())) return '';
+    return `Read ${time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
   }
 
   function looksDump(text) {
@@ -220,6 +232,7 @@
       detail,
       running: Boolean(part.running),
       failed: Boolean(part.failed),
+      live: part.live === true,
     };
   }
 
@@ -232,6 +245,7 @@
     let run = [];
     const flush = () => {
       if (!run.length) return;
+      if (run.some((item) => item.live)) { out.push(...run); run = []; return; }
       if (run.length === 1) { out.push(run[0]); run = []; return; }
       const running = run.some((item) => item.running);
       const failed = !running && run.some((item) => item.failed);
@@ -265,6 +279,11 @@
       if (role === 'time') { items.push({ kind: 'time', text: textOf(message) }); continue; }
       if (role === 'choice') { items.push({ kind: 'choice', text: textOf(message) }); continue; }
       if (role === 'chip') { push(items, message); continue; }
+      if (role === 'read') {
+        const text = textOf(message);
+        if (text.trim()) items.push({ kind: 'read', text: text.trim() });
+        continue;
+      }
       if (role === 'tool' || role === 'activity') {
         push(items, chipFrom({
           name: message.tool_name || message.name || message.title || '',
@@ -272,6 +291,7 @@
           running: message.status === 'Running' || message.running === true,
           failed: message.status === 'Failed' || message.failed === true,
           summary: message.summary || '',
+          live: message.live === true || message.liveStep === true,
         }));
         continue;
       }
@@ -298,5 +318,5 @@
     return items.find((item) => item.kind === 'chip')?.label || '';
   }
 
-  return { textOf, peel, present, preview, labelFor, plainDetail };
+  return { textOf, peel, present, preview, labelFor, plainDetail, readText };
 });

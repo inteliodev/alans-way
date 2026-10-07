@@ -41,13 +41,11 @@
     const raw = String(text || '').trim();
     if (!raw) return [];
     const lines = raw.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-    let parts;
-    if (lines.length >= 2) {
-      parts = lines.map((line) => line.replace(/^(\d+[.)]|[-*•])\s+/, ''));
-    } else {
-      const pieces = raw.split(/\s*;\s+|\s+\band\b\s+/i).map((line) => line.trim()).filter(Boolean);
-      parts = pieces.length >= 2 && pieces.every((line) => line.length >= 8) ? pieces : [raw];
-    }
+    // A single sentence stays one task. Splitting on "and" turned the user's
+    // own words into progress chips.
+    const parts = lines.length >= 2
+      ? lines.map((line) => line.replace(/^(\d+[.)]|[-*•])\s+/, ''))
+      : [raw];
     return parts.slice(0, 8).map((title, index) => ({
       id: `task-${index + 1}`,
       title: cleanTitle(title) || `Task ${index + 1}`,

@@ -70,10 +70,10 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             TAG="$GITHUB_REF_NAME"
           else
-            TAG="v0.3.13-intelio-windows"
+            TAG="v0.3.14-intelio-windows"
           fi
-          NOTES="Unsigned Intelio 0.3.13 draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: Intelio arm64 zip of Intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
-          TITLE="Intelio 0.3.13"
+          NOTES="Unsigned Intelio 0.3.14 draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: Intelio arm64 zip of Intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
+          TITLE="Intelio 0.3.14"
           for attempt in 1 2 3 4 5 6 7 8; do
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               gh release upload "$TAG" dist/Intelio-Setup-*.exe --repo "$GITHUB_REPOSITORY" --clobber && exit 0
@@ -123,10 +123,10 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             TAG="$GITHUB_REF_NAME"
           else
-            TAG="v0.3.13-intelio-windows"
+            TAG="v0.3.14-intelio-windows"
           fi
-          NOTES="Unsigned Intelio 0.3.13 draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: Intelio arm64 zip of Intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
-          TITLE="Intelio 0.3.13"
+          NOTES="Unsigned Intelio 0.3.14 draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: Intelio arm64 zip of Intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
+          TITLE="Intelio 0.3.14"
           for attempt in 1 2 3 4 5 6 7 8; do
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               gh release upload "$TAG" dist/Intelio-*-mac-arm64.zip --repo "$GITHUB_REPOSITORY" --clobber && exit 0

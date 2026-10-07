@@ -55,6 +55,17 @@ function installDom(handler) {
   return { byId };
 }
 
+test('a sentence is one task, not fragments split on and', () => {
+  const run = bops.startRun({
+    text: 'How do I give you context to my life and understand everything',
+    profile: 'intelio',
+    agentName: 'Intelio',
+  });
+  assert.equal(run.tasks.length, 1);
+  assert.equal(run.orchestration, 'single-session');
+  assert.equal(bops.executionPlan(run).header, '');
+});
+
 test('one chat fans out parallel Hermes sessions from the app', () => {
   const run = bops.startRun({
     text: 'Check the inbox\nDraft the Friday recap\nOpen the CRM',
@@ -145,13 +156,11 @@ test('pills render, a click focuses that preview, and sign-in stays write-only',
   api.pushFrame({ taskId: 'task-1', caption: 'inbox' });
   api.pushFrame({ taskId: 'task-2', caption: 'recap' });
   api.presentBops(run);
-  assert.equal(byId('bops-header').textContent, 'Working on 2 things');
-  assert.equal(byId('bops-bar').classList.hidden, false);
-  const pills = byId('bops-pills').children;
-  assert.equal(pills.length, 2);
-  assert.equal(pills[0].dataset.status, 'running');
-  assert.match(pills[0].className, /focused/);
-  pills[1].onclick();
+  assert.equal(byId('chat-status').textContent, 'Working on 2 things');
+  assert.equal(byId('bops-bar').classList.hidden, true);
+  assert.equal(byId('bops-pills').children.length, 0);
+  assert.equal(byId('remote-messages').textContent.includes('Check the inbox'), false);
+  api.focusBops('task-2');
   assert.equal(byId('preview-screen').dataset.taskId, 'task-2');
   assert.equal(byId('preview-live').textContent, 'recap');
   assert.equal(byId('preview-badge').textContent, 'Intelio is browsing');
@@ -159,8 +168,8 @@ test('pills render, a click focuses that preview, and sign-in stays write-only',
   assert.equal(byId('preview-chrome').dataset.highlight, '#7a5cff');
 
   byId('bops-stop').onclick();
-  assert.ok(byId('bops-pills').children.every((pill) => pill.dataset.status === 'stopped'));
-  assert.equal(byId('bops-header').textContent, '2 things');
+  assert.equal(byId('bops-pills').children.length, 0);
+  assert.equal(byId('chat-status').textContent, '');
 
   run = bops.applyTaskResult(bops.startRun({ text: 'Sign in to the portal\nDraft the recap', profile: 'intelio', agentName: 'Intelio' }), 'task-1', { ok: false, error: 'login wall https://portal.example.com/login' });
   const seen = [];
@@ -233,8 +242,11 @@ test('a multi-task send creates one Hermes session per task', async () => {
   assert.equal(sent.length, 2);
   assert.ok(sent.every((call) => call.profile === 'intelio'));
   assert.equal(JSON.stringify(sent).includes('sk-live'), false);
-  assert.ok(byId('remote-messages').children.some((node) => String(node.textContent).includes('Working on 2 things')));
-  assert.equal(byId('bops-header').textContent, '2 things');
+  const threadText = byId('remote-messages').children.map((node) => String(node.textContent || '')).join('\n');
+  assert.match(threadText, /Read /);
+  assert.equal(threadText.includes('Working on 2 things'), false);
+  assert.equal(byId('chat-status').textContent, '');
+  assert.equal(byId('remote-messages').children.some((node) => String(node.className).includes('bops-pill')), false);
   assert.equal(byId('bops-signin').classList.hidden, true);
   assert.match(byId('bops-status').children[0].textContent, /Payment paused/);
   assert.equal(byId('bops-status').textContent.includes('Approve'), false);
