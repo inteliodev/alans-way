@@ -330,8 +330,8 @@ async function main() {
     const read = async () => {
       const result = await cdp.send('Runtime.evaluate', {
         expression: `(() => ({
-          agents: document.querySelectorAll('#bot-list .bot-row').length,
-          sessions: document.querySelectorAll('#sidebar-threads .session-item').length,
+          agents: document.querySelectorAll('#bot-list .bot-row').length + (document.querySelector('#lead-card:not(.hidden)') ? 1 : 0),
+          sessions: document.querySelectorAll('#sidebar-threads .thread-line').length,
           status: (document.getElementById('remote-status') || {}).textContent || '',
           pin: (document.getElementById('hermes-pin') || {}).textContent || '',
           profile: (document.getElementById('intelio-profile') || {}).textContent || '',
@@ -416,11 +416,12 @@ async function main() {
           const list = document.getElementById('sidebar-threads');
           const wrap = document.getElementById('sidebar-threads-wrap');
           const agents = document.getElementById('bot-list');
-          const rows = list ? [...list.querySelectorAll('.session-item')] : [];
+          const rows = list ? [...list.querySelectorAll('.thread-line')] : [];
+          const lead = document.querySelector('#lead-card:not(.hidden)');
           return {
             count: rows.length,
             open: Boolean(wrap && !wrap.classList.contains('hidden')),
-            agentsOpen: Boolean(agents && !agents.classList.contains('hidden') && agents.querySelectorAll('.bot-row').length === 4),
+            agentsOpen: Boolean(agents && !agents.classList.contains('hidden') && agents.querySelectorAll('.bot-row').length + (lead ? 1 : 0) === 4),
             title: rows[0] ? (rows[0].textContent || '') : '',
           };
         })()`,
@@ -441,7 +442,7 @@ async function main() {
     const bad = /unavailable|not defined|unreachable|HTTP |No key|No API|failed|error/i;
     process.stdout.write(`e2e agents=${view.agents} sessions=${view.sessions} status=${JSON.stringify(status)} pin=${JSON.stringify(pin)} profile=${JSON.stringify(profile)}\n`);
     const names = await cdp.send('Runtime.evaluate', {
-      expression: '[...document.querySelectorAll("#bot-list .bot-name")].map((node) => node.textContent || "").join("|")',
+      expression: '[...document.querySelectorAll("#bot-list .bot-name, #lead-card .lead-name")].map((node) => node.textContent || "").join("|")',
       returnByValue: true,
     });
     const listedNames = String(names.result && names.result.value || '');
