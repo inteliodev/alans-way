@@ -177,8 +177,27 @@ function applyTheme(theme) {
   button.setAttribute('aria-pressed', String(next === 'light'));
 }
 function hostCopy() {
-  const fallback = window.IntelioHost?.hostLabels?.('darwin') || {};
-  return { ...fallback, ...(state?.host || {}) };
+  return state?.host || {
+    pane: 'Your Mac',
+    sshSaved: 'This Mac\u2019s SSH address saved',
+    sshField: 'This Mac\u2019s SSH address (as your VPS reaches it)',
+    sshPlaceholder: 'you@mymac or mymac.tailnet-name',
+    connectAgents: 'Connect your Hermes agents on a VPS to this Mac. Fill in both SSH addresses, run the setup on your VPS, then test the agent path.',
+    setupWires: 'The setup installs the agent plugin on your gateway host and wires this Mac\u2019s browser connector for the selected bot. Run once per bot.',
+    stay: 'Bot discovery reads Telegram Web A\u2019s local cache. Newly opened bot chats appear after Telegram saves them. Your Telegram session and browser logins stay on this Mac.',
+    links: 'A link sent by you or a bot opens a local tab assigned to that bot, so both of you can see it. If the Mac is unreachable, the bot opens its own copy on the VPS desktop instead.',
+    pathCheck: 'Checking VPS \u2192 Mac ssh path\u2026',
+    controlLocal: 'your Mac',
+    statusLocal: 'Mac',
+    browse: 'Browse on your Mac.',
+  };
+}
+function hermesChecklist(current) {
+  if (current?.hermesStatus?.label) return current.hermesStatus;
+  const hermes = current?.intelio?.hermes;
+  if (!hermes) return { done: false, label: 'Hermes pin not loaded' };
+  const pin = (hermes.pinCommit || '').slice(0, 12) || 'missing';
+  return { done: hermes.match === 'commit', label: `Hermes pin ${pin} · ${hermes.summary}` };
 }
 function remoteActive(next = state) {
   const remote = next?.remoteHermes;
@@ -508,9 +527,7 @@ function showSettings() {
   body.append(element('h3', '', 'Agent setup'));
   const checklist = element('div', 'checklist');
   const labels = hostCopy();
-  const hermesCheck = window.IntelioHost?.hermesChecklist
-    ? window.IntelioHost.hermesChecklist(state)
-    : { done: state.intelio?.hermes?.match === 'commit', label: 'Hermes pin not loaded' };
+  const hermesCheck = hermesChecklist(state);
   const checks = [
     [state.telegramStatus === 'connected', 'Signed in to Telegram'],
     [state.bots.length > 0, state.bots.length ? `${state.bots.length} bot${state.bots.length === 1 ? '' : 's'} discovered` : 'No bots discovered yet'],

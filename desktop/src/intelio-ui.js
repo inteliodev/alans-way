@@ -26,17 +26,25 @@
     text('hermes-pin', intelio.ok ? `${launch} · pin ${pin} · ${hermes.summary || 'unavailable'}` : 'Hermes pin unavailable');
   }
 
+  function remoteModeOn(remote) {
+    if (!remote || remote.enabled !== true) return false;
+    if (String(remote.host || '').trim()) return true;
+    if (remote.activeMode === 'cloud') return true;
+    return Array.isArray(remote.profilesWithKeys) && remote.profilesWithKeys.length > 0;
+  }
+
+  function vpsHermesLine(remote) {
+    const version = String(remote && remote.versionLabel || '').trim();
+    return version ? `VPS Hermes ${version}` : 'VPS Hermes version is still loading.';
+  }
+
   function remoteOn(state) {
-    if (window.IntelioHost?.remoteModeOn) return window.IntelioHost.remoteModeOn(state?.remoteHermes);
-    const remote = state?.remoteHermes;
-    return Boolean(remote?.enabled && remote?.host);
+    return remoteModeOn(state?.remoteHermes);
   }
 
   function appendVpsHermes(body, { element, state }) {
     const remote = state?.remoteHermes || {};
-    const line = window.IntelioHost?.vpsHermesLine
-      ? window.IntelioHost.vpsHermesLine(remote)
-      : (remote.versionLabel || 'VPS Hermes version is still loading.');
+    const line = state?.hermesStatus?.label || vpsHermesLine(remote);
     body.append(element('h3', '', 'VPS Hermes'));
     body.append(element('p', 'settings-note', line));
     const where = [remote.host ? `${remote.host}:${remote.port || 8642}` : '', remote.profile ? `profile ${remote.profile}` : ''].filter(Boolean).join(' · ');

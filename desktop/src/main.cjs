@@ -30,7 +30,7 @@ const { createVaultStore } = require('./intelio/vault.cjs');
 const { usesRemoteVault } = require('./intelio/remote-vault.cjs');
 const { buildFill, publicFill, fieldValue } = require('./intelio/login-fill.cjs');
 const { normalizeTheme } = require('./intelio/theme.cjs');
-const { hostLabels } = require('./intelio/host-labels.cjs');
+const { hostLabels, hermesChecklist } = require('./intelio/host-labels.cjs');
 const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
 
 if (!applyLinuxDemo(app)) app.enableSandbox();
@@ -170,7 +170,9 @@ function applyIntelioChrome() {
   try { win.setIcon(nativeImage.createFromBuffer(pngIcon())); } catch { /* icon is cosmetic; the profile report still stands */ }
 }
 function getState() {
-  return { name: app.getName(), version: app.getVersion(), intelio: publicIntelioState(intelioSession), bots: prefs.bots.map(bot => ({ ...bot, activity: activity.get(bot.id), hue: botAccent(bot.id).hue })), order: prefs.order, hidden: prefs.hidden,
+  const intelio = publicIntelioState(intelioSession);
+  const remote = remoteHermes?.publicState?.() || null;
+  return { name: app.getName(), version: app.getVersion(), intelio, bots: prefs.bots.map(bot => ({ ...bot, activity: activity.get(bot.id), hue: botAccent(bot.id).hue })), order: prefs.order, hidden: prefs.hidden,
     selectedBotId: prefs.selectedBotId, chatWidth: prefs.chatWidth, preview: prefs.preview, previewPos: prefs.previewPos, showBots: prefs.showBots, showBrowser: prefs.showBrowser, remoteUrl: typeof remoteHermes?.viewerUrl === 'function' ? remoteHermes.viewerUrl() : prefs.remoteUrl,
     remoteStatus, remoteControl: prefs.remoteControl === true, telegramStatus, tabs: [...tabs.values()].map(describeTab),
     vpsBrowser: prefs.vpsBrowser, vpsBrowserStatus, handoffs: prefs.handoffs, macSshHost: prefs.macSshHost || '',
@@ -181,7 +183,8 @@ function getState() {
     locationDefault: prefs.locationDefault, sitePermissions: prefs.sitePermissions, extensions: extensionStore?.list() || [],
     fullscreen: win?.isFullScreen() || false, api: { url: apiPort ? `http://127.0.0.1:${apiPort}` : '', ready: !!apiPort, error: apiError },
     remoteHermesNotice: remoteHermes?.startupNotice?.() || '',
-    remoteHermes: remoteHermes?.publicState?.() || null,
+    remoteHermes: remote,
+    hermesStatus: hermesChecklist({ remoteHermes: remote, intelio }),
     sidebarTab: prefs.sidebarTab === 'sessions' ? 'sessions' : 'agents',
     screenGrid: prefs.screenGrid || 1,
     activeScreen: prefs.activeScreen || 0,
