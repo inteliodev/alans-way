@@ -4,9 +4,13 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  # windows-installer.yml calls this workflow and builds only after it passes.
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # When called, github.workflow is the caller's name. The "tests-" prefix keeps
+  # this group distinct from the caller's own group so the two never deadlock.
+  group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

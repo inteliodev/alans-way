@@ -8,8 +8,6 @@ on:
       - cursor/intelio-0310-filler-8db4
     tags:
       - "v*"
-    paths-ignore:
-      - ".github/workflows/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,7 +17,13 @@ permissions:
   contents: write
 
 jobs:
+  # Installers are built and attached to the draft only after the full test
+  # suite passes for the same commit.
+  tests:
+    uses: ./.github/workflows/tests.yml
+
   nsis:
+    needs: tests
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:
@@ -67,13 +71,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          VERSION="$(node -p "require('./package.json').version")"
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             TAG="$GITHUB_REF_NAME"
           else
-            TAG="v0.3.19-intelio-windows"
+            TAG="v${VERSION}-intelio-windows"
           fi
-          NOTES="Unsigned intelio 0.3.19 draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: arm64 zip of intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
-          TITLE="intelio 0.3.19"
+          NOTES="Unsigned intelio ${VERSION} draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: arm64 zip of intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
+          TITLE="intelio ${VERSION}"
           for attempt in 1 2 3 4 5 6 7 8; do
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               gh release upload "$TAG" dist/Intelio-Setup-*.exe --repo "$GITHUB_REPOSITORY" --clobber && exit 0
@@ -89,6 +94,7 @@ jobs:
           exit 1
 
   mac-zip:
+    needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:
@@ -120,13 +126,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          VERSION="$(node -p "require('./package.json').version")"
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             TAG="$GITHUB_REF_NAME"
           else
-            TAG="v0.3.19-intelio-windows"
+            TAG="v${VERSION}-intelio-windows"
           fi
-          NOTES="Unsigned intelio 0.3.19 draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: arm64 zip of intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
-          TITLE="intelio 0.3.19"
+          NOTES="Unsigned intelio ${VERSION} draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: arm64 zip of intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
+          TITLE="intelio ${VERSION}"
           for attempt in 1 2 3 4 5 6 7 8; do
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               gh release upload "$TAG" dist/Intelio-*-mac-arm64.zip --repo "$GITHUB_REPOSITORY" --clobber && exit 0
