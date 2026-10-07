@@ -129,6 +129,16 @@ Twilio's voice webhook is `https://2-24-110-12.sslip.io/twilio/voice` and the SM
 
 Open `http://intelio-vps.tail9c1007.ts.net:8643` (or `https://` after `tailscale cert`) from a phone that is on the tailnet as an allowed login. The page opens signed in. The gear in the top bar and the Settings row in the drawer open voice mode, the Tailscale sign-in, appearance, and the version. Appearance follows the phone until you tap Light or Dark; that choice is stored in `localStorage` as `intelio-theme` and updates the status bar. Each agent is a dotted thought-orb from `inteliodev/thinking-orbs` at `de85557ca220332586d070d8788c0e1d6e877a0d` (MIT, Jakub Antalik). Intelio is the connecting constellation, PRC is solving, Alignment is the searching globe, HHP is weaving, and Kid A is composing. Any other profile id picks one of the remaining types (working, listening, breathing, shaping) from a hash, and keeps a soft halo in its hue. Lists hold a still frame of that signature. The home hero, the chat, and the call play the live activity when the agent is working, searching, listening, or speaking, and otherwise drift gently in the signature type. The home-screen icon is a still Intelio constellation on the site’s dark background. Home and the drawer list the Hermes profiles on this machine. Chats and calls for a profile go to the shared gateway at `/p/<profile>/`. New agent asks for a lowercase name, an optional one-line description, and an optional profile to copy skills from. It does not copy credentials. The bottom bar is Chat and Sessions. Library appears when `GET /v1/skills` succeeds, and Goals when `GET /api/jobs` succeeds. There is no Ideas tab. Telegram, app, and CLI sessions are the same list the desktop uses. Screenshot layouts with several profiles are sample data, labeled SAMPLE DATA, and only run when the bind is loopback.
 
+## Bops-mode (0.3.8)
+
+Parallel tasks are split in the Intelio app, not by a Hermes tool. A message with several lines, or two long parts joined by “and”, becomes one status pill per part. The app opens a Hermes session per part and sends them together. Stop all marks the pills stopped and drops results that arrive later. The focused pill selects that task’s caption on the Bot Desktop preview (`/api/display/ws`, one screen per profile) and draws that profile’s color on the preview chrome. The badge reads “Intelio is browsing” (or the selected agent’s name).
+
+A login, payment, or `human_has_control` result becomes a Needs-you card. Not now pauses with the lease on the human. Open login focuses the preview. Approve on a payment card records the hold and does not submit the payment. Approve on any other card releases the lease back to the agent.
+
+Handoff is a stub. Hermes has no peer-delegation tool in this build. “Hand this to PRC” (also Alignment, HHP, Intelio) opens a session on that profile and sends a redacted note. The other tasks stay on the current profile. Profile keys are not copied.
+
+Four screens per agent, a dedicated email address, and a Twilio in-app waveform are follow-ups.
+
 ## What you do
 
 1. Run the `windows-installer` workflow on this branch and download `Intelio-Setup-*.exe` from the artifact or the draft release. This change does not publish a new installer.

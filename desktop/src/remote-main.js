@@ -103,8 +103,20 @@
     busy: false,
     wired: false,
     streaming: null,
+    bops: null,
+    bopsToken: 0,
+    frames: [],
+    lastEffect: null,
   };
 
+  function bopsApi() {
+    if (root.IntelioBops) return root.IntelioBops;
+    if (typeof require === 'function') {
+      root.IntelioBops = require('./intelio/bops.cjs');
+      return root.IntelioBops;
+    }
+    return null;
+  }
   function $(id) { return root.document ? root.document.getElementById(id) : null; }
   function el(tag, className, text) {
     const node = root.document.createElement(tag);
@@ -269,6 +281,114 @@
       pane.append(box);
     }
     pane.scrollTop = pane.scrollHeight;
+    paintBops();
+  }
+
+  function focusedCaption() {
+    const id = ui.bops?.focusedId || '';
+    const rows = ui.frames.filter((frame) => frame.taskId === id);
+    return rows.length ? rows[rows.length - 1].caption : '';
+  }
+
+  function paintBops() {
+    const api = bopsApi();
+    const bar = $('bops-bar');
+    if (!api || !bar) return;
+    const view = ui.bops ? api.viewModel(ui.bops, focusedCaption()) : null;
+    const show = Boolean(view && (view.header || view.handoff || view.card || view.pills.length > 1));
+    bar.classList.toggle('hidden', !show);
+    const header = $('bops-header');
+    if (header) header.textContent = view?.header || '';
+    const stop = $('bops-stop');
+    if (stop) {
+      stop.classList.toggle('hidden', !view?.stopAll);
+      stop.onclick = () => stopBops();
+    }
+    const pills = $('bops-pills');
+    if (pills) {
+      pills.replaceChildren();
+      for (const pill of view?.pills || []) {
+        const button = el('button', `bops-pill${pill.focused ? ' focused' : ''}`, pill.title);
+        button.type = 'button';
+        button.dataset.taskId = pill.id;
+        button.dataset.status = pill.status;
+        button.onclick = () => focusBops(pill.id);
+        pills.append(button);
+      }
+    }
+    const handoff = $('bops-handoff');
+    if (handoff) {
+      handoff.classList.toggle('hidden', !view?.handoff);
+      handoff.textContent = view?.handoff?.label || '';
+    }
+    const card = $('bops-card');
+    if (card) {
+      card.replaceChildren();
+      card.classList.toggle('hidden', !view?.card);
+      if (view?.card) {
+        card.append(el('h3', 'bops-card-title', view.card.title));
+        const actions = el('div', 'bops-actions');
+        for (const action of view.card.actions) {
+          const button = el('button', 'bops-action', action.label);
+          button.type = 'button';
+          button.dataset.action = action.id;
+          button.onclick = () => actBops(action.id, view.card.taskId);
+          actions.append(button);
+        }
+        card.append(actions);
+      }
+    }
+    const preview = view?.preview;
+    const badge = $('preview-badge');
+    if (badge) {
+      badge.classList.toggle('hidden', !show);
+      badge.textContent = show ? preview.badge : '';
+    }
+    const chrome = $('preview-chrome');
+    if (chrome && preview && show) {
+      chrome.dataset.highlight = preview.highlight;
+      chrome.style.boxShadow = `inset 0 0 0 2px ${preview.highlight}`;
+    }
+    const screen = $('preview-screen');
+    if (screen && preview) screen.dataset.taskId = show ? preview.taskId : '';
+    const live = $('preview-live');
+    if (live) live.textContent = show ? (preview.caption || '') : '';
+  }
+
+  function focusBops(id) {
+    const api = bopsApi();
+    if (!api || !ui.bops) return;
+    ui.bops = api.focusTask(ui.bops, id);
+    paintBops();
+  }
+
+  function stopBops() {
+    const api = bopsApi();
+    if (!api || !ui.bops) return;
+    ui.bopsToken += 1;
+    ui.bops = api.stopAll(ui.bops);
+    paintBops();
+  }
+
+  function actBops(action, taskId) {
+    const api = bopsApi();
+    if (!api || !ui.bops) return null;
+    const result = api.actOnCard(ui.bops, taskId, action);
+    ui.bops = result.run;
+    ui.lastEffect = result.effect;
+    if (result.effect?.type === 'open-login') focusBops(taskId);
+    else paintBops();
+    return result.effect;
+  }
+
+  function pushFrame(frame) {
+    ui.frames.push({ taskId: String(frame?.taskId || ui.bops?.focusedId || ''), caption: String(frame?.caption || '').slice(0, 160) });
+    paintBops();
+  }
+
+  function presentBops(run) {
+    ui.bops = run;
+    paintBops();
   }
 
   function paintBanner() {
@@ -465,6 +585,15 @@
       if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) send(event);
     });
     root.remoteHermes?.onEvent?.(({ sessionId, event, data }) => {
+      const api = bopsApi();
+      const signal = api?.signalFromEvent(event, data);
+      if (signal && ui.bops && (sessionId === ui.sessionId || ui.bops.tasks.some((task) => task.sessionId === sessionId))) {
+        const task = ui.bops.tasks.find((item) => item.sessionId === sessionId) || ui.bops.tasks.find((item) => item.id === ui.bops.focusedId);
+        if (task) {
+          ui.bops = api.applyTaskResult(ui.bops, task.id, signal);
+          paintBops();
+        }
+      }
       if (sessionId !== ui.sessionId || !ui.streaming) return;
       if (event === 'assistant.delta' && typeof data?.delta === 'string') ui.streaming.append(root.document.createTextNode(data.delta));
       else if (event === 'tool.started') setStatus(`Running ${data?.tool_name || data?.name || 'tool'}…`);
@@ -473,12 +602,58 @@
     });
   }
 
+  async function runHandoff(handoff, token) {
+    try {
+      const created = await root.remoteHermes.request('create-session', { profile: handoff.profile, title: handoff.title });
+      const id = created?.session?.id || created?.id || '';
+      if (id) await root.remoteHermes.request('send', { id, profile: handoff.profile, input: handoff.input });
+      if (ui.bops && ui.bopsToken === token && ui.bops.handoff) ui.bops.handoff.sessionId = id;
+    } catch (error) {
+      if (ui.bops?.handoff) ui.bops.handoff.error = String(error.message || 'Handoff was not opened.').slice(0, 160);
+    }
+    paintBops();
+  }
+
+  async function runPlan(plan, token) {
+    const api = bopsApi();
+    async function one(task) {
+      if (ui.bopsToken !== token || ui.bops?.stopped) return;
+      let sessionId = task.createSession ? '' : ui.sessionId;
+      try {
+        if (task.createSession) {
+          const created = await root.remoteHermes.request('create-session', { profile: task.profile, title: task.input.slice(0, 80) });
+          sessionId = created?.session?.id || created?.id || '';
+          if (!sessionId) throw new Error('Hermes did not return a session id.');
+          ui.bops = api.rememberSession(ui.bops, task.taskId, sessionId);
+        }
+        if (!sessionId) throw new Error('No session for this task.');
+        await root.remoteHermes.request('send', { id: sessionId, profile: task.profile, input: task.input });
+        if (ui.bopsToken !== token || ui.bops?.stopped) return;
+        ui.bops = api.applyTaskResult(ui.bops, task.taskId, { ok: true });
+      } catch (error) {
+        if (ui.bops?.stopped || ui.bopsToken !== token) return;
+        ui.bops = api.applyTaskResult(ui.bops, task.taskId, { ok: false, error: error.message, code: error.code || '' });
+      }
+      paintBops();
+    }
+    const jobs = plan.tasks.map(one);
+    if (plan.handoff) jobs.push(runHandoff(plan.handoff, token));
+    await Promise.all(jobs);
+  }
+
   async function send(event) {
     event?.preventDefault?.();
     const input = $('remote-input');
     const text = input?.value.trim();
     if (!text || ui.busy || ui.sample) return;
-    if (!ui.sessionId) {
+    const api = bopsApi();
+    const run = api.startRun({ text, profile: ui.selected, agentName: selectedAgent()?.name || ui.selected });
+    ui.bops = run;
+    ui.bopsToken += 1;
+    const token = ui.bopsToken;
+    paintBops();
+    const plan = api.executionPlan(run);
+    if (!ui.sessionId && plan.orchestration !== 'app-fan-out') {
       try {
         const created = await root.remoteHermes.request('create-session', { profile: ui.selected, title: `App chat ${new Date().toLocaleString()}` });
         ui.sessionId = created?.session?.id || created?.id || '';
@@ -489,13 +664,31 @@
     input.value = '';
     const pane = $('remote-messages');
     pane?.append(el('div', 'msg user', text));
+    if (plan.orchestration === 'app-fan-out') {
+      pane?.append(el('div', 'msg assistant', plan.header || `Working on ${run.tasks.length} things`));
+      setStatus(plan.header);
+      try {
+        await runPlan(plan, token);
+      } finally {
+        ui.busy = false;
+        setStatus('');
+      }
+      return;
+    }
     ui.streaming = el('div', 'msg assistant', '');
     pane?.append(ui.streaming);
     setStatus('Thinking…');
     try {
-      await root.remoteHermes.request('send', { id: ui.sessionId, profile: ui.selected, input: text });
+      const jobs = [root.remoteHermes.request('send', { id: ui.sessionId, profile: ui.selected, input: text })];
+      if (plan.handoff) jobs.push(runHandoff(plan.handoff, token));
+      await Promise.all(jobs);
+      if (!ui.bops?.tasks?.some((task) => task.status === 'blocked')) {
+        ui.bops = api.applyTaskResult(ui.bops, ui.bops.focusedId, { ok: true });
+      }
     } catch (error) {
       ui.streaming.append(root.document.createTextNode(`\n[${error.message}]`));
+      ui.bops = api.applyTaskResult(ui.bops, ui.bops.focusedId, { ok: false, error: error.message, code: error.code || '' });
+      paintBops();
     } finally {
       ui.busy = false;
       ui.streaming = null;
@@ -549,5 +742,9 @@
     return selectAgent(agent);
   }
 
-  return { signatureOf, accentOf, switcherRows, seedAgents, remoteConfigured, chooseSidebar, sessionAt, sessionRows, SAMPLE, sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => selectedAgent()?.name || '' };
+  return {
+    signatureOf, accentOf, switcherRows, seedAgents, remoteConfigured, chooseSidebar, sessionAt, sessionRows, SAMPLE,
+    sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => selectedAgent()?.name || '',
+    presentBops, focusBops, stopBops, actBops, pushFrame, bopsEffect: () => ui.lastEffect,
+  };
 });

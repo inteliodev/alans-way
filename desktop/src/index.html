@@ -40,6 +40,12 @@
         <div class="remote-split">
           <ul id="remote-sessions" class="remote-sessions"></ul>
           <div class="remote-thread">
+            <div id="bops-bar" class="bops-bar hidden">
+              <div class="bops-head"><span id="bops-header"></span><button id="bops-stop" class="bops-stop" type="button">Stop all</button></div>
+              <div id="bops-pills" class="bops-pills"></div>
+              <p id="bops-handoff" class="bops-handoff hidden"></p>
+              <div id="bops-card" class="bops-card hidden"></div>
+            </div>
             <div id="remote-messages" class="remote-messages"></div>
             <form id="remote-composer" class="remote-composer"><input id="remote-input" placeholder="Message this agent" autocomplete="off" spellcheck="true" aria-label="Message"><button type="submit" id="remote-send">Send</button></form>
           </div>
@@ -60,7 +66,7 @@
         </div>
       </div>
       <div id="remote-preview-slot" class="remote-preview-slot">
-        <div id="preview-chrome" class="preview-chrome" title="Drag to move the VM preview"><span class="preview-grip">⋮⋮</span><span id="preview-label">VPS desktop</span><button id="preview-expand" class="icon-button" title="Expand virtual desktop" aria-label="Expand virtual desktop">⤢</button><button id="preview-hide" class="icon-button" title="Hide VM preview" aria-label="Hide VM preview">×</button></div>
+        <div id="preview-chrome" class="preview-chrome" title="Drag to move the VM preview"><span class="preview-grip">⋮⋮</span><span id="preview-label">VPS desktop</span><span id="preview-badge" class="preview-badge hidden"></span><span id="preview-live" class="preview-live"></span><button id="preview-expand" class="icon-button" title="Expand virtual desktop" aria-label="Expand virtual desktop">⤢</button><button id="preview-hide" class="icon-button" title="Hide VM preview" aria-label="Hide VM preview">×</button></div>
         <div id="preview-screen" class="preview-screen"></div>
       </div>
       <button id="preview-chip" class="preview-chip hidden" title="Show VM preview">▣ VPS</button>
@@ -74,5 +80,5 @@
   </div>
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-card"><div class="modal-heading"><h2 id="modal-title">Workspace settings</h2><button id="modal-close" class="icon-button" title="Close">×</button></div><div id="modal-body"></div></div></div>
   <div id="toast" class="toast hidden" role="status"></div>
-  <script src="avatars.js"></script><script src="intelio-ui.js"></script><script src="thinking-orbs.js"></script><script src="remote-main.js"></script><script src="renderer.js"></script>
+  <script src="avatars.js"></script><script src="intelio-ui.js"></script><script src="thinking-orbs.js"></script><script src="intelio/bops.cjs"></script><script src="remote-main.js"></script><script src="renderer.js"></script>
 </body></html>

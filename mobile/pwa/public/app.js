@@ -28,6 +28,8 @@
     skillsOk: false,
     jobsOk: false,
     thinking: false,
+    bops: null,
+    frames: [],
     speaking: false,
     listening: false,
     searching: false,
@@ -663,6 +665,8 @@
         thread.append(choice);
       } else thread.append(el('div', `bubble ${message.role === 'user' ? 'user' : 'bot'}`, message.text));
     }
+    const block = bopsBlock();
+    if (block) thread.prepend(block);
     queueMicrotask(() => {
       const jump = document.getElementById('jump');
       if (!jump) return;
@@ -1275,9 +1279,141 @@
     return json.text || '';
   }
 
+  function bopsBlock() {
+    const api = window.IntelioBops;
+    if (!api || !state.bops) return null;
+    const caption = state.frames.filter((frame) => frame.taskId === state.bops.focusedId).slice(-1)[0]?.caption || '';
+    const view = api.viewModel(state.bops, caption);
+    if (!view.header && !view.handoff && !view.card && view.pills.length < 2) return null;
+    const bar = el('div', 'bops-bar');
+    const head = el('div', 'bops-head');
+    head.append(el('span', '', view.header || view.preview.badge));
+    if (view.stopAll) {
+      const stop = el('button', 'bops-stop', 'Stop all');
+      stop.type = 'button';
+      stop.addEventListener('click', () => {
+        state.bops = api.stopAll(state.bops);
+        paintThread();
+      });
+      head.append(stop);
+    }
+    bar.append(head);
+    const pills = el('div', 'bops-pills');
+    for (const pill of view.pills) {
+      const button = el('button', `bops-pill${pill.focused ? ' focused' : ''}`, pill.title);
+      button.type = 'button';
+      button.dataset.status = pill.status;
+      button.addEventListener('click', () => {
+        state.bops = api.focusTask(state.bops, pill.id);
+        paintThread();
+      });
+      pills.append(button);
+    }
+    bar.append(pills);
+    if (view.handoff) bar.append(el('p', 'bops-handoff', view.handoff.label));
+    if (view.card) {
+      const card = el('div', 'bops-card');
+      card.append(el('h3', '', view.card.title));
+      const actions = el('div', 'bops-actions');
+      for (const action of view.card.actions) {
+        const button = el('button', 'bops-action', action.label);
+        button.type = 'button';
+        button.addEventListener('click', () => {
+          const result = api.actOnCard(state.bops, view.card.taskId, action.id);
+          state.bops = result.run;
+          paintThread();
+        });
+        actions.append(button);
+      }
+      card.append(actions);
+      bar.append(card);
+    }
+    const preview = el('div', 'bops-preview');
+    preview.style.setProperty('--bops-highlight', view.preview.highlight);
+    preview.append(el('div', '', view.preview.badge));
+    if (view.preview.caption) preview.append(el('div', '', view.preview.caption));
+    bar.append(preview);
+    return bar;
+  }
+
+  async function runPhonePlan(plan) {
+    const api = window.IntelioBops;
+    async function one(task) {
+      if (state.bops?.stopped) return;
+      let sessionId = task.createSession ? '' : ((state.call.active && state.call.sessionId) || state.chatId);
+      try {
+        if (task.createSession) {
+          const created = await fetch('/api/sessions', {
+            method: 'POST',
+            headers: profileHeaders(task.profile, { 'content-type': 'application/json' }),
+            body: JSON.stringify({ title: task.input.slice(0, 80), profile: task.profile }),
+          });
+          const json = await created.json().catch(() => ({}));
+          if (!created.ok || !json.id) throw new Error(json.error || 'Hermes did not return a session id.');
+          sessionId = json.id;
+          state.bops = api.rememberSession(state.bops, task.taskId, sessionId);
+        }
+        const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/chat`, {
+          method: 'POST',
+          headers: profileHeaders(task.profile, { 'content-type': 'application/json' }),
+          body: JSON.stringify({ input: task.input, profile: task.profile }),
+        });
+        if (!response.ok || !response.body) {
+          const json = await response.json().catch(() => ({}));
+          state.bops = api.applyTaskResult(state.bops, task.taskId, { ok: false, error: json.error || 'blocked' });
+        } else {
+          let blocked = null;
+          await readSse(response, (event, data) => {
+            let payload = {};
+            try { payload = JSON.parse(data); } catch { payload = { text: data }; }
+            const signal = api.signalFromEvent(event, payload);
+            if (signal) blocked = signal;
+          });
+          if (!state.bops?.stopped) state.bops = api.applyTaskResult(state.bops, task.taskId, blocked || { ok: true });
+        }
+      } catch (error) {
+        if (!state.bops?.stopped) state.bops = api.applyTaskResult(state.bops, task.taskId, { ok: false, error: error.message });
+      }
+      paintThread();
+    }
+    const jobs = plan.tasks.map(one);
+    if (plan.handoff) {
+      jobs.push((async () => {
+        try {
+          const created = await fetch('/api/sessions', {
+            method: 'POST',
+            headers: profileHeaders(plan.handoff.profile, { 'content-type': 'application/json' }),
+            body: JSON.stringify({ title: plan.handoff.title, profile: plan.handoff.profile }),
+          });
+          const json = await created.json().catch(() => ({}));
+          if (created.ok && json.id) {
+            await fetch(`/api/sessions/${encodeURIComponent(json.id)}/chat`, {
+              method: 'POST',
+              headers: profileHeaders(plan.handoff.profile, { 'content-type': 'application/json' }),
+              body: JSON.stringify({ input: plan.handoff.input, profile: plan.handoff.profile }),
+            });
+          }
+        } catch { /* the handoff line stays; the stub does not copy a key */ }
+      })());
+    }
+    await Promise.all(jobs);
+  }
+
   async function sendTurn(text) {
     const sessionId = (state.call.active && state.call.sessionId) || state.chatId;
     if (!sessionId || !text) return;
+    const api = window.IntelioBops;
+    if (api) {
+      const run = api.startRun({ text, profile: state.bot?.id || 'intelio', agentName: state.bot?.name || 'Intelio' });
+      if (run.orchestration === 'app-fan-out' || run.handoff) {
+        state.bops = run;
+        pushLine('user', text);
+        paintThread();
+        state.thinking = true;
+        try { await runPhonePlan(api.executionPlan(run)); } finally { state.thinking = false; paintThread(); }
+        return;
+      }
+    }
     pushLine('user', text);
     const pending = { role: 'assistant', text: '', pending: true };
     for (const bucket of buckets()) bucket.push(pending);

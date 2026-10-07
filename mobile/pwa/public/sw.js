@@ -1,5 +1,5 @@
-const CACHE = 'intelio-pwa-7';
-const FILES = ['/', '/index.html', '/app.css', '/app.js', '/thinking-orbs.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
+const CACHE = 'intelio-pwa-8';
+const FILES = ['/', '/index.html', '/app.css', '/app.js', '/bops.js', '/thinking-orbs.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(FILES)).then(() => self.skipWaiting()));

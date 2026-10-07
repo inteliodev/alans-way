@@ -617,6 +617,12 @@ function createPwaServer({
         res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'image/png', 'content-length': payload.length, 'cache-control': 'public, max-age=86400' });
         return res.end(payload);
       }
+      if (req.method === 'GET' && url.pathname === '/bops.js') {
+        const file = path.join(__dirname, '../../desktop/src/intelio/bops.cjs');
+        const payload = fs.readFileSync(file);
+        res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'text/javascript; charset=utf-8', 'content-length': payload.length, 'cache-control': 'no-cache' });
+        return res.end(payload);
+      }
       if (req.method === 'GET' && STATIC[url.pathname]) {
         const name = STATIC[url.pathname];
         const file = path.join(PUBLIC, name);
