@@ -3,7 +3,8 @@
  * Phone client for the VPS Hermes.
  * The tailnet listener signs the caller in with Tailscale. When
  * INTELIO_PWA_ACCESS=1, a second plain HTTP listener on loopback accepts
- * Cloudflare Access (Cf-Access-Jwt-Assertion) for app.intelio-ai.com.
+ * Cloudflare Access (Cf-Access-Jwt-Assertion or the CF_Authorization cookie)
+ * for app.intelio-ai.com.
  * Audience, team, and email allowlist come from the environment. This file
  * does not embed them. The profile API key is read from a mode-600 env file
  * on this host and never written into the page, a cookie, or a log.
@@ -25,6 +26,8 @@ const { fillLogin } = require('../../desktop/src/intelio/cdp-fill.cjs');
 const { normalizeIp, isLoopbackAddress, peerIsLocal, parseAllowlist, profileKeyPath, readProfileKey, createIdentity } = require('./identity.cjs');
 const { renderOrbPng } = require('./orbs.cjs');
 const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
+const { resolveVncUpstream, readVncPassword, bridgeVnc } = require('./vnc-proxy.cjs');
+const { resolveCdpUrl } = require('../../desktop/src/intelio/cdp-fill.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
 const STATIC = {
@@ -148,12 +151,10 @@ function assertUpstream(raw) {
   return url;
 }
 
-function assertVnc(raw) {
-  const url = new URL(raw);
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('VNC URL must be http(s).');
-  if (url.username || url.password) throw new Error('VNC URL must not carry credentials.');
-  if (!loopbackBind(url.hostname)) throw new Error('VNC URL must stay on loopback.');
-  return url;
+function accessToken(req) {
+  const header = String(req.headers['cf-access-jwt-assertion'] || '').trim();
+  if (header) return header;
+  return readCookie(req.headers.cookie, 'CF_Authorization').trim();
 }
 
 function titleCase(name) {
@@ -192,7 +193,8 @@ function createPwaServer({
   accessEmails = parseAllowlist(process.env.INTELIO_PWA_ACCESS_EMAILS || ''),
   accessTeam = String(process.env.INTELIO_PWA_ACCESS_TEAM || '').replace(/\/$/, ''),
   localPort = Number(process.env.INTELIO_PWA_LOCAL_PORT || 8644),
-  vncUpstream = process.env.INTELIO_PWA_VNC_URL || 'http://127.0.0.1:6080',
+  vncUpstream = process.env.INTELIO_PWA_VNC_URL || '',
+  vncPassword,
   vaultRoot = process.env.INTELIO_VAULT_ROOT || '',
   filler = null,
   cdpImpl = null,
@@ -201,7 +203,8 @@ function createPwaServer({
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
   if (accessMode && (!Number.isInteger(localPort) || localPort < 0 || localPort > 65535)) throw new Error('INTELIO_PWA_LOCAL_PORT must be 0-65535.');
-  const vncUrl = assertVnc(vncUpstream);
+  const vncUrl = resolveVncUpstream(bind, vncUpstream);
+  const vncSecret = vncPassword !== undefined ? String(vncPassword || '') : readVncPassword();
   const upstreamUrl = assertUpstream(upstream);
   const normalized = normalizeRemoteConfig({ host: '127.0.0.1', port: 8642, profile });
   const profileName = normalized.profile;
@@ -339,7 +342,7 @@ function createPwaServer({
     return session;
   }
   async function acceptAccess(req, res) {
-    const assertion = String(req.headers['cf-access-jwt-assertion'] || '');
+    const assertion = accessToken(req);
     const ident = await resolveAccess(assertion);
     if (!ident.ok) {
       if (assertion) log(ident.status === 403 ? 'intelio-pwa denied access-email' : 'intelio-pwa denied access-jwt');
@@ -353,7 +356,7 @@ function createPwaServer({
       authFor.set(req, existing);
       return existing;
     }
-    const assertion = String(req.headers['cf-access-jwt-assertion'] || '');
+    const assertion = accessToken(req);
     if (assertion && (accessVerify || accessMode)) {
       let ident = null;
       try { ident = accessVerify ? await accessVerify(assertion) : await verifyCloudflare(assertion); } catch { ident = null; }
@@ -650,7 +653,9 @@ function createPwaServer({
     }
     const profiles = listed.slice(0, 40).map((item) => ({
       id: String(item.id || '').slice(0, 32),
-      name: String(item.name || displayName(item.id) || 'Agent').slice(0, 80),
+      name: (['intelio', 'prc', 'alignment', 'hhp'].includes(String(item.id || '').toLowerCase())
+        ? displayName(item.id)
+        : String(item.name || displayName(item.id) || 'Agent')).slice(0, 80),
       description: String(item.description || '').slice(0, 240),
       status: item.status || 'online',
     })).filter((item) => item.id && item.id !== 'default');
@@ -751,41 +756,31 @@ function createPwaServer({
     }
     return acceptAccess(req, res);
   }
-  function proxyUpgrade(req, socket, head) {
-    const targetPath = String(req.url || '/').replace(/^\/browser/, '') || '/';
-    const headers = upstreamHeaders(req);
-    headers.connection = 'Upgrade';
-    headers.upgrade = req.headers.upgrade || 'websocket';
-    const lib = vncUrl.protocol === 'https:' ? https : http;
-    const preq = lib.request({
-      hostname: vncUrl.hostname,
-      port: vncUrl.port || (vncUrl.protocol === 'https:' ? 443 : 80),
-      path: targetPath,
-      method: 'GET',
-      headers,
-    });
-    const fail = () => { try { socket.destroy(); } catch { /* already closed */ } };
-    preq.on('upgrade', (pres, upstream, upstreamHead) => {
-      const lines = [`HTTP/1.1 ${pres.statusCode || 101} ${pres.statusMessage || 'Switching Protocols'}`];
-      for (const [key, value] of Object.entries(pres.headers)) {
-        const list = Array.isArray(value) ? value : [value];
-        for (const item of list) if (item != null) lines.push(`${key}: ${item}`);
-      }
-      socket.write(`${lines.join('\r\n')}\r\n\r\n`);
-      if (upstreamHead && upstreamHead.length) socket.write(upstreamHead);
-      if (head && head.length) upstream.write(head);
-      upstream.pipe(socket);
-      socket.pipe(upstream);
-      socket.on('error', () => upstream.destroy());
-      upstream.on('error', () => socket.destroy());
-      socket.on('close', () => upstream.destroy());
-      upstream.on('close', () => socket.destroy());
-    });
-    preq.on('error', fail);
-    preq.on('response', (pres) => { pres.resume(); fail(); });
-    preq.end();
+  async function browserDomain(profileId) {
+    if (sample) return '';
+    let origin = '';
+    try { origin = resolveCdpUrl({ profile: profileId, root: vaultRootPath }); } catch { return ''; }
+    try {
+      const response = await Promise.race([
+        fetchImpl(`${origin}/json/list`, { redirect: 'error' }),
+        new Promise((_, reject) => { setTimeout(() => reject(new Error('vnc')), 3000); }),
+      ]);
+      if (!response || !response.ok) return '';
+      const rows = await response.json();
+      const page = (Array.isArray(rows) ? rows : []).find((row) => row && row.type === 'page' && /^https?:/i.test(String(row.url || '')));
+      if (!page) return '';
+      return new URL(page.url).hostname.replace(/^www\./, '').slice(0, 253);
+    } catch {
+      return '';
+    }
+  }
+  const liveSockets = new Set();
+  function watchSocket(socket) {
+    liveSockets.add(socket);
+    socket.on('close', () => liveSockets.delete(socket));
   }
   async function onUpgrade(req, socket, head, accessListener) {
+    watchSocket(socket);
     req.accessListener = accessListener;
     try {
       const url = new URL(req.url || '/', 'http://127.0.0.1');
@@ -794,13 +789,15 @@ function createPwaServer({
       const ok = accessListener ? allowed.ok : Boolean(allowed);
       if (!ok) {
         const status = accessListener && allowed.status === 403 ? 403 : 401;
-        socket.write(`HTTP/1.1 ${status} ${status === 403 ? 'Forbidden' : 'Unauthorized'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-        socket.destroy();
+        socket.end(`HTTP/1.1 ${status} ${status === 403 ? 'Forbidden' : 'Unauthorized'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
         return;
       }
-      proxyUpgrade(req, socket, head);
+      await bridgeVnc({ req, socket, head, upstream: vncUrl, password: vncSecret });
     } catch {
-      socket.destroy();
+      log('intelio-pwa vnc upstream failed');
+      if (!socket.destroyed) {
+        try { socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); } catch { /* already closed */ }
+      }
     }
   }
   async function optionalList(profileId, pathname, normalize) {
@@ -917,6 +914,9 @@ function createPwaServer({
         if (token) sessions.delete(token);
         authFor.delete(req);
         return send(res, 200, { ok: true }, { 'set-cookie': 'intelio_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0' });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/browser/site') {
+        return send(res, 200, { domain: await browserDomain(chosenProfile(req)) });
       }
       if (req.method === 'GET' && url.pathname === '/api/home') {
         if (sample) return send(res, 200, SAMPLE_HOME);
@@ -1064,10 +1064,17 @@ function createPwaServer({
 
   function close(done) {
     const finish = typeof done === 'function' ? done : () => {};
+    for (const socket of [...liveSockets]) {
+      try { socket.destroy(); } catch { /* already closed */ }
+    }
     let pending = 1 + (localServer ? 1 : 0);
     const step = () => { pending -= 1; if (pending === 0) finish(); };
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
     server.close(step);
-    if (localServer) localServer.close(step);
+    if (localServer) {
+      if (typeof localServer.closeAllConnections === 'function') localServer.closeAllConnections();
+      localServer.close(step);
+    }
   }
 
   return {

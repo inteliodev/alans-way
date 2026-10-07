@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const { assertSlug, listProfiles, createProfile, writeFreshKey, restartGateway } = require('../../mobile/pwa/profiles.cjs');
+const { assertSlug, displayName, listProfiles, createProfile, writeFreshKey, restartGateway } = require('../../mobile/pwa/profiles.cjs');
 const { hashHue, orbPalette } = require('../../mobile/pwa/orbs.cjs');
 const { createPwaServer } = require('../../mobile/pwa/server.cjs');
 
@@ -41,6 +41,11 @@ test('profile names stay short slugs and skip default', async () => {
     run: async () => ({ code: 0, stdout: 'default\nprc\n', stderr: '' }),
   });
   assert.deepEqual(listed.map((item) => item.id), ['intelio', 'prc']);
+  assert.equal(displayName('intelio'), 'Intelio');
+  assert.equal(displayName('prc'), 'PRC');
+  assert.equal(displayName('alignment'), 'Alignment');
+  assert.equal(displayName('hhp'), 'HHP');
+  assert.equal(listed.find((item) => item.id === 'prc').name, 'PRC');
 });
 
 test('creating an agent sets Codex config, writes a fresh key, and never calls auth', async () => {

@@ -104,6 +104,8 @@ ACCESS_TEAM="${INTELIO_PWA_ACCESS_TEAM:-$(env_get INTELIO_PWA_ACCESS_TEAM)}"
 ACCESS_AUD="${INTELIO_PWA_ACCESS_AUD:-$(env_get INTELIO_PWA_ACCESS_AUD)}"
 ACCESS_EMAILS="${INTELIO_PWA_ACCESS_EMAILS:-$(env_get INTELIO_PWA_ACCESS_EMAILS)}"
 VNC_URL="${INTELIO_PWA_VNC_URL:-$(env_get INTELIO_PWA_VNC_URL)}"
+VNC_PASSWORD_FILE="${INTELIO_VNC_PASSWORD_FILE:-$(env_get INTELIO_VNC_PASSWORD_FILE)}"
+VNC_PASSWORD="${INTELIO_VNC_PASSWORD:-$(env_get INTELIO_VNC_PASSWORD)}"
 if [[ -z "$BIND" ]]; then
   echo "Set INTELIO_PWA_BIND to the Tailscale name or tailnet address." >&2
   exit 1
@@ -118,6 +120,12 @@ if [[ "$ACCESS" == "1" ]] && { ! [[ "$LOCAL_PORT" =~ ^[0-9]+$ ]] || [[ "$LOCAL_P
 fi
 
 node -e 'const {isTailnetOrLoopbackHost}=require(process.argv[1]); if(!isTailnetOrLoopbackHost(process.argv[2])) { console.error("Refusing bind. Use a Tailscale address or loopback, never a public or wildcard address."); process.exit(1); }' "$ROOT/desktop/src/intelio/remote-hermes.cjs" "$BIND"
+if [[ -n "$VNC_URL" ]]; then
+  node -e 'const {isTailnetOrLoopbackHost}=require(process.argv[1]); const u=new URL(process.argv[2]); if ((u.protocol!=="http:" && u.protocol!=="https:") || u.username || u.password || !isTailnetOrLoopbackHost(u.hostname)) process.exit(1);' "$ROOT/desktop/src/intelio/remote-hermes.cjs" "$VNC_URL" || {
+    echo "INTELIO_PWA_VNC_URL must be an http(s) tailnet or loopback URL with no credentials." >&2
+    exit 1
+  }
+fi
 
 echo "Phone client root: $ROOT"
 echo "Bind: $BIND port $PORT"
@@ -142,6 +150,8 @@ if [[ "$ACCESS" != "1" && -z "$LOGINS" ]]; then
 fi
 if [[ -n "$LOGINS" ]]; then echo "Allowlist: $LOGINS"; fi
 if [[ -n "$CERT" ]]; then echo "Keeping TLS cert path from the environment or the existing env file."; fi
+if [[ -n "$VNC_URL" ]]; then echo "VNC upstream: INTELIO_PWA_VNC_URL is set. The value is not printed."; else echo "VNC upstream: port 6080 on INTELIO_PWA_BIND. Override with INTELIO_PWA_VNC_URL."; fi
+if [[ -n "$VNC_PASSWORD" || -n "$VNC_PASSWORD_FILE" ]]; then echo "VNC password: kept for the server. Not printed."; fi
 if [[ "$WITH_VOICE" == 1 ]]; then
   echo "Voice pins: $WHISPER_PIN $PIPER_PIN $AV_PIN"
   echo "Voice models: whisper $WHISPER_MODEL $WHISPER_COMPUTE, piper $PIPER_NAME"
@@ -192,8 +202,10 @@ umask 077
     if [[ -n "$ACCESS_TEAM" ]]; then printf 'INTELIO_PWA_ACCESS_TEAM=%s\n' "$ACCESS_TEAM"; fi
     if [[ -n "$ACCESS_AUD" ]]; then printf 'INTELIO_PWA_ACCESS_AUD=%s\n' "$ACCESS_AUD"; fi
     if [[ -n "$ACCESS_EMAILS" ]]; then printf 'INTELIO_PWA_ACCESS_EMAILS=%s\n' "$ACCESS_EMAILS"; fi
-    if [[ -n "$VNC_URL" ]]; then printf 'INTELIO_PWA_VNC_URL=%s\n' "$VNC_URL"; fi
   fi
+  if [[ -n "$VNC_URL" ]]; then printf 'INTELIO_PWA_VNC_URL=%s\n' "$VNC_URL"; fi
+  if [[ -n "$VNC_PASSWORD_FILE" ]]; then printf 'INTELIO_VNC_PASSWORD_FILE=%s\n' "$VNC_PASSWORD_FILE"; fi
+  if [[ -n "$VNC_PASSWORD" ]]; then printf 'INTELIO_VNC_PASSWORD=%s\n' "$VNC_PASSWORD"; fi
   printf 'INTELIO_HERMES_URL=%s\n' "$HERMES_URL"
   printf 'INTELIO_HERMES_PROFILE=%s\n' "$PROFILE"
   if [[ -n "$LOGINS" ]]; then printf 'INTELIO_PWA_ALLOWED_LOGINS=%s\n' "$LOGINS"; fi

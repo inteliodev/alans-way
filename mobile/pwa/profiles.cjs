@@ -23,8 +23,17 @@ function assertSlug(name) {
   return slug;
 }
 
+const DISPLAY_NAMES = {
+  intelio: 'Intelio',
+  prc: 'PRC',
+  alignment: 'Alignment',
+  hhp: 'HHP',
+};
+
 function displayName(slug) {
-  return String(slug || '').split('-').filter(Boolean).map((part) => part.slice(0, 1).toUpperCase() + part.slice(1)).join(' ');
+  const id = String(slug || '').trim().toLowerCase();
+  if (DISPLAY_NAMES[id]) return DISPLAY_NAMES[id];
+  return id.split('-').filter(Boolean).map((part) => part.slice(0, 1).toUpperCase() + part.slice(1)).join(' ');
 }
 
 function runCommand(bin, args, timeoutMs = 20000) {

@@ -96,6 +96,7 @@
       goals: '<path d="M5 12.5l4 4 10-10"/>',
       down: '<path d="M6 10l6 6 6-6"/>',
       monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+      lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
     };
     const wrap = el('span', 'ico');
     wrap.innerHTML = `<svg viewBox="0 0 24 24">${paths[name] || ''}</svg>`;
@@ -195,7 +196,14 @@
 
   const FACE_PX = { avatar: 72, 'avatar sm': 36, 'avatar lg': 148, face: 32, tile: 96, pip: 28, mark: 96 };
   const VPS_AGENTS = ['intelio', 'prc', 'alignment', 'hhp'];
-  const CLIENT_VERSION = 'intelio-pwa-8';
+  const AGENT_NAMES = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+  function agentLabel(profile) {
+    const id = String(profile?.id || '').trim().toLowerCase();
+    if (AGENT_NAMES[id]) return AGENT_NAMES[id];
+    const name = String(profile?.name || '').trim();
+    return name || 'Intelio';
+  }
+  const CLIENT_VERSION = 'intelio-pwa-9';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);
@@ -299,7 +307,7 @@
 
   function vpsAgents(profiles) {
     const rows = Array.isArray(profiles) ? profiles : [];
-    return VPS_AGENTS.map((id) => rows.find((item) => String(item.id || '').toLowerCase() === id)).filter(Boolean);
+    return VPS_AGENTS.map((id) => rows.find((item) => String(item.id || '').toLowerCase() === id)).filter(Boolean).map((item) => ({ ...item, name: agentLabel(item) }));
   }
 
   function visibleChats() {
@@ -463,7 +471,7 @@
     if (state.view === 'chat' || state.tab === 'sessions') {
       const hero = el('div', 'hero');
       hero.append(face(state.bot, 'avatar'));
-      const pill = el('button', 'name-pill', state.bot.name || 'Intelio');
+      const pill = el('button', 'name-pill', agentLabel(state.bot));
       pill.type = 'button';
       pill.addEventListener('click', () => { if (state.view !== 'chat') selectTab('chat'); });
       hero.append(pill);
@@ -476,7 +484,7 @@
   function sessionsView() {
     const list = el('div', 'feed');
     list.id = 'list';
-    list.append(el('p', 'kicker', `${state.bot.name || 'Intelio'} threads`));
+    list.append(el('p', 'kicker', `${agentLabel(state.bot)} threads`));
     const rows = visibleChats();
     if (!rows.length) list.append(el('p', 'empty', state.sample ? 'No sample conversations.' : 'No conversations yet.'));
     for (const row of rows) list.append(sessionCard(row));
@@ -553,7 +561,7 @@
     const plus = roundButton('plus', () => openSheet('new'));
     const input = document.createElement('input');
     input.id = 'ask';
-    input.placeholder = `Ask ${state.bot.name || 'Intelio'}`;
+    input.placeholder = `Ask ${agentLabel(state.bot)}`;
     input.autocomplete = 'off';
     const ptt = roundButton('mic', () => {});
     ptt.id = 'ptt';
@@ -600,7 +608,7 @@
     backdrop.addEventListener('click', () => { state.drawer = false; render(); });
     const panel = el('aside', 'drawer');
     const head = el('div', 'drawer-head');
-    head.append(el('h1', '', state.bot.name || 'Intelio'));
+    head.append(el('h1', '', agentLabel(state.bot)));
     const gear = el('button', 'iconbtn');
     gear.type = 'button';
     gear.setAttribute('aria-label', 'Settings');
@@ -619,7 +627,7 @@
     for (const profile of agents) {
       const button = el('button', `navbtn${profile.id === state.bot.id ? ' on' : ''}`);
       button.type = 'button';
-      button.append(face(profile, 'pip'), el('span', '', profile.name || profile.id));
+      button.append(face(profile, 'pip'), el('span', '', agentLabel(profile)));
       button.addEventListener('click', () => selectProfile(profile));
       panel.append(button);
     }
@@ -699,7 +707,12 @@
       state.view = state.chatId ? 'chat' : 'home';
       render();
     });
-    const title = el('strong', 'browser-title', `${state.bot.name || 'Intelio'} browser`);
+    const title = el('strong', 'browser-title', `${agentLabel(state.bot)} browser`);
+    const lock = el('button', 'iconbtn');
+    lock.type = 'button';
+    lock.setAttribute('aria-label', 'Saved login for this site');
+    lock.append(icon('lock'));
+    lock.addEventListener('click', () => openSiteLogin());
     const control = el('button', 'control-button', state.browserControl ? 'Stop control' : 'Take control');
     control.type = 'button';
     control.id = 'take-control';
@@ -712,7 +725,7 @@
       const hint = document.getElementById('browser-hint');
       if (hint) hint.textContent = state.browserControl ? 'You control this view.' : 'Watching. Take control to use the pointer and keyboard.';
     });
-    bar.append(back, title, control);
+    bar.append(back, title, lock, control);
     const hint = el('p', 'browser-hint', state.browserControl ? 'You control this view.' : 'Watching. Take control to use the pointer and keyboard.');
     hint.id = 'browser-hint';
     const screen = el('div', 'vnc-screen');
@@ -723,12 +736,27 @@
     return wrap;
   }
 
+  function browserMessage(screen, text, failed) {
+    let empty = screen.querySelector('.browser-empty');
+    if (!empty) {
+      empty = el('p', 'browser-empty');
+      screen.append(empty);
+    }
+    empty.textContent = text;
+    empty.classList.toggle('browser-error', Boolean(failed));
+  }
+
   async function connectBrowser(screen) {
     if (!screen.isConnected) return;
     try { rfb?.disconnect(); } catch { /* already closed */ }
     rfb = null;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${proto}//${location.host}/browser/websockify`;
+    const fail = () => {
+      if (!screen.isConnected) return;
+      browserMessage(screen, 'The shared browser is not connected.', true);
+    };
+    let timer = 0;
     try {
       const mod = await import('/novnc/core/rfb.js');
       const RFB = mod.default;
@@ -739,14 +767,37 @@
       client.resizeSession = false;
       client.focusOnClick = state.browserControl;
       client.background = currentTheme() === 'light' ? '#f4f4f6' : '#070708';
+      timer = setTimeout(fail, 8000);
       client.addEventListener('connect', () => {
+        clearTimeout(timer);
         const empty = screen.querySelector('.browser-empty');
         if (empty) empty.remove();
       });
+      client.addEventListener('disconnect', () => {
+        clearTimeout(timer);
+        if (rfb !== client || !screen.isConnected) return;
+        fail();
+      });
+      client.addEventListener('securityfailure', () => {
+        clearTimeout(timer);
+        if (!screen.isConnected) return;
+        browserMessage(screen, 'The shared browser rejected the connection.', true);
+      });
       rfb = client;
     } catch {
-      if (!screen.querySelector('.browser-empty')) screen.append(el('p', 'browser-empty', 'The shared browser is not connected.'));
+      clearTimeout(timer);
+      fail();
     }
+  }
+
+  async function openSiteLogin() {
+    let domain = '';
+    try {
+      const response = await fetch('/api/browser/site', { headers: profileHeaders(state.bot?.id) });
+      const body = await response.json();
+      domain = String(body.domain || '');
+    } catch { domain = ''; }
+    openSheet('signin', { domain });
   }
 
   function iconsView() {
@@ -817,7 +868,7 @@
     const hero = el('div', 'call-hero');
     const timer = el('p', 'timer', clock(callElapsed(), 'screen'));
     timer.id = 'call-timer';
-    hero.append(face(state.bot, 'avatar lg'), el('h1', '', state.bot.name || 'Intelio'), timer);
+    hero.append(face(state.bot, 'avatar lg'), el('h1', '', agentLabel(state.bot)), timer);
     const captions = el('div', 'captions');
     captions.id = 'captions';
     fillCaptions(captions, state.captions);
@@ -947,7 +998,7 @@
 
   async function startChatWith(profile) {
     state.bot = profile;
-    const response = await fetch('/api/sessions', { method: 'POST', headers: profileHeaders(profile.id, { 'content-type': 'application/json' }), body: JSON.stringify({ title: profile.name || 'Intelio', profile: profile.id }) });
+    const response = await fetch('/api/sessions', { method: 'POST', headers: profileHeaders(profile.id, { 'content-type': 'application/json' }), body: JSON.stringify({ title: agentLabel(profile), profile: profile.id }) });
     const body = await response.json().catch(() => ({}));
     const id = body.id || (body.data && body.data.id);
     if (!id) { state.error = body.error || 'Could not start a chat.'; render(); return; }
@@ -964,7 +1015,7 @@
     for (const profile of state.home.profiles) {
       const button = el('button', `agent${profile.id === state.bot.id ? ' on' : ''}`);
       button.type = 'button';
-      button.append(face(profile, 'avatar sm'), el('span', '', profile.name || profile.id));
+      button.append(face(profile, 'avatar sm'), el('span', '', agentLabel(profile)));
       button.addEventListener('click', () => selectProfile(profile));
       strip.append(button);
     }
@@ -1046,6 +1097,12 @@
     wrap.append(voiceFields());
     wrap.append(el('h2', '', 'Sign-in'));
     wrap.append(el('p', '', signInLine()));
+    wrap.append(el('h2', '', 'Saved logins'));
+    const saved = el('button', 'block quiet', 'Saved logins');
+    saved.type = 'button';
+    saved.addEventListener('click', () => openSavedLogins(''));
+    wrap.append(saved);
+    wrap.append(el('p', '', 'Domain and username only. The password stays in this agent’s vault.'));
     wrap.append(el('h2', '', 'Appearance'));
     const toggle = el('button', 'theme-toggle');
     toggle.id = 'theme-toggle';
@@ -1078,10 +1135,108 @@
     else if (name === 'tool') card.append(toolSheet(extra || {}));
     else if (name === 'agent') card.append(agentCard());
     else if (name === 'restart') card.append(restartCard());
+    else if (name === 'logins') card.append(loginsSheet(extra || {}));
+    else if (name === 'signin') card.append(secureLoginCard(extra?.domain || ''));
     else card.append(newCard());
     sheet.append(card);
-    sheet.addEventListener('click', (event) => { if (event.target === sheet) sheet.remove(); });
+    sheet.dataset.ready = '0';
+    sheet.addEventListener('click', (event) => {
+      if (sheet.dataset.ready !== '1') return;
+      if (event.target === sheet) sheet.remove();
+    });
     app.append(sheet);
+    setTimeout(() => { if (sheet.isConnected) sheet.dataset.ready = '1'; }, 450);
+  }
+
+  function loginsSheet(extra) {
+    const frag = document.createDocumentFragment();
+    frag.append(el('h2', '', 'Saved logins'));
+    const rows = Array.isArray(extra.logins) ? extra.logins : [];
+    if (!rows.length) frag.append(el('p', '', 'No saved logins for this agent.'));
+    for (const row of rows) {
+      const domain = String(row.domain || '');
+      const username = String(row.username || '');
+      frag.append(el('p', 'login-row', `${domain} · ${username}`));
+    }
+    const add = el('button', 'block', 'Add a login');
+    add.type = 'button';
+    add.addEventListener('click', () => openSheet('signin', { domain: extra.domain || '' }));
+    frag.append(add);
+    return frag;
+  }
+
+  async function openSavedLogins(domain) {
+    let logins = [];
+    try {
+      const response = await fetch('/api/vault/logins', { headers: profileHeaders(state.bot?.id) });
+      const body = await response.json();
+      logins = (Array.isArray(body.logins) ? body.logins : []).map((row) => ({ domain: String(row.domain || ''), username: String(row.username || '') }));
+    } catch { logins = []; }
+    openSheet('logins', { logins, domain: domain || '' });
+  }
+
+  function secureLoginCard(domain) {
+    const card = el('form', 'bops-signin');
+    const initial = String(domain || '').replace(/^www\./, '');
+    const head = el('div', 'signin-head');
+    head.append(el('span', 'signin-mark', (initial || 'S').slice(0, 1).toUpperCase()), el('strong', '', initial || 'Secure sign-in'));
+    card.append(head);
+    const fields = [
+      ['domain', 'Domain', 'text', 'off', initial],
+      ['username', 'Username', 'text', 'username', ''],
+      ['password', 'Password', 'password', 'current-password', ''],
+      ['otp', 'One-time code', 'password', 'one-time-code', ''],
+    ];
+    for (const [id, label, type, autocomplete, value] of fields) {
+      const lab = el('label', 'signin-label', label);
+      const input = el('input');
+      input.type = type;
+      input.autocomplete = autocomplete;
+      input.dataset.field = id;
+      if (value) input.value = value;
+      lab.append(input);
+      card.append(lab);
+    }
+    const save = el('label', 'signin-save', 'Save login');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = true;
+    box.dataset.field = 'save';
+    save.append(box);
+    card.append(save);
+    const status = el('p', 'login-status', '');
+    const submit = el('button', 'bops-action', 'Submit');
+    submit.type = 'submit';
+    card.append(submit, status);
+    card.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const values = {};
+      card.querySelectorAll('input').forEach((input) => {
+        if (input.dataset.field === 'save') values.save = input.checked;
+        else values[input.dataset.field] = input.value;
+        if (input.type === 'password') input.value = '';
+      });
+      const response = await fetch('/api/vault/login', {
+        method: 'POST',
+        headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
+        body: JSON.stringify({
+          profile: state.bot?.id,
+          domain: values.domain,
+          username: values.username,
+          password: values.password,
+          otp: values.otp,
+          save: values.save === true,
+        }),
+      });
+      await response.json().catch(() => ({}));
+      if (!response.ok) {
+        status.textContent = 'Could not save that login.';
+        return;
+      }
+      status.textContent = values.save ? 'Saved.' : 'Sent to the browser.';
+      if (values.save) openSavedLogins(values.domain || '');
+    });
+    return card;
   }
 
   function toolSheet(extra) {
@@ -1125,7 +1280,7 @@
     for (const profile of state.home.profiles) {
       const option = document.createElement('option');
       option.value = profile.id;
-      option.textContent = `Start from ${profile.name || profile.id}`;
+      option.textContent = `Start from ${agentLabel(profile)}`;
       select.append(option);
     }
     const save = el('button', 'block', 'Create agent');
@@ -1193,16 +1348,31 @@
   function newCard() {
     const frag = document.createDocumentFragment();
     frag.append(el('h2', '', 'New'));
-    const chat = el('button', 'block', `Message ${state.bot.name || 'Intelio'}`);
+    const chat = el('button', 'block', `Message ${agentLabel(state.bot)}`);
     chat.type = 'button';
     chat.addEventListener('click', () => { document.getElementById('sheet')?.remove(); startChatWith(state.bot); });
-    const call = el('button', 'block', `Call ${state.bot.name || 'Intelio'}`);
+    const call = el('button', 'block call-choice', `Call ${agentLabel(state.bot)}`);
     call.type = 'button';
-    call.addEventListener('click', async () => {
-      document.getElementById('sheet')?.remove();
-      if (!state.chatId) await startChatWith(state.bot);
-      startCall(state.chatId);
+    let armed = false;
+    call.addEventListener('pointerdown', (event) => {
+      armed = event.target === call || call.contains(event.target);
     });
+    call.addEventListener('pointerup', (event) => {
+      const hit = armed && (event.target === call || call.contains(event.target));
+      armed = false;
+      const sheet = call.closest('.sheet');
+      if (!hit || !sheet || sheet.dataset.ready !== '1') return;
+      event.preventDefault();
+      event.stopPropagation();
+      sheet.remove();
+      const go = async () => {
+        if (!state.chatId) await startChatWith(state.bot);
+        startCall(state.chatId);
+      };
+      go();
+    });
+    call.addEventListener('pointercancel', () => { armed = false; });
+    call.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); });
     frag.append(chat, call);
     return frag;
   }

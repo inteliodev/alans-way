@@ -58,9 +58,16 @@ function byNewest(rows) {
   return rows.slice().sort((a, b) => sessionTime(b) - sessionTime(a) || String(a.id || '').localeCompare(String(b.id || '')));
 }
 
+function canonicalName(id, provided) {
+  const known = NAMED_AGENTS.find((agent) => agent.id === id);
+  if (known) return known.name;
+  const raw = String(provided || '').trim();
+  return raw || titleCase(id);
+}
+
 function decorate(agent) {
   const id = String(agent.id || '').trim().toLowerCase();
-  return { id, name: agent.name || titleCase(id), orb: signatureOf(id), color: agent.color || '' };
+  return { id, name: canonicalName(id, agent.name), orb: signatureOf(id), color: agent.color || '' };
 }
 
 function parseProfiles(json) {
