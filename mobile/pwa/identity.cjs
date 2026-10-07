@@ -18,6 +18,49 @@ function normalizeIp(raw) {
   return ip;
 }
 
+function isLoopbackAddress(raw) {
+  const address = normalizeIp(raw);
+  return address === '::1' || address.startsWith('127.');
+}
+
+function selfFromStatus(data) {
+  const self = data?.Self || {};
+  const id = self.ID == null ? '' : String(self.ID);
+  const ips = [];
+  for (const value of [].concat(self.TailscaleIPs || [], self.Addrs || [])) {
+    const address = normalizeIp(String(value).split('/')[0]);
+    if (address && !ips.includes(address)) ips.push(address);
+  }
+  return { id, ips };
+}
+
+function whoisNodeId(data) {
+  const id = data?.Node?.ID;
+  return id == null ? '' : String(id);
+}
+
+function whoisAddresses(data) {
+  const ips = [];
+  for (const value of [].concat(data?.Node?.Addresses || [], data?.Node?.AllowedIPs || [])) {
+    const address = normalizeIp(String(value).split('/')[0]);
+    if (address && !ips.includes(address)) ips.push(address);
+  }
+  return ips;
+}
+
+function peerIsLocal({ address, whois = null, self = null, hostIps = [] } = {}) {
+  const ip = normalizeIp(address);
+  if (!ip || isLoopbackAddress(ip)) return true;
+  const own = self || { id: '', ips: [] };
+  const hosts = [...(hostIps || []), ...(own.ips || [])];
+  if (hosts.includes(ip)) return true;
+  const node = whoisNodeId(whois);
+  if (node && own.id && node === own.id) return true;
+  const nodeIps = whois ? whoisAddresses(whois) : [];
+  if (nodeIps.includes(ip) && nodeIps.some((item) => hosts.includes(item))) return true;
+  return false;
+}
+
 function cleanLogin(value) {
   const login = String(value || '').trim();
   if (!login || login.length > 200 || /[\s]/.test(login)) return '';
@@ -120,17 +163,44 @@ function createIdentity({
 } = {}) {
   const cache = new Map();
 
-  async function lookup(ip) {
-    const cached = cache.get(ip);
-    if (cached && cached.exp > now()) return cached.login;
-    let login = '';
-    const cli = await run(['whois', '--json', ip]);
-    if (cli && cli.code === 0 && cli.stdout) {
-      try { login = loginFromWhois(JSON.parse(cli.stdout)); } catch { login = ''; }
+  async function selfInfo() {
+    const cached = cache.get('__self__');
+    if (cached && cached.exp > now()) return cached.value;
+    let value = { id: '', ips: [] };
+    const status = await run(['status', '--json']);
+    if (status && status.code === 0 && status.stdout) {
+      try { value = selfFromStatus(JSON.parse(status.stdout)); } catch { value = { id: '', ips: [] }; }
     }
-    if (!login) login = await localWhois(ip);
-    cache.set(ip, { login: login || '', exp: now() + (login ? ttlMs : denyTtlMs) });
-    return login || '';
+    cache.set('__self__', { value, exp: now() + ttlMs });
+    return value;
+  }
+
+  async function describe(ip) {
+    const address = normalizeIp(ip);
+    const cached = cache.get(address);
+    if (cached && cached.exp > now()) return cached.value;
+    const self = await selfInfo();
+    let whois = null;
+    let login = '';
+    const cli = await run(['whois', '--json', address]);
+    if (cli && cli.code === 0 && cli.stdout) {
+      try {
+        whois = JSON.parse(cli.stdout);
+        login = loginFromWhois(whois);
+      } catch {
+        whois = null;
+        login = '';
+      }
+    }
+    if (!login) login = await localWhois(address);
+    const value = { login: login || '', whois, self };
+    cache.set(address, { value, exp: now() + (login ? ttlMs : denyTtlMs) });
+    return value;
+  }
+
+  async function lookup(ip) {
+    const described = await describe(ip);
+    return described.login || '';
   }
 
   async function identify(ip, allowlist) {
@@ -138,18 +208,23 @@ function createIdentity({
     if (!address) return { ok: false, reason: 'missing address' };
     const allowed = (allowlist || []).map((item) => String(item).toLowerCase());
     if (!allowed.length) return { ok: false, reason: 'allowlist is empty' };
-    let login = '';
-    try { login = await lookup(address); } catch { login = ''; }
-    if (!login) return { ok: false, reason: 'not a tailnet peer' };
-    if (!allowed.includes(login.toLowerCase())) return { ok: false, reason: 'login not allowed', login };
-    return { ok: true, login };
+    let described = { login: '', whois: null, self: { id: '', ips: [] } };
+    try { described = await describe(address); } catch { described = { login: '', whois: null, self: { id: '', ips: [] } }; }
+    const login = described.login || '';
+    const self = peerIsLocal({ address, whois: described.whois, self: described.self, hostIps: described.self?.ips });
+    if (!login) return { ok: false, reason: 'not a tailnet peer', self };
+    if (!allowed.includes(login.toLowerCase())) return { ok: false, reason: 'login not allowed', login, self };
+    return { ok: true, login, self };
   }
 
-  return { identify, lookup };
+  return { identify, lookup, describe };
 }
 
 module.exports = {
   normalizeIp,
+  isLoopbackAddress,
+  selfFromStatus,
+  peerIsLocal,
   cleanLogin,
   loginFromWhois,
   loginFromStatus,

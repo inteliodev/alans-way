@@ -194,7 +194,7 @@ test('maximize sets XAUTHORITY, skips missing displays, and hides a failed xdoto
   fs.writeFileSync(path.join(profiles, 'prc', 'bot-desktop', 'display'), '20\n');
   fs.writeFileSync(path.join(profiles, 'prc', 'bot-desktop', 'Xauthority'), 'auth-bytes');
   const log = path.join(root, 'log');
-  fs.writeFileSync(path.join(bin, 'xdotool'), `#!/bin/sh\necho "XAUTHORITY=\${XAUTHORITY-unset}" >> ${JSON.stringify(log)}\necho "DISPLAY=$DISPLAY" >> ${JSON.stringify(log)}\nexit 1\n`);
+  fs.writeFileSync(path.join(bin, 'xdotool'), `#!/bin/sh\necho "XAUTHORITY=\${XAUTHORITY-unset}" >> ${JSON.stringify(log)}\necho "DISPLAY=$DISPLAY" >> ${JSON.stringify(log)}\necho "Can't open display" >&2\nexit 1\n`);
   fs.chmodSync(path.join(bin, 'xdotool'), 0o755);
   const py = spawnSync('python3', ['-c', `import socket,os; s=socket.socket(socket.AF_UNIX); s.bind(${JSON.stringify(path.join(x11, 'X20'))}); s.listen(1)`], { encoding: 'utf8' });
   assert.equal(py.status, 0, py.stderr);
@@ -253,6 +253,20 @@ test('maximize sets XAUTHORITY, skips missing displays, and hides a failed xdoto
   assert.equal(watched.status, 124);
   const missing = (watched.stderr.match(/No Chromium window/g) || []).length;
   assert.equal(missing, 2);
+  const quietBin = path.join(root, 'quiet-bin');
+  fs.mkdirSync(quietBin);
+  fs.writeFileSync(path.join(quietBin, 'wmctrl'), '#!/bin/sh\nif [ "$1" = "-m" ]; then echo "no window manager" >&2; exit 1; fi\nexit 1\n');
+  fs.writeFileSync(path.join(quietBin, 'xdotool'), '#!/bin/sh\necho "no Chromium window found" >&2\nexit 1\n');
+  fs.chmodSync(path.join(quietBin, 'wmctrl'), 0o755);
+  fs.chmodSync(path.join(quietBin, 'xdotool'), 0o755);
+  const quiet = spawnSync('timeout', ['1.2', 'sh', script, '--watch'], {
+    env: { ...env, PATH: `${quietBin}:/usr/bin:/bin`, INTELIO_BOT_WATCH_SECONDS: '0.3' },
+    encoding: 'utf8',
+  });
+  assert.equal(quiet.status, 124);
+  assert.equal((quiet.stderr.match(/No Chromium window/g) || []).length, 2);
+  assert.equal(quiet.stderr.includes('xdotool failed'), false);
+  assert.equal((quiet.stderr.match(/no Chromium window found/g) || []).length, 0);
 });
 
 test('fill_saved_login uses the per-message profile override and not the intelio key', () => {
@@ -489,7 +503,7 @@ test('vault login and fill refuse to type when the tab host does not match', asy
   try {
     const allowed = await pwaRequest(address.port, 'GET', '/session', { headers: { 'cf-access-jwt-assertion': 'good-assertion' } });
     const cookie = allowed.headers['set-cookie'][0].split(';')[0];
-    const access = { 'cf-access-jwt-assertion': 'good-assertion', 'x-intelio-profile': 'intelio' };
+    const access = { 'cf-access-jwt-assertion': 'good-assertion', 'x-intelio-profile': 'intelio', authorization: 'Bearer sample-demo-key-not-real-0001' };
     const missed = await pwaRequest(address.port, 'POST', '/api/vault/login', {
       cookie,
       headers: access,

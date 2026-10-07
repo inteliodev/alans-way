@@ -74,27 +74,98 @@ test('Cloudflare Access signs the phone in without Tailscale whois', async () =>
     assert.match(allowed.body, /hayden@intelio\.co/);
     const cookie = allowed.headers['set-cookie'][0].split(';')[0];
     const access = { 'cf-access-jwt-assertion': 'good-assertion', 'x-intelio-profile': 'intelio' };
-    const saved = await request(address.port, 'POST', '/api/vault/login', {
+    const localVault = await request(address.port, 'POST', '/api/vault/login', {
       cookie,
       headers: access,
+      body: JSON.stringify({ domain: 'portal.example', username: 'ada', password: secret, save: true, profile: 'intelio' }),
+    });
+    assert.equal(localVault.status, 401);
+    assert.equal(localVault.body.includes(secret), false);
+    assert.equal(localVault.body.includes(KEY), false);
+    const keyed = { ...access, authorization: `Bearer ${KEY}` };
+    const saved = await request(address.port, 'POST', '/api/vault/login', {
+      cookie,
+      headers: keyed,
       body: JSON.stringify({ domain: 'portal.example', username: 'ada', password: secret, save: true, profile: 'intelio' }),
     });
     assert.equal(saved.status, 200);
     assert.match(saved.body, /"filled":true/);
     assert.equal(saved.body.includes(secret), false);
-    const list = await request(address.port, 'GET', '/api/vault/logins', { cookie, headers: access });
+    const list = await request(address.port, 'GET', '/api/vault/logins', { cookie, headers: keyed });
     assert.match(list.body, /portal\.example/);
     assert.match(list.body, /ada/);
     assert.equal(list.body.includes(secret), false);
     const fill = await request(address.port, 'POST', '/api/vault/fill', {
       cookie,
-      headers: access,
+      headers: keyed,
       body: JSON.stringify({ site: 'https://portal.example/login', profile: 'intelio' }),
     });
     assert.match(fill.body, /"filled":true/);
     assert.equal(fill.body.includes(secret), false);
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
+  }
+});
+
+test('vault routes require the profile key from this node and do not accept another profile key', async () => {
+  const os = require('node:os');
+  const intelioKey = 'intelio-profile-key-0001';
+  const prcKey = 'prc-profile-key-0000001';
+  const vaultRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-vault-auth-'));
+  fs.mkdirSync(path.join(vaultRoot, 'prc'));
+  const logs = [];
+  let identified = 0;
+  const app = createPwaServer({
+    bind: '127.0.0.1', port: 0, upstream: 'http://127.0.0.1:9', fetchImpl: globalThis.fetch,
+    vaultRoot,
+    profileOps: { keyFor: (id) => (id === 'prc' ? prcKey : intelioKey) },
+    identify: async () => { identified += 1; return { ok: true, login: 'inteliodev@github' }; },
+    log: (line) => logs.push(line),
+  });
+  const address = await app.listen();
+  const remoteLogs = [];
+  let remoteIdentified = 0;
+  const remote = createPwaServer({
+    bind: '127.0.0.1', port: 0, upstream: 'http://127.0.0.1:9', fetchImpl: globalThis.fetch,
+    vaultRoot,
+    profileOps: { keyFor: (id) => (id === 'prc' ? prcKey : intelioKey) },
+    selfCheck: async () => false,
+    identify: async () => { remoteIdentified += 1; return { ok: true, login: 'hayden@intelio.co' }; },
+    log: (line) => remoteLogs.push(line),
+  });
+  const remoteAddress = await remote.listen();
+  try {
+    const wrong = await request(address.port, 'GET', '/api/vault/logins', {
+      headers: { authorization: `Bearer ${intelioKey}`, 'x-intelio-profile': 'prc' },
+    });
+    assert.equal(wrong.status, 401);
+    assert.equal(identified, 0);
+    const missing = await request(address.port, 'GET', '/api/vault/logins', {
+      headers: { 'x-intelio-profile': 'prc' },
+    });
+    assert.equal(missing.status, 401);
+    assert.equal(identified, 0);
+    const ok = await request(address.port, 'GET', '/api/vault/logins', {
+      headers: { authorization: `Bearer ${prcKey}`, 'x-intelio-profile': 'prc' },
+    });
+    assert.equal(ok.status, 200);
+    assert.match(ok.body, /"logins":\[\]/);
+    const human = await request(remoteAddress.port, 'GET', '/api/vault/logins', {
+      headers: { 'x-intelio-profile': 'prc' },
+    });
+    assert.equal(human.status, 200);
+    assert.equal(remoteIdentified, 1);
+    const stillWrong = await request(remoteAddress.port, 'GET', '/api/vault/logins', {
+      headers: { authorization: `Bearer ${intelioKey}`, 'x-intelio-profile': 'prc' },
+    });
+    assert.equal(stillWrong.status, 401);
+    assert.equal(remoteIdentified, 1);
+    const spilled = [...logs, ...remoteLogs, wrong.body, missing.body, ok.body, human.body, stillWrong.body].join('\n');
+    assert.equal(spilled.includes(intelioKey), false);
+    assert.equal(spilled.includes(prcKey), false);
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+    await new Promise((resolve) => remote.server.close(resolve));
   }
 });
 

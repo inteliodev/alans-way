@@ -18,7 +18,7 @@ const { readBrandPng, scalePng } = require('../../desktop/src/intelio/png-icon.c
 const { createVoiceRuntime } = require('./voice.cjs');
 const { createVaultStore } = require('../../desktop/src/intelio/vault.cjs');
 const { fillLogin } = require('../../desktop/src/intelio/cdp-fill.cjs');
-const { normalizeIp, parseAllowlist, profileKeyPath, readProfileKey, createIdentity } = require('./identity.cjs');
+const { normalizeIp, isLoopbackAddress, peerIsLocal, parseAllowlist, profileKeyPath, readProfileKey, createIdentity } = require('./identity.cjs');
 const { renderOrbPng } = require('./orbs.cjs');
 const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
 
@@ -179,6 +179,7 @@ function createPwaServer({
   vaultRoot = process.env.INTELIO_VAULT_ROOT || '',
   filler = null,
   cdpImpl = null,
+  selfCheck = null,
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
@@ -333,16 +334,46 @@ function createPwaServer({
     if (!req.headers.origin) return false;
     return originOk(req);
   }
-  function profileKeyMatches(req, profileId) {
+  function presentedBearer(req) {
     const header = String(req.headers.authorization || '');
-    const match = /^Bearer\s+(\S+)$/.exec(header);
-    if (!match) return false;
+    if (!header.trim()) return { present: false, token: '' };
+    const match = /^Bearer\s+(\S+)$/i.exec(header.trim());
+    return { present: true, token: match ? match[1] : '' };
+  }
+  function keyEquals(token, profileId) {
     let expected = '';
     try { expected = bearerKey(profileId); } catch { return false; }
-    const left = Buffer.from(match[1]);
+    const left = Buffer.from(String(token || ''));
     const right = Buffer.from(expected);
     if (left.length !== right.length || left.length === 0) return false;
     return crypto.timingSafeEqual(left, right);
+  }
+  function hostAddresses() {
+    const found = [];
+    for (const entries of Object.values(os.networkInterfaces() || {})) {
+      for (const entry of entries || []) {
+        const address = normalizeIp(entry.address);
+        if (address && !found.includes(address)) found.push(address);
+      }
+    }
+    return found;
+  }
+  async function peerIsSelf(ip) {
+    if (selfCheck) return Boolean(await selfCheck(ip));
+    const address = normalizeIp(ip);
+    if (!address || isLoopbackAddress(address)) return true;
+    const hosts = hostAddresses();
+    if (hosts.includes(address)) return true;
+    let described = null;
+    try { described = await identity.describe(address); } catch { described = null; }
+    if (!described) return true;
+    return peerIsLocal({ address, whois: described.whois, self: described.self, hostIps: hosts });
+  }
+  function logVaultDenial(profileId, reason) {
+    const stamp = `vault|${profileId}|${reason}`;
+    if (denialLogAt.has(stamp) && now() - denialLogAt.get(stamp) <= 30000) return;
+    denialLogAt.set(stamp, now());
+    log(`intelio-pwa denied vault profile=${profileId} reason=${reason}`);
   }
   async function refreshVaultProfiles() {
     try {
@@ -578,7 +609,16 @@ function createPwaServer({
         const needsBody = req.method === 'POST' || req.method === 'DELETE';
         const body = needsBody ? await readBody(req, 8192) : {};
         const profileId = chosenProfile(req, body);
-        if (!profileKeyMatches(req, profileId)) {
+        const bearer = presentedBearer(req);
+        if (bearer.present) {
+          if (!keyEquals(bearer.token, profileId)) {
+            logVaultDenial(profileId, 'key');
+            return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+          }
+        } else if (await peerIsSelf(normalizeIp(req.socket.remoteAddress))) {
+          logVaultDenial(profileId, 'local');
+          return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+        } else {
           const session = await authorize(req, res);
           if (!session) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
         }

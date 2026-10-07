@@ -10,7 +10,8 @@
 #
 # --all walks existing X sockets on :20 and up. A missing display is skipped.
 # wmctrl is used only when it can see a window manager. Display :99 has none,
-# so wmctrl -m failing falls through to xdotool. A failed xdotool does not
+# so wmctrl -m failing falls through to xdotool. No Chromium window is logged
+# once when that state starts, for both tools. A failed xdotool does not
 # print success.
 #
 #   bash scripts/bot-desktop-maximize.sh :20
@@ -128,13 +129,30 @@ maximize_one() {
     return 0
   fi
   if command -v xdotool >/dev/null 2>&1; then
-    if xdotool search --class chromium windowmove 0 0 windowsize 1920 1080 \
-      || xdotool search --class Chromium windowmove 0 0 windowsize 1920 1080; then
+    note=""
+    found=1
+    for class in chromium Chromium; do
+      if note=$(xdotool search --class "$class" windowmove 0 0 windowsize 1920 1080 2>&1); then
+        found=0
+        break
+      fi
+    done
+    if [ "$found" -eq 0 ]; then
+      clear_missing "$display"
       if [ "$quiet" -eq 0 ]; then
         echo "Maximized Chromium on $display"
       fi
       return 0
     fi
+    # "no Chromium window found" (and xdotool's own empty search) is the
+    # missing state, logged once, same as wmctrl with an empty window list.
+    lowered=$(printf '%s' "$note" | tr '[:upper:]' '[:lower:]')
+    case "$lowered" in
+      *'no chromium window found'*|*'no windows'*|*'no search results'*|*'window not found'*|'')
+        log_missing "$display"
+        return 1
+        ;;
+    esac
     echo "xdotool failed on $display" >&2
     return 1
   fi

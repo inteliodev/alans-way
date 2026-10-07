@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { loginFromWhois, loginFromStatus, parseAllowlist, readProfileKey, createIdentity } = require('../../mobile/pwa/identity.cjs');
+const { loginFromWhois, loginFromStatus, parseAllowlist, readProfileKey, createIdentity, peerIsLocal, selfFromStatus } = require('../../mobile/pwa/identity.cjs');
 
 const digest = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 
@@ -29,6 +29,24 @@ test('profile key file must be mode 600 and is not logged', () => {
     fs.writeFileSync(file, Buffer.alloc(secret.length));
     fs.unlinkSync(file);
   }
+});
+
+test('this node is local and a different tailnet node is not', () => {
+  const self = selfFromStatus({ Self: { ID: '9', TailscaleIPs: ['192.0.2.10'] } });
+  assert.equal(peerIsLocal({ address: '127.0.0.1', self, hostIps: [] }), true);
+  assert.equal(peerIsLocal({ address: '192.0.2.10', self, hostIps: [] }), true);
+  assert.equal(peerIsLocal({
+    address: '192.0.2.10',
+    self: { id: '', ips: [] },
+    whois: { Node: { ID: '9', Addresses: ['192.0.2.10/32'] } },
+    hostIps: ['192.0.2.10'],
+  }), true);
+  assert.equal(peerIsLocal({
+    address: '192.0.2.20',
+    self,
+    whois: { Node: { ID: '44', Addresses: ['192.0.2.20/32'] }, UserProfile: { LoginName: 'owner@example' } },
+    hostIps: ['192.0.2.10'],
+  }), false);
 });
 
 test('identity allowlist denies unknown logins without calling them a key', async () => {

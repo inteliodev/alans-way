@@ -145,6 +145,8 @@ Repeat for `intelio`, `alignment`, `hhp`, and `kid-a`, each with its own port. `
 
 The filler types only into a tab whose host is the saved domain or a subdomain of it. If none match, it types nothing. It reads the tab URL again before each field, and stops if the page has navigated away. Submit (`POST /api/vault/login`) and `POST /api/vault/fill` use that same check.
 
+Every `/api/vault/` route checks the profile key before Tailscale identity. A request that sends a bearer token must match that profile’s key exactly. A wrong key, including another profile’s key, is 401 and does not fall through. A request from this VPS (loopback, one of its own addresses, or its own tailnet node) must send that key. Tailscale identity is only the fallback for a remote allowlisted device, such as Hayden’s phone or laptop. Denials log the profile and the reason. They do not log the key.
+
 The maximize watcher clears `XAUTHORITY` before each display, so a display without `bot-desktop/Xauthority` does not keep the previous display’s file. `No Chromium window` is logged when that state starts, not on every 2 second pass.
 
 The toolset name is `intelio`. Each profile has its own `~/.hermes/profiles/<profile>/config.yaml`. `platform_toolsets` is the allowlist the model sees. `known_plugin_toolsets` only records which plugin toolsets `hermes tools` has already shown; a toolset listed there and missing from `platform_toolsets` stays off. Add `intelio` under every platform key that profile already has. Do not put it only in `known_plugin_toolsets`.
@@ -168,7 +170,7 @@ Keep the toolsets already in that file and add `intelio` to each of them. If the
 
 `scripts/intelio-bot-desktop-maximize.service` sets `INTELIO_HARNESS_DIR` to `%h/intelio/alans-way-pwa`, the VPS checkout that contains `scripts/bot-desktop-maximize.sh`. Change that variable if the script lives somewhere else.
 
-Hermes writes `bot-desktop/display` as `20` or `21` with no colon. The maximize script adds `:` before it matches that file to an X socket, so `XAUTHORITY` is the profile’s `bot-desktop/Xauthority`. `wmctrl` is used only when `wmctrl -m` sees a window manager. Display `:99` has none, and then the script uses xdotool.
+Hermes writes `bot-desktop/display` as `20` or `21` with no colon. The maximize script adds `:` before it matches that file to an X socket, so `XAUTHORITY` is the profile’s `bot-desktop/Xauthority`. `wmctrl` is used only when `wmctrl -m` sees a window manager. Display `:99` has none, and then the script uses xdotool. `no Chromium window found` from xdotool is the same missing state as an empty wmctrl list: `No Chromium window` is logged once when that state starts.
 
 The plugin does not call `http://127.0.0.1:8643`. The phone client listens on `https://<tailnet-host>:8643` when `~/.config/intelio/pwa.env` sets `INTELIO_PWA_CERT` and `INTELIO_PWA_KEY` (otherwise `http` on `INTELIO_PWA_BIND`). `fill_saved_login` reads that file. `INTELIO_FILLER_URL` overrides it. Pin it with a gateway drop-in so the user service does not depend on the file being readable:
 
@@ -230,7 +232,7 @@ User unit drop-in:
 LoadCredentialEncrypted=vault.key.hhp:/etc/credstore.encrypted/intelio-vault-hhp
 ```
 
-Bot Desktop maximize reads `~/.hermes/profiles/<profile>/bot-desktop/display` (`20` or `:20`) and sets `XAUTHORITY` to that profile’s `bot-desktop/Xauthority`. It walks only X sockets that exist, uses wmctrl when `wmctrl -m` sees a window manager, and uses xdotool when it does not (`:99`). It does not print success when xdotool fails. The watcher is a user unit:
+Bot Desktop maximize reads `~/.hermes/profiles/<profile>/bot-desktop/display` (`20` or `:20`) and sets `XAUTHORITY` to that profile’s `bot-desktop/Xauthority`. It walks only X sockets that exist, uses wmctrl when `wmctrl -m` sees a window manager, and uses xdotool when it does not (`:99`). No Chromium window, including xdotool’s `no Chromium window found`, is logged once when that state starts. It does not print success when xdotool fails. The watcher is a user unit:
 
 ```sh
 mkdir -p ~/.config/systemd/user
