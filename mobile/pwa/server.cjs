@@ -663,6 +663,8 @@ function createPwaServer({
       description: String(item.description || '').slice(0, 240),
       status: item.status || 'online',
       orb: String(item.orb || '').slice(0, 40),
+      color: cleanColor(item.color),
+      title: String(item.title || '').slice(0, 80),
       needsSignIn: item.needsSignIn === true,
       gatewayNote: String(item.gatewayNote || '').slice(0, 160),
     })).filter((item) => item.id && item.id !== 'default' && !excludedAgent(item.id));
@@ -817,6 +819,28 @@ function createPwaServer({
       });
     }
     return rows.slice(0, 12);
+  }
+  async function placeOwnerCall() {
+    const sid = String(process.env.TWILIO_ACCOUNT_SID || '').trim();
+    const token = String(process.env.TWILIO_AUTH_TOKEN || '').trim();
+    const from = String(process.env.TWILIO_FROM || '').trim();
+    if (!sid || !token || !from) return false;
+    const voice = `${String(process.env.PHONE_PUBLIC_BASE || 'https://2-24-110-12.sslip.io/twilio').replace(/\/$/, '')}/voice`;
+    const payload = new URLSearchParams({ To: '+19188991650', From: from, Url: voice });
+    try {
+      const response = await fetchImpl(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Calls.json`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: payload,
+        redirect: 'error',
+      });
+      return Boolean(response && response.ok);
+    } catch {
+      return false;
+    }
   }
   function cardFromFiles(id, files, jobs) {
     return buildCard({
@@ -1084,6 +1108,7 @@ function createPwaServer({
             title: body.title || body.role || '',
             soul: body.soul || body.instructions || '',
             orb: body.orb || '',
+            color: body.color || '',
             home: profileHome,
             run: profileRun,
           });
@@ -1106,6 +1131,17 @@ function createPwaServer({
         if (profileOps && profileOps.restart) await profileOps.restart();
         else await restartGateway({ run: profileRun });
         return send(res, 200, { ok: true });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/phone/call') {
+        if (!presentedBearer(req).present && !mutationOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
+        const body = await readBody(req, 2048);
+        const id = harnessId(chosenProfile(req, body));
+        if (!id || excludedAgent(id)) return send(res, 404, { error: 'Unknown agent.' });
+        const files = readProfileFiles(vaultRootPath, id);
+        const card = files ? cardFromFiles(id, files, { list: [] }) : buildCard({ id, computer: { status: 'stopped' } });
+        if (!card || card.phoneSoon) return send(res, 200, { ready: false });
+        const placed = await placeOwnerCall();
+        return send(res, 200, { ready: placed === true });
       }
       if (req.method === 'GET' && url.pathname === '/api/voice') {
         return send(res, 200, await voiceStatus());

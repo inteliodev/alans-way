@@ -5,7 +5,7 @@
  * as the phone PWA: /api/home (or /api/profiles) and /p/<profile>/api/sessions.
  * Each profile is called with that profile's own API key.
  */
-const { signatureOf } = require('./orb-signature.cjs');
+const { signatureOf, ORB_IDS } = require('./orb-signature.cjs');
 const { createRemoteHermesClient, normalizeRemoteConfig, selectFetch, PROFILE_RE } = require('./remote-hermes.cjs');
 
 const NAMED_AGENTS = [
@@ -66,7 +66,7 @@ function canonicalName(id, provided) {
   return raw || titleCase(id);
 }
 
-const ORBS = new Set(['connecting', 'solving', 'searching', 'weaving', 'working', 'listening', 'breathing', 'shaping']);
+const ORBS = new Set(ORB_IDS);
 
 function excludedAgent(id) {
   const slug = String(id || '').trim().toLowerCase();

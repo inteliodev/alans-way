@@ -37,24 +37,68 @@
   }
 
   const PALETTE = ['#7a5cff', '#1d4ed8', '#059669', '#0f766e', '#7c3aed', '#db2777', '#0369a1', '#44403c'];
+  const ORB_STYLES = [
+    ['connecting', 'Connecting'],
+    ['solving', 'Solving'],
+    ['searching', 'Searching'],
+    ['weaving', 'Weaving'],
+    ['working', 'Working'],
+    ['listening', 'Listening'],
+    ['breathing', 'Breathing'],
+    ['shaping', 'Shaping'],
+    ['composing', 'Composing'],
+  ];
 
-  function colorPicker(card, actions) {
-    const wrap = el('div', 'color-picker');
+  function appearancePicker(card, actions) {
+    const wrap = el('div', 'appearance-picker');
+    wrap.append(el('p', 'picker-label', 'Orb'));
+    const gallery = el('div', 'orb-gallery');
+    gallery.setAttribute('role', 'listbox');
+    gallery.setAttribute('aria-label', 'Orb style');
+    const current = String(actions.orb || card.orb || '').trim().toLowerCase();
+    for (const [id, label] of ORB_STYLES) {
+      const button = el('button', 'orb-choice');
+      button.type = 'button';
+      button.dataset.orb = id;
+      button.setAttribute('aria-label', label);
+      button.setAttribute('aria-pressed', String(id === current));
+      const canvas = el('canvas');
+      canvas.width = 36;
+      canvas.height = 36;
+      canvas.dataset.orb = id;
+      if (root.ThinkingOrbs) {
+        root.ThinkingOrbs.mount(canvas, { state: id, display: 36, size: 64, paused: true, speed: 1, accent: card.color || actions.accent || '' });
+      }
+      button.append(canvas, el('span', 'orb-label', label));
+      button.addEventListener('click', () => actions.onOrb?.(id));
+      gallery.append(button);
+    }
+    wrap.append(gallery);
+    wrap.append(el('p', 'picker-label', 'Color'));
+    const colors = el('div', 'color-picker');
     for (const color of PALETTE) {
       const button = el('button', 'swatch');
       button.type = 'button';
+      button.dataset.color = color;
       button.style.background = color;
       button.setAttribute('aria-label', color);
+      button.setAttribute('aria-pressed', String(String(card.color || '').toLowerCase() === color));
       button.addEventListener('click', () => actions.onColor?.(color));
-      wrap.append(button);
+      colors.append(button);
     }
     const hex = el('input', 'hex-input');
     hex.value = card.color || '';
     hex.maxLength = 7;
     hex.setAttribute('aria-label', 'Custom color');
     hex.addEventListener('change', () => actions.onColor?.(hex.value.trim()));
-    wrap.append(hex);
+    colors.append(hex);
+    wrap.append(colors);
     return wrap;
+  }
+
+  function mountPicker(host, options = {}) {
+    if (!host) return;
+    host.replaceChildren(appearancePicker({ color: options.color || '', orb: options.orb || '' }, options));
   }
 
   function mount(host, card, actions = {}) {
@@ -66,13 +110,15 @@
     const head = el('header', 'agent-head');
     const orbHit = el('button', 'orb-hit');
     orbHit.type = 'button';
-    orbHit.setAttribute('aria-label', 'Change color');
+    orbHit.setAttribute('aria-label', 'Change orb and color');
     const orb = el('canvas', 'agent-orb');
     orb.width = 72;
     orb.height = 72;
     if (root.ThinkingOrbs && actions.orb) {
       root.ThinkingOrbs.mount(orb, { state: actions.orb, display: 72, size: 64, paused: true, speed: 1, accent: card.color || actions.accent || '' });
     }
+    orb.dataset.orb = actions.orb || '';
+    orb.dataset.accent = card.color || actions.accent || '';
     orbHit.append(orb);
     orbHit.addEventListener('click', () => actions.onPickColor?.());
     const titles = el('div', 'agent-titles');
@@ -101,7 +147,7 @@
     tools.append(message, call, video, email);
     head.append(orbHit, titles, tools);
     page.append(head);
-    if (actions.picking) page.append(colorPicker(card, actions));
+    if (actions.picking) page.append(appearancePicker(card, actions));
     if (card.needsSignIn) page.append(el('p', 'agent-note', 'Needs sign-in'));
     if (card.gatewayNote) page.append(el('p', 'agent-muted', card.gatewayNote));
 
@@ -332,5 +378,5 @@
     return wrap;
   }
 
-  root.IntelioAgentCard = { mount, copyText };
+  root.IntelioAgentCard = { mount, copyText, mountPicker, styles: ORB_STYLES };
 }(typeof window !== 'undefined' ? window : globalThis));

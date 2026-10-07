@@ -152,14 +152,20 @@ test('the phone card route reads the profile files and refuses a cross-origin wr
       body: JSON.stringify({ profile: 'intelio', color: '#ffff00' }),
     });
     assert.equal(yellow.status, 400);
+    const phone = await request(address.port, 'POST', '/api/phone/call', {
+      origin,
+      body: JSON.stringify({ profile: 'intelio' }),
+    });
+    assert.equal(phone.status, 200);
+    assert.equal(JSON.parse(phone.body).ready, false);
     const screens = await request(address.port, 'GET', '/api/screens');
     assert.equal(screens.status, 200);
     assert.equal(JSON.parse(screens.body).data[0].host, 'google.com');
-    assert.match(sw, /intelio-pwa-16/);
+    assert.match(sw, /intelio-pwa-17/);
     assert.match(sw, /skipWaiting/);
     assert.match(sw, /clients\.claim/);
     assert.match(sw, /cache\.put/);
-    assert.match(page, /intelio-pwa-14/);
+    assert.match(page, /intelio-pwa-15/);
     assert.match(page, /New version\. Tap to reload\./);
     assert.match(page, /Manage in Vault/);
   } finally {

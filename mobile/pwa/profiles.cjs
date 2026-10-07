@@ -11,11 +11,12 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
-const { excludedAgent } = require('../../desktop/src/intelio/agent-card.cjs');
+const { excludedAgent, cleanColor } = require('../../desktop/src/intelio/agent-card.cjs');
+const { ORB_IDS } = require('../../desktop/src/intelio/orb-signature.cjs');
 
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 const TEMPLATE = 'intelio';
-const ORBS = ['connecting', 'solving', 'searching', 'weaving', 'working', 'listening', 'breathing', 'shaping'];
+const ORBS = ORB_IDS;
 const GATEWAY_NOTE = 'Ready after the next agent restart';
 const SIGN_IN_NOTE = 'Needs sign-in. This profile has no model credential of its own. The ChatGPT/Codex login stays in ~/.hermes/auth.json, which this app does not read, copy, or change, and it does not run hermes auth. Sign in on the VPS for this agent.';
 const SHARED_PROVIDERS = new Set(['openai-codex', 'openai_codex', 'codex', 'chatgpt']);
@@ -104,6 +105,8 @@ function listProfiles({ home = os.homedir(), run = runCommand, fsImpl = fs } = {
         description: readDescription(path.join(root, id), fsImpl),
         status: 'online',
         orb: marker.orb,
+        color: marker.color,
+        title: marker.title,
         needsSignIn: marker.needsSignIn,
         gatewayNote: marker.gatewayNote,
       };
@@ -117,12 +120,13 @@ function readMarker(dir, fsImpl) {
     const orb = ORBS.includes(parsed?.orb) ? parsed.orb : '';
     return {
       orb,
+      color: cleanColor(parsed?.color),
       needsSignIn: parsed?.needsSignIn === true,
       gatewayNote: String(parsed?.gatewayNote || '').slice(0, 160),
       title: String(parsed?.title || '').slice(0, 80),
     };
   } catch {
-    return { orb: '', needsSignIn: false, gatewayNote: '', title: '' };
+    return { orb: '', color: '', needsSignIn: false, gatewayNote: '', title: '' };
   }
 }
 
@@ -205,7 +209,7 @@ function dropFile(fsImpl, file) {
   try { fsImpl.unlinkSync(file); } catch { /* absent */ }
 }
 
-function shapeProfile({ home, slug, title, soul, orb, fsImpl }) {
+function shapeProfile({ home, slug, title, soul, orb, color = '', fsImpl }) {
   const root = path.join(home, '.hermes', 'profiles');
   const dir = path.join(root, slug);
   const templateFile = path.join(root, TEMPLATE, 'config.yaml');
@@ -225,9 +229,11 @@ function shapeProfile({ home, slug, title, soul, orb, fsImpl }) {
   if (instructions) fsImpl.writeFileSync(path.join(dir, 'SOUL.md'), `${instructions}\n`, { mode: 0o600 });
   const role = cleanDescription(title);
   const chosen = cleanOrb(orb, slug);
+  const tint = cleanColor(color);
   const marker = {
     title: role,
     orb: chosen,
+    ...(tint ? { color: tint } : {}),
     needsSignIn,
     gatewayNote: GATEWAY_NOTE,
   };
@@ -266,6 +272,7 @@ async function createProfile({
   title = '',
   soul = '',
   orb = '',
+  color = '',
   home = os.homedir(),
   run = runCommand,
   fsImpl = fs,
@@ -287,7 +294,7 @@ async function createProfile({
   const describeArgs = ['profile', 'describe', slug];
   if (summary) describeArgs.push('--text', summary);
   await run('hermes', describeArgs);
-  const shaped = shapeProfile({ home, slug, title: summary, soul, orb, fsImpl });
+  const shaped = shapeProfile({ home, slug, title: summary, soul, orb, color, fsImpl });
   writeFreshKey(path.join(dir, '.env'), fsImpl);
   return {
     id: slug,

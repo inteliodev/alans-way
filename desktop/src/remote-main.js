@@ -218,6 +218,8 @@
     canvas.height = px;
     canvas.className = 'orb';
     canvas.dataset.profile = id;
+    canvas.dataset.orb = orb || signatureOf(id);
+    canvas.dataset.accent = accent || accentOf(id);
     if (root.ThinkingOrbs) {
       root.ThinkingOrbs.mount(canvas, { state: orb, display: px, size: 64, paused, speed: paused ? 1 : 0.42, accent: accent || accentOf(id) });
     }
@@ -682,12 +684,75 @@
   function paintCall() {
     const api = callsApi();
     const pill = $('call-pill');
-    const button = $('remote-call');
+    const button = $('remote-voice');
     if (!api || !pill) return;
     const text = api.callPill(ui.call);
     pill.classList.toggle('hidden', !text);
     pill.textContent = text;
-    if (button) button.textContent = ui.call?.active ? 'End' : 'Call';
+    if (button) {
+      button.setAttribute('aria-pressed', String(Boolean(ui.call?.active)));
+      button.title = ui.call?.active ? 'End voice conversation' : 'Voice conversation';
+      button.setAttribute('aria-label', button.title);
+    }
+  }
+
+  function showInline(id, text) {
+    const note = $(id);
+    if (!note) return;
+    note.textContent = text || '';
+    note.classList.toggle('hidden', !text);
+  }
+
+  function dictate() {
+    const input = $('remote-input');
+    const Rec = root.SpeechRecognition || root.webkitSpeechRecognition;
+    if (!input || !Rec) {
+      showInline('composer-note', 'Dictation is not available in this window.');
+      return;
+    }
+    if (ui.recognizer) {
+      try { ui.recognizer.stop(); } catch { /* already stopped */ }
+      ui.recognizer = null;
+      return;
+    }
+    const rec = new Rec();
+    rec.lang = 'en-US';
+    rec.interimResults = false;
+    rec.onresult = (event) => {
+      const text = String(event.results?.[0]?.[0]?.transcript || '').trim();
+      if (!text) return;
+      input.value = `${input.value ? `${input.value.trim()} ` : ''}${text}`;
+      input.focus();
+      showInline('composer-note', '');
+    };
+    rec.onerror = () => showInline('composer-note', 'Dictation is not available in this window.');
+    rec.onend = () => { ui.recognizer = null; };
+    ui.recognizer = rec;
+    try { rec.start(); } catch { showInline('composer-note', 'Dictation is not available in this window.'); }
+  }
+
+  async function callPhone() {
+    const api = root.remoteHermes;
+    let ready = false;
+    try {
+      const result = await api?.request?.('phone-call', { profile: ui.selected || 'intelio' });
+      ready = result?.ready === true;
+    } catch { ready = false; }
+    if (!ready) showInline('phone-note', 'Phone line not set up yet');
+    else showInline('phone-note', '');
+  }
+
+  function applyLook(patch = {}) {
+    const id = String(patch.id || '').trim().toLowerCase();
+    if (!id) return;
+    ui.agents = ui.agents.map((agent) => (agent.id === id ? {
+      ...agent,
+      color: patch.color != null ? patch.color : agent.color,
+      orb: patch.orb || agent.orb,
+      title: patch.title != null ? patch.title : agent.title,
+      name: patch.name || agent.name,
+    } : agent));
+    paintAgents();
   }
 
   function stopMic() {
@@ -927,10 +992,12 @@
     ui.wired = true;
     const form = $('remote-composer');
     form?.addEventListener('submit', send);
-    const call = $('remote-call');
-    if (call) call.onclick = () => toggleCall();
+    const voice = $('remote-voice');
+    if (voice) voice.onclick = () => toggleCall();
+    const mic = $('remote-mic');
+    if (mic) mic.onclick = () => dictate();
     const headerCall = $('chat-call');
-    if (headerCall) headerCall.onclick = () => toggleCall();
+    if (headerCall) headerCall.onclick = () => callPhone();
     $('tab-agents')?.addEventListener('click', () => setSidebar('agents'));
     $('tab-sessions')?.addEventListener('click', () => setSidebar('sessions'));
     $('session-search')?.addEventListener('input', (event) => { ui.sessionQuery = event.target.value || ''; paintAllSessions(); });
@@ -1136,6 +1203,6 @@
   return {
     signatureOf, accentOf, switcherRows, seedAgents, remoteConfigured, chooseSidebar, sessionAt, sessionRows, SAMPLE,
     sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => { const agent = selectedAgent(); return agent ? shownAgent(agent.id, agent.name) : ''; }, selectedId: () => ui.selected || '',
-    presentBops, focusBops, stopBops, actBops, pushFrame, toggleCall, bopsEffect: () => ui.lastEffect,
+    presentBops, focusBops, stopBops, actBops, pushFrame, toggleCall, applyLook, bopsEffect: () => ui.lastEffect,
   };
 });

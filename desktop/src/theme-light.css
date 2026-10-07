@@ -35,6 +35,7 @@ html[data-theme="light"] .field textarea,
 html[data-theme="light"] .field select { background: #ffffff; color: #1c1c21; border-color: #d5d5dc; }
 html[data-theme="light"] .side-bottom { border-top-color: #e4e4e8; }
 html[data-theme="light"] .theme-toggle { background: #ffffff; color: #1c1c21; border-color: #d5d5dc; }
+html[data-theme="light"] body.remote-main #chat-call { background: #fff; color: #1c1c21; border-color: #e4e4e8; }
 html[data-theme="light"] .chat-pill { background: #ffffff; border-color: #e4e4e8; color: #1c1c21; }
 html[data-theme="light"] .remote-chat { background: #fff; }
 html[data-theme="light"] .remote-sessions,

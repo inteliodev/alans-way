@@ -126,16 +126,59 @@ body.remote-main .side-title { display: none; }
 .thread-line.active { background: #ececef; }
 .thread-dot { width: 8px; height: 8px; margin-left: auto; border-radius: 50%; background: #7a5cff; flex: none; }
 .sidebar-threads { list-style: none; }
-body.remote-main .chat-header { position: relative; justify-content: center; min-height: 84px; }
-body.remote-main .chat-pill { position: relative; flex-direction: column; align-items: center; margin-top: 18px; padding: 22px 18px 8px; border-radius: 16px; background: #fff; color: #111113; box-shadow: 0 8px 20px rgba(28, 32, 48, 0.08); }
-body.remote-main #chat-avatar { position: absolute; top: -18px; }
+body.remote-main .chat-header { position: relative; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; grid-template-areas: "toggle pill call" "note note note"; align-items: start; justify-content: stretch; height: auto; min-height: 104px; padding: 8px 8px 4px; overflow: visible; }
+body.remote-main .bots-hidden .chat-header { grid-template-columns: 92px minmax(0, 1fr) 48px; }
+body.remote-main .chat-pill { position: relative; grid-area: pill; justify-self: center; align-self: start; flex-direction: column; align-items: center; width: max-content; max-width: 100%; min-width: 0; margin: 22px 0 0; padding: 22px 18px 8px; border-radius: 16px; background: #fff; color: #111113; box-shadow: 0 8px 20px rgba(28, 32, 48, 0.08); z-index: 1; }
+body.remote-main #chat-avatar { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); }
+body.remote-main .chat-id { min-width: 0; max-width: 100%; text-align: center; }
+body.remote-main #chat-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
 body.remote-main .chat-role { display: block; color: #6e6e73; font-size: 12px; font-weight: 400; }
-body.remote-main #bots-toggle { position: absolute; left: 12px; right: auto; top: 14px; z-index: 4; }
-body.remote-main .bots-hidden #bots-toggle { left: 80px; }
-body.remote-main #chat-call { position: absolute; left: auto; right: 14px; top: 14px; width: 36px; height: 36px; border-radius: 50%; border: 1px solid #e4e4e8; background: #fff; color: #1c1c21; z-index: 4; }
-body.remote-main .bots-hidden #chat-call { left: auto; right: 14px; }
+body.remote-main .chat-header > #bots-toggle,
+body.remote-main .chat-header > #chat-call { position: static; left: auto; right: auto; top: auto; width: 36px; height: 36px; margin: 6px auto 0; z-index: 3; }
+body.remote-main .chat-header > #bots-toggle { grid-area: toggle; justify-self: start; }
+body.remote-main .bots-hidden .chat-header > #bots-toggle { margin-left: 64px; }
+body.remote-main #chat-call { grid-area: call; justify-self: end; border-radius: 50%; border: 1px solid #3a3a44; background: #1c1c21; color: #f4f4f8; }
+body.remote-main .phone-note { grid-area: note; margin: 4px 8px 0; text-align: center; }
+.phone-note, .composer-note { margin: 0 12px 8px; font-size: 12px; color: #6e6e73; text-align: center; }
+.side-bottom { display: flex; align-items: center; justify-content: flex-start; gap: 4px; margin-top: auto; flex-shrink: 0; padding: 8px 10px 12px; }
+.side-bottom .theme-toggle { width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; padding: 0; flex: none; }
+.side-bottom .theme-toggle svg { width: 16px; height: 16px; }
+body.remote-main .remote-composer { display: flex; align-items: center; gap: 6px; }
+body.remote-main .remote-composer input { flex: 1; min-width: 0; height: 40px; }
+body.remote-main .remote-composer .icon-button { width: 36px; height: 36px; border-radius: 50%; flex: none; }
+body.remote-main #remote-send { background: #1c1c21; color: #fff; }
+.modal.agent-open { align-items: flex-end; }
+.modal-card.agent-dialog { width: min(440px, calc(100vw - 16px)); max-height: min(92vh, 720px); display: flex; flex-direction: column; overflow: hidden; padding: 16px 16px 12px; border-radius: 18px 18px 0 0; }
+.modal-card.agent-dialog #modal-body { overflow: auto; min-height: 0; }
+.agent-form { display: flex; flex-direction: column; gap: 12px; }
+.agent-form .field { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.agent-form .field-label, .picker-label { font-size: 12px; font-weight: 650; color: #3a3a44; }
+.agent-form input, .agent-form textarea, .modal-card.agent-dialog input, .modal-card.agent-dialog textarea { width: 100%; height: 40px; border-radius: 12px; border: 1px solid #d5d5dc; background: #fff; color: #1c1c21; padding: 0 12px; font: inherit; font-size: 14px; }
+.agent-form textarea, .modal-card.agent-dialog textarea { height: auto; min-height: 96px; padding: 10px 12px; resize: vertical; }
+.orb-loading { margin: 0; color: #6e6e73; font-size: 13px; }
+.orb-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.orb-choice { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 72px; padding: 8px 4px; border-radius: 12px; border: 1px solid #e4e4e8; background: #fff; color: #1c1c21; }
+.orb-choice[aria-pressed="true"] { box-shadow: inset 0 0 0 2px #7a5cff; }
+.orb-label { font-size: 11px; }
+.appearance-picker { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 8px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.dialog-actions .primary-button, .dialog-actions .secondary-button { margin: 0; }
+@media (min-width: 720px) {
+  .modal.agent-open { align-items: center; }
+  .modal-card.agent-dialog { border-radius: 18px; max-height: min(85vh, 720px); }
+}
 .color-picker { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 16px; }
 .swatch { width: 28px; height: 28px; border-radius: 50%; border: 0; }
 .orb-hit { border: 0; background: transparent; padding: 0; cursor: pointer; }
 .profile-editor, .edit-field { display: flex; flex-direction: column; gap: 6px; }
 .edit-field input, .edit-field textarea, .hex-input { font: inherit; font-size: 14px; border: 1px solid #e4e4e8; border-radius: 10px; padding: 8px 10px; }
+html[data-theme="dark"] body.remote-main .chat-pill,
+html[data-theme="dark"] .lead-card,
+html[data-theme="dark"] .orb-choice { background: #1c1c21; color: #f4f4f8; }
+html[data-theme="dark"] .agent-form input,
+html[data-theme="dark"] .agent-form textarea,
+html[data-theme="dark"] .modal-card.agent-dialog input,
+html[data-theme="dark"] .modal-card.agent-dialog textarea,
+html[data-theme="dark"] .hex-input { background: #16161a; color: #f4f4f8; border-color: #3a3a44; }
+html[data-theme="dark"] .agent-form .field-label,
+html[data-theme="dark"] .picker-label { color: #c5c5d0; }

@@ -113,6 +113,9 @@
       monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
       lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
       eye: '<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+      moon: '<path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/>',
+      sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+      waveform: '<path d="M3 12h2M7 8v8M11 5v14M15 8v8M19 10v4"/>',
     };
     const wrap = el('span', 'ico');
     wrap.innerHTML = `<svg viewBox="0 0 24 24">${paths[name] || ''}</svg>`;
@@ -204,7 +207,8 @@
   };
   const OPEN_TYPES = ['working', 'listening', 'breathing', 'shaping'];
 
-  const ORB_CHOICES = ['connecting', 'solving', 'searching', 'weaving', 'working', 'listening', 'breathing', 'shaping'];
+  const ORB_CHOICES = ['connecting', 'solving', 'searching', 'weaving', 'working', 'listening', 'breathing', 'shaping', 'composing'];
+  const ORB_LABELS = { connecting: 'Connecting', solving: 'Solving', searching: 'Searching', weaving: 'Weaving', working: 'Working', listening: 'Listening', breathing: 'Breathing', shaping: 'Shaping', composing: 'Composing' };
   function excludedAgent(id) {
     const slug = String(id || '').trim().toLowerCase();
     const compact = slug.replace(/[\s_]+/g, '-');
@@ -251,7 +255,7 @@
     if (name.toLowerCase() === 'intelio') return 'intelio';
     return name || 'intelio';
   }
-  const CLIENT_VERSION = 'intelio-pwa-14';
+  const CLIENT_VERSION = 'intelio-pwa-15';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);
@@ -305,6 +309,21 @@
 
   function currentTheme() {
     return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  }
+
+  function themeIconButton() {
+    const light = currentTheme() === 'light';
+    const button = el('button', 'iconbtn theme-toggle');
+    button.type = 'button';
+    button.id = 'theme-toggle';
+    button.title = light ? 'Dark mode' : 'Light mode';
+    button.setAttribute('aria-label', button.title);
+    button.append(icon(light ? 'moon' : 'sun'));
+    button.addEventListener('click', () => {
+      setTheme(light ? 'dark' : 'light', true);
+      render();
+    });
+    return button;
   }
 
   function setTheme(mode, persist) {
@@ -505,14 +524,17 @@
     if (state.view === 'chat') {
       const back = el('button', 'iconbtn');
       back.type = 'button';
+      back.classList.add('chat-back');
       back.setAttribute('aria-label', 'Back');
       back.append(icon('back'));
       back.addEventListener('click', () => { haptic(); state.view = 'home'; state.tab = 'sessions'; render(); });
       const call = el('button', 'iconbtn');
       call.type = 'button';
-      call.setAttribute('aria-label', `Call ${agentLabel(state.bot)}`);
+      call.classList.add('chat-phone');
+      call.title = 'Call my phone';
+      call.setAttribute('aria-label', 'Call my phone');
       call.append(icon('phone'));
-      call.addEventListener('click', () => { if (state.chatId) startCall(state.chatId); });
+      call.addEventListener('click', () => { haptic(); callMyPhone(); });
       const hero = el('button', 'chat-hero');
       hero.type = 'button';
       hero.append(face(state.bot, 'avatar sm'));
@@ -522,6 +544,11 @@
       hero.append(card);
       hero.addEventListener('click', () => { haptic(); openBrowser('agent'); });
       bar.append(back, hero, call);
+      if (state.phoneNote) {
+        const note = el('p', 'phone-note', state.phoneNote);
+        note.id = 'phone-note';
+        bar.append(note);
+      }
       return bar;
     }
     const menu = el('button', 'iconbtn');
@@ -688,21 +715,19 @@
     input.id = 'ask';
     input.placeholder = `Ask ${agentLabel(state.bot)}`;
     input.autocomplete = 'off';
-    const ptt = roundButton('mic', () => {});
-    ptt.id = 'ptt';
-    ptt.setAttribute('aria-label', state.call.active ? 'Mute microphone' : 'Hold to talk');
-    ptt.addEventListener('pointerdown', (event) => {
-      if (state.call.active) { state.call.muted = !state.call.muted; paintCallbar(); return; }
-      event.preventDefault();
-      ptt.setPointerCapture(event.pointerId);
-      beginPtt(ptt);
-    });
-    ptt.addEventListener('pointerup', () => endPtt());
-    ptt.addEventListener('pointercancel', () => endPtt());
+    const mic = roundButton('mic', () => dictateIntoBox(mic));
+    mic.id = 'dictate';
+    mic.title = 'Dictate';
+    mic.setAttribute('aria-label', 'Dictate');
+    const voice = roundButton('waveform', () => { if (state.chatId) startCall(state.chatId); });
+    voice.title = 'Voice conversation';
+    voice.setAttribute('aria-label', 'Voice conversation');
     const send = roundButton('send', () => {});
     send.classList.add('send');
     send.type = 'submit';
-    form.append(plus, input, ptt, send);
+    send.title = 'Send';
+    send.setAttribute('aria-label', 'Send');
+    form.append(plus, input, mic, voice, send);
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       const text = input.value.trim();
@@ -739,13 +764,9 @@
     gear.setAttribute('aria-label', 'Settings');
     gear.append(icon('gear'));
     gear.addEventListener('click', () => openSettings());
-    head.append(gear);
-    const appearance = el('button', 'theme-toggle');
-    appearance.type = 'button';
-    appearance.textContent = currentTheme() === 'light' ? 'Light' : 'Dark';
-    appearance.setAttribute('aria-label', currentTheme() === 'light' ? 'Switch to dark' : 'Switch to light');
-    appearance.addEventListener('click', () => { setTheme(currentTheme() === 'light' ? 'dark' : 'light', true); render(); });
-    head.append(appearance);
+    const tools = el('span', 'drawer-tools');
+    tools.append(themeIconButton(), gear);
+    head.append(tools);
     panel.append(head);
     const agentHead = el('div', 'kicker-row');
     agentHead.append(el('div', 'kicker', 'AGENTS'));
@@ -911,14 +932,31 @@
   }
 
   function colorPicker(card) {
-    const wrap = el('div', 'color-picker');
+    const wrap = el('div', 'appearance-picker');
+    wrap.append(el('p', 'picker-label', 'Orb'));
+    const gallery = el('div', 'orb-gallery');
+    gallery.setAttribute('aria-label', 'Orb style');
+    const current = signatureOf(card);
+    for (const id of ORB_CHOICES) {
+      const choice = el('button', 'orb-choice');
+      choice.type = 'button';
+      choice.dataset.orb = id;
+      choice.setAttribute('aria-label', ORB_LABELS[id] || id);
+      choice.setAttribute('aria-pressed', String(id === current));
+      choice.append(face({ ...card, orb: id }, 'pip', { still: true, pinned: true }), el('span', 'orb-label', ORB_LABELS[id] || id));
+      choice.addEventListener('click', () => postProfile('/api/agent/profile', { orb: id }));
+      gallery.append(choice);
+    }
+    wrap.append(gallery);
+    wrap.append(el('p', 'picker-label', 'Color'));
+    const colors = el('div', 'color-picker');
     for (const color of COLOR_SWATCHES) {
       const swatch = el('button', 'swatch');
       swatch.type = 'button';
       swatch.style.background = color;
       swatch.setAttribute('aria-label', color);
       swatch.addEventListener('click', () => postProfile('/api/agent/profile', { color }));
-      wrap.append(swatch);
+      colors.append(swatch);
     }
     const hex = document.createElement('input');
     hex.className = 'hex-input';
@@ -931,7 +969,8 @@
       if (/^#[0-9a-fA-F]{6}$/.test(value)) postProfile('/api/agent/profile', { color: value });
       else state.profileNote = 'Use a hex color like #7a5cff.';
     });
-    wrap.append(hex);
+    colors.append(hex);
+    wrap.append(colors);
     return wrap;
   }
 
@@ -1162,7 +1201,7 @@
     const tinted = { ...state.bot, color: card?.color || state.bot?.color || '' };
     const orbButton = el('button', 'orb-hit');
     orbButton.type = 'button';
-    orbButton.setAttribute('aria-label', 'Change color');
+    orbButton.setAttribute('aria-label', 'Change orb and color');
     orbButton.append(face(tinted, 'avatar', { still: true, pinned: true }));
     orbButton.addEventListener('click', () => { state.colorOpen = !state.colorOpen; render(); });
     head.append(orbButton);
@@ -1770,20 +1809,7 @@
     wrap.append(saved);
     wrap.append(el('p', '', 'Domain and username only. The password stays in this agent’s vault.'));
     wrap.append(el('h2', '', 'Appearance'));
-    const toggle = el('button', 'theme-toggle');
-    toggle.id = 'theme-toggle';
-    toggle.type = 'button';
-    const paintToggle = () => {
-      const light = currentTheme() === 'light';
-      toggle.textContent = light ? 'Light' : 'Dark';
-      toggle.setAttribute('aria-pressed', light ? 'true' : 'false');
-    };
-    paintToggle();
-    toggle.addEventListener('click', () => {
-      setTheme(currentTheme() === 'light' ? 'dark' : 'light', true);
-      paintToggle();
-    });
-    wrap.append(toggle, el('p', '', 'Light is the default. Your choice is saved on this device.'));
+    wrap.append(themeIconButton(), el('p', '', 'Light is the default. Your choice is saved on this device.'));
     wrap.append(el('h2', '', 'About'));
     wrap.append(el('p', '', 'intelio · Alan’s Way'));
     wrap.append(el('p', 'version', `Version ${CLIENT_VERSION}`));
@@ -1921,62 +1947,83 @@
     return frag;
   }
 
+  function labeledField(text, control) {
+    const row = el('label', 'field');
+    row.append(el('span', 'field-label', text), control);
+    return row;
+  }
+
   function agentCard() {
     const frag = document.createDocumentFragment();
-    const head = el('div', 'agent-head');
-    const preview = face({ id: 'new-agent', name: 'New', orb: 'working' }, 'avatar sm', { still: true, pinned: true });
-    preview.id = 'agent-preview';
-    head.append(preview, el('h2', '', 'New agent'));
-    frag.append(head);
+    frag.append(el('h2', '', 'Add agent'));
     const name = document.createElement('input');
     name.id = 'agent-name';
-    name.placeholder = 'Name';
     name.autocomplete = 'off';
     name.maxLength = 32;
-    name.setAttribute('aria-label', 'Agent name');
+    name.required = true;
     const title = document.createElement('input');
     title.id = 'agent-title';
-    title.placeholder = 'Title or role (optional)';
     title.maxLength = 80;
-    title.setAttribute('aria-label', 'Title or role');
-    const orb = document.createElement('select');
-    orb.id = 'agent-orb';
-    orb.setAttribute('aria-label', 'Orb style');
-    for (const style of ORB_CHOICES) {
-      const option = document.createElement('option');
-      option.value = style;
-      option.textContent = style;
-      orb.append(option);
-    }
     const soul = document.createElement('textarea');
     soul.id = 'agent-soul';
-    soul.placeholder = 'SOUL / instructions (optional)';
     soul.maxLength = 8000;
     soul.rows = 4;
-    soul.setAttribute('aria-label', 'SOUL instructions');
+    const starts = el('div', 'field');
+    starts.append(el('span', 'field-label', 'Starts from'));
+    const loading = el('p', 'orb-loading', 'Loading styles…');
+    const gallery = el('div', 'orb-gallery');
+    gallery.hidden = true;
+    starts.append(loading, gallery);
+    let chosenOrb = 'working';
+    let chosenColor = '#7a5cff';
+    const paintGallery = () => {
+      gallery.replaceChildren();
+      for (const id of ORB_CHOICES) {
+        const choice = el('button', 'orb-choice');
+        choice.type = 'button';
+        choice.dataset.orb = id;
+        choice.setAttribute('aria-label', ORB_LABELS[id]);
+        choice.setAttribute('aria-pressed', String(id === chosenOrb));
+        choice.append(face({ id: 'new-agent', orb: id, color: chosenColor }, 'pip', { still: true, pinned: true }), el('span', 'orb-label', ORB_LABELS[id]));
+        choice.addEventListener('click', () => { chosenOrb = id; paintGallery(); });
+        gallery.append(choice);
+      }
+      const colors = el('div', 'color-picker');
+      for (const color of COLOR_SWATCHES) {
+        const swatch = el('button', 'swatch');
+        swatch.type = 'button';
+        swatch.style.background = color;
+        swatch.setAttribute('aria-label', color);
+        swatch.setAttribute('aria-pressed', String(color === chosenColor));
+        swatch.addEventListener('click', () => { chosenColor = color; paintGallery(); });
+        colors.append(swatch);
+      }
+      gallery.append(el('p', 'picker-label', 'Color'), colors);
+    };
+    const actions = el('div', 'dialog-actions');
+    const cancel = el('button', 'quiet', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => document.getElementById('sheet')?.remove());
     const save = el('button', 'block', 'Create agent');
     save.type = 'button';
-    save.addEventListener('click', () => createAgent(name.value, title.value, orb.value, soul.value));
-    const paint = () => {
-      const slug = name.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || 'new-agent';
-      const [core] = orbColors({ id: slug });
-      preview.dataset.profile = slug;
-      preview.dataset.accent = core;
-      preview.style.setProperty('--orb', core);
-      if (window.ThinkingOrbs) window.ThinkingOrbs.sync(preview, { accent: core, state: orb.value || signatureOf(slug), paused: true, display: 36, size: 64 });
-    };
-    name.addEventListener('input', paint);
-    orb.addEventListener('change', paint);
-    frag.append(name, title, orb, soul, save);
+    save.addEventListener('click', () => createAgent(name.value, title.value, chosenOrb, soul.value, chosenColor));
+    actions.append(cancel, save);
+    frag.append(labeledField('Name', name), labeledField('Title or role', title), starts, labeledField('Instructions', soul), actions);
     frag.append(el('p', '', 'Creates an isolated profile from intelio. Messaging platforms stay off. Ready after the next agent restart.'));
+    setTimeout(() => {
+      if (!gallery.isConnected) return;
+      loading.remove();
+      gallery.hidden = false;
+      paintGallery();
+    }, 40);
     return frag;
   }
 
-  async function createAgent(name, title, orb, soul) {
+  async function createAgent(name, title, orb, soul, color) {
     const response = await fetch('/api/profiles', {
       method: 'POST',
       headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
-      body: JSON.stringify({ name, title, orb, soul }),
+      body: JSON.stringify({ name, title, orb, soul, color }),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -1990,6 +2037,7 @@
       description: body.description || '',
       title: body.title || '',
       orb: body.orb || orb,
+      color: body.color || color || '',
       needsSignIn: body.needsSignIn === true,
       gatewayNote: body.gatewayNote || 'Ready after the next agent restart',
       status: 'online',
@@ -2104,7 +2152,58 @@
     }
   }
 
-  function startWebRecognizer(continuous) {
+  async function callMyPhone() {
+    let ready = false;
+    try {
+      const response = await fetch('/api/phone/call', {
+        method: 'POST',
+        headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ profile: state.bot?.id }),
+      });
+      const body = await response.json().catch(() => ({}));
+      ready = response.ok && body.ready === true;
+    } catch { ready = false; }
+    state.phoneNote = ready ? '' : 'Phone line not set up yet';
+    if (state.view === 'chat') render();
+  }
+
+  async function dictateIntoBox(button) {
+    const input = document.getElementById('ask');
+    if (!input) return;
+    if (state.dictating) {
+      state.dictating = false;
+      button?.classList.remove('hot');
+      if (webRec) {
+        try { webRec.stop(); } catch { /* already stopped */ }
+        return;
+      }
+      const blob = await stopRecorder();
+      releaseMic();
+      const text = blob ? await transcribeBlob(blob).catch(() => '') : '';
+      if (text) input.value = `${input.value ? `${input.value.trim()} ` : ''}${String(text).trim()}`;
+      return;
+    }
+    state.dictating = true;
+    button?.classList.add('hot');
+    const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (Rec) {
+      try {
+        startWebRecognizer(false, true);
+        return;
+      } catch { /* fall through to the recorder */ }
+    }
+    try {
+      await openMic();
+      startRecorder();
+    } catch (error) {
+      state.dictating = false;
+      button?.classList.remove('hot');
+      state.error = micMessage(error);
+      render();
+    }
+  }
+
+  function startWebRecognizer(continuous, intoBox) {
     const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Rec) throw Object.assign(new Error('This browser has no speech recognition.'), { name: 'NotSupportedError' });
     if (webRec) try { webRec.stop(); } catch { /* ignore */ }
@@ -2126,7 +2225,11 @@
       }
       if (finalText.trim()) {
         state.listening = false;
-        sendTurn(finalText.trim());
+        if (intoBox) {
+          const input = document.getElementById('ask');
+          if (input) input.value = `${input.value ? `${input.value.trim()} ` : ''}${finalText.trim()}`;
+          state.dictating = false;
+        } else sendTurn(finalText.trim());
       }
     };
     rec.onerror = () => { state.error = 'On-phone speech recognition stopped.'; };

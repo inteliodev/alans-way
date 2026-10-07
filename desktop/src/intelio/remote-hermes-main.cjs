@@ -6,7 +6,7 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeRemoteConfig, createRemoteHermesClient, redactKey, PROFILE_RE, isTailnetOrLoopbackHost } = require('./remote-hermes.cjs');
+const { normalizeRemoteConfig, createRemoteHermesClient, redactKey, PROFILE_RE, isTailnetOrLoopbackHost, selectFetch } = require('./remote-hermes.cjs');
 const { harnessId, buildCard } = require('./agent-card.cjs');
 const { vaultOrigin, postProfileVault } = require('./remote-vault.cjs');
 const { createRemoteMain } = require('./remote-main-data.cjs');
@@ -408,23 +408,44 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
-  async function pullPwaCard(profile, key, pathname, body, expectId = true) {
-    if (!key) return null;
-    let cfg;
-    try { cfg = await config(); } catch { return null; }
-    if (!cfg?.host || cfg.origin || cfg.activeMode === 'cloud' || !isTailnetOrLoopbackHost(cfg.host)) return null;
+  function pwaBase(cfg) {
+    const explicit = String(process.env.INTELIO_PWA_ORIGIN || '').trim().replace(/\/$/, '');
+    if (explicit) {
+      let url;
+      try { url = new URL(explicit); } catch { return ''; }
+      const host = url.hostname.toLowerCase();
+      const loop = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+      if (host !== 'app.intelio-ai.com' && !loop && !isTailnetOrLoopbackHost(host)) return '';
+      return url.origin;
+    }
+    if (process.env.INTELIO_E2E === '1') return '';
+    if (cfg?.origin || cfg?.activeMode === 'cloud') return 'https://app.intelio-ai.com';
+    if (!cfg?.host || !isTailnetOrLoopbackHost(cfg.host)) return '';
     const port = Number(process.env.INTELIO_PWA_PORT || 8643);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return '';
     const host = cfg.host.includes(':') && !cfg.host.startsWith('[') ? `[${cfg.host}]` : cfg.host;
     const scheme = cfg.host === '127.0.0.1' || cfg.host === 'localhost' || cfg.host === '::1' ? 'http' : 'https';
+    return `${scheme}://${host}:${port}`;
+  }
+
+  async function pwaRequest(profile, key, pathname, body, { timeoutMs = 1200, expectId = true } = {}) {
+    let cfg;
+    try { cfg = await config(); } catch { return null; }
+    const cloud = Boolean(cfg?.origin || cfg?.activeMode === 'cloud');
+    if (!key && !cloud) return null;
+    const base = pwaBase(cfg);
+    if (!base) return null;
+    const doFetch = selectFetch(cfg, { fetchImpl: globalThis.fetch, sessionFor });
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 1200);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(`${scheme}://${host}:${port}${pathname}?profile=${encodeURIComponent(profile)}`, {
+      const response = await doFetch(`${base}${pathname}?profile=${encodeURIComponent(profile)}`, {
         method: body ? 'POST' : 'GET',
         headers: {
-          Authorization: `Bearer ${key}`,
+          ...(key ? { Authorization: `Bearer ${key}` } : {}),
           Accept: 'application/json',
+          Origin: base,
           'x-intelio-profile': profile,
           ...(body ? { 'Content-Type': 'application/json' } : {}),
         },
@@ -432,7 +453,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
         signal: controller.signal,
         redirect: 'error',
       });
-      if (!response.ok) return null;
+      if (!response || !response.ok) return null;
       const parsed = await response.json();
       if (!parsed) return null;
       if (expectId && parsed.id !== profile) return null;
@@ -444,34 +465,35 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
+  async function pullPwaCard(profile, key, pathname, body, expectId = true) {
+    return pwaRequest(profile, key, pathname, body, { expectId });
+  }
+
   async function createAgent(value = {}) {
     let cfg;
     try { cfg = await config(); } catch { cfg = null; }
-    if (!cfg?.host || cfg.origin || cfg.activeMode === 'cloud' || !isTailnetOrLoopbackHost(cfg.host)) {
-      throw new Error('Add the agent from the VPS connection. Cloud mode does not create profiles.');
-    }
-    const key = await getKey('intelio').catch(() => '') || await getKey(cfg.profile || 'intelio').catch(() => '');
+    const base = pwaBase(cfg || {});
+    if (!base) throw new Error('Add the agent from the VPS connection. Cloud mode does not create profiles.');
+    const key = await getKey('intelio').catch(() => '') || await getKey(cfg?.profile || 'intelio').catch(() => '');
     if (!key) throw new Error('No profile key is saved for the VPS.');
-    const port = Number(process.env.INTELIO_PWA_PORT || 8643);
-    const host = cfg.host.includes(':') && !cfg.host.startsWith('[') ? `[${cfg.host}]` : cfg.host;
-    const scheme = cfg.host === '127.0.0.1' || cfg.host === 'localhost' || cfg.host === '::1' ? 'http' : 'https';
-    const origin = `${scheme}://${host}:${port}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
     try {
-      const response = await fetch(`${origin}/api/profiles`, {
+      const doFetch = selectFetch(cfg, { fetchImpl: globalThis.fetch, sessionFor });
+      const response = await doFetch(`${base}/api/profiles`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${key}`,
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          Origin: origin,
+          Origin: base,
           'x-intelio-profile': 'intelio',
         },
         body: JSON.stringify({
           name: value.name,
           title: value.title || '',
           orb: value.orb || '',
+          color: value.color || '',
           soul: value.soul || '',
         }),
         signal: controller.signal,
@@ -486,6 +508,13 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  async function phoneCall(profile) {
+    const id = harnessId(profile) || 'intelio';
+    const key = await getKey(id).catch(() => '') || await getKey('intelio').catch(() => '');
+    const remote = await pwaRequest(id, key, '/api/phone/call', { profile: id }, { timeoutMs: 8000, expectId: false });
+    return { ready: remote?.ready === true };
   }
 
   async function agentCard(profile) {
@@ -576,6 +605,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
           case 'agent-thinking': return await agentThinking(value.profile, value.effort);
           case 'agent-pause': return await agentPause(value.profile, value.paused !== false);
           case 'agent-profile': return await saveAgentProfile(value);
+          case 'phone-call': return await phoneCall(value.profile);
           case 'screens': return { data: await listRemoteScreens() };
           case 'send': {
             const id = String(value.id);

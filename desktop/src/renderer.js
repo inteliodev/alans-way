@@ -200,9 +200,12 @@ function applyTheme(theme) {
   }
   const button = $('theme-toggle');
   if (!button) return;
-  button.textContent = next === 'light' ? 'Light' : 'Dark';
-  button.title = next === 'light' ? 'Switch to Dark' : 'Switch to Light';
+  const toDark = next === 'light';
+  button.title = toDark ? 'Dark mode' : 'Light mode';
+  button.setAttribute('aria-label', button.title);
   button.setAttribute('aria-pressed', String(next === 'light'));
+  button.querySelector('.theme-moon')?.classList.toggle('hidden', !toDark);
+  button.querySelector('.theme-sun')?.classList.toggle('hidden', toDark);
 }
 function hostCopy() {
   return state?.host || {
@@ -228,7 +231,13 @@ function hermesChecklist(current) {
   return { done: hermes.match === 'commit', label: `Hermes pin ${pin} · ${hermes.summary}` };
 }
 function agentOrb(id) {
-  return window.IntelioRemote?.signatureOf?.(id) || 'connecting';
+  return window.IntelioRemote?.signatureOf?.(id) || 'working';
+}
+function shownOrb(card) {
+  const chosen = String(card?.orb || '').trim().toLowerCase();
+  const styles = window.IntelioAgentCard?.styles || [];
+  if (styles.some((row) => row[0] === chosen)) return chosen;
+  return agentOrb(card?.id);
 }
 function agentProfileId(id) {
   const value = String(id || '').trim().toLowerCase();
@@ -282,7 +291,7 @@ function paintAgentCard() {
     confirming: agentUi.confirming,
     confirmLabel: card.paused ? 'Resume' : 'Pause',
     busy: agentUi.busy,
-    orb: agentOrb(card.id),
+    orb: shownOrb(card),
     accent: card.color || '',
     editing: agentUi.editing,
     picking: agentUi.picking,
@@ -291,6 +300,9 @@ function paintAgentCard() {
     onPickColor() { agentUi.picking = !agentUi.picking; paintAgentCard(); },
     async onColor(color) {
       await saveAgentProfile({ color });
+    },
+    async onOrb(orb) {
+      await saveAgentProfile({ orb });
     },
     onEdit() { agentUi.editing = true; agentUi.soulOpen = true; paintAgentCard(); },
     onCancelEdit() { agentUi.editing = false; paintAgentCard(); },
@@ -364,6 +376,15 @@ async function saveAgentProfile(patch) {
     agentUi.editing = false;
     agentUi.picking = false;
     agentUi.note = '';
+    if (next?.id) {
+      window.IntelioRemote?.applyLook?.({
+        id: next.id,
+        color: next.color || '',
+        orb: next.orb || '',
+        title: next.title || '',
+        name: next.name || '',
+      });
+    }
   } catch (error) {
     agentUi.note = error.message || 'Could not save that.';
   } finally {
@@ -573,7 +594,14 @@ api.onPreviewDrop?.(() => {
 function openModal(title) {
   modalOpen = true; $('modal-title').textContent = title; $('modal-body').replaceChildren(); $('modal').classList.remove('hidden'); scheduleLayout();
 }
-function closeModal() { modalOpen = false; $('modal').classList.add('hidden'); scheduleLayout(); }
+function closeModal() {
+  modalOpen = false;
+  const modal = $('modal');
+  modal.classList.add('hidden');
+  modal.classList.remove('agent-open');
+  modal.querySelector('.modal-card')?.classList.remove('agent-dialog');
+  scheduleLayout();
+}
 function renderSettingsBots() {
   const list = $('settings-bots');
   if (!modalOpen || !list) return;
@@ -758,32 +786,44 @@ function showAvatarEditor(botId = state.selectedBotId || orderedBots()[0]?.id) {
 }
 function showAddAgent() {
   openModal('Add agent');
-  const form = element('form');
+  $('modal').classList.add('agent-open');
+  $('modal').querySelector('.modal-card')?.classList.add('agent-dialog');
+  const form = element('form', 'agent-form');
   const name = element('input');
-  name.placeholder = 'name';
+  name.id = 'agent-name';
   name.maxLength = 32;
   name.autocomplete = 'off';
-  name.setAttribute('aria-label', 'Agent name');
+  name.required = true;
+  const nameField = element('label', 'field');
+  nameField.append(element('span', 'field-label', 'Name'), name);
   const title = element('input');
-  title.placeholder = 'Title or role (optional)';
+  title.id = 'agent-title';
   title.maxLength = 80;
-  title.setAttribute('aria-label', 'Title or role');
-  const orb = element('select');
-  orb.setAttribute('aria-label', 'Orb style');
-  for (const style of ['connecting', 'solving', 'searching', 'weaving', 'working', 'listening', 'breathing', 'shaping']) {
-    const option = element('option', '', style);
-    option.value = style;
-    orb.append(option);
-  }
+  const titleField = element('label', 'field');
+  titleField.append(element('span', 'field-label', 'Title or role'), title);
+  const starts = element('div', 'field');
+  starts.append(element('span', 'field-label', 'Starts from'));
+  const loading = element('p', 'orb-loading', 'Loading styles…');
+  const picker = element('div', 'agent-picker');
+  picker.hidden = true;
+  starts.append(loading, picker);
   const soul = element('textarea');
-  soul.placeholder = 'SOUL / instructions (optional)';
+  soul.id = 'agent-soul';
   soul.maxLength = 8000;
   soul.rows = 4;
-  soul.setAttribute('aria-label', 'SOUL instructions');
+  const soulField = element('label', 'field');
+  soulField.append(element('span', 'field-label', 'Instructions'), soul);
   const note = element('p', 'settings-note', '');
+  const actions = element('div', 'dialog-actions');
+  const cancel = element('button', 'secondary-button', 'Cancel');
+  cancel.type = 'button';
+  cancel.onclick = () => closeModal();
   const submit = element('button', 'primary-button', 'Create agent');
   submit.type = 'submit';
-  form.append(name, title, orb, soul, submit, note);
+  actions.append(cancel, submit);
+  let chosenOrb = 'working';
+  let chosenColor = '#7a5cff';
+  form.append(nameField, titleField, starts, soulField, actions, note);
   form.onsubmit = async (event) => {
     event.preventDefault();
     submit.disabled = true;
@@ -792,7 +832,8 @@ function showAddAgent() {
       const created = await window.remoteHermes.request('create-agent', {
         name: name.value,
         title: title.value,
-        orb: orb.value,
+        orb: chosenOrb,
+        color: chosenColor,
         soul: soul.value,
       });
       const lines = [];
@@ -800,13 +841,30 @@ function showAddAgent() {
       if (created?.gatewayNote) lines.push(created.gatewayNote);
       note.textContent = lines.join(' ') || 'Ready after the next agent restart';
       await window.IntelioRemote?.refresh?.();
-      if (created?.id) openAgentPane(created.id);
+      if (created?.id) {
+        window.IntelioRemote?.applyLook?.({ id: created.id, color: created.color || chosenColor, orb: created.orb || chosenOrb, title: created.title || title.value, name: created.name || name.value });
+        openAgentPane(created.id);
+      }
     } catch (error) {
       note.textContent = error.message || 'Could not create that agent.';
       submit.disabled = false;
     }
   };
   $('modal-body').append(form);
+  const paintPicker = () => {
+    window.IntelioAgentCard?.mountPicker(picker, {
+      orb: chosenOrb,
+      color: chosenColor,
+      onOrb(next) { chosenOrb = next; paintPicker(); },
+      onColor(next) { chosenColor = next; paintPicker(); },
+    });
+  };
+  setTimeout(() => {
+    if (!picker.isConnected) return;
+    loading.remove();
+    picker.hidden = false;
+    paintPicker();
+  }, 40);
   name.focus();
 }
 function showAddBot() {

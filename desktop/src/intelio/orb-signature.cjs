@@ -13,6 +13,18 @@ const SIGNATURES = {
   kida: 'composing',
 };
 const OPEN_TYPES = ['working', 'listening', 'breathing', 'shaping'];
+const ORB_IDS = ['connecting', 'solving', 'searching', 'weaving', 'working', 'listening', 'breathing', 'shaping', 'composing'];
+const ORB_LABELS = {
+  connecting: 'Connecting',
+  solving: 'Solving',
+  searching: 'Searching',
+  weaving: 'Weaving',
+  working: 'Working',
+  listening: 'Listening',
+  breathing: 'Breathing',
+  shaping: 'Shaping',
+  composing: 'Composing',
+};
 
 function signatureOf(id) {
   const key = String(id || 'intelio').trim().toLowerCase();
@@ -23,4 +35,4 @@ function signatureOf(id) {
   return OPEN_TYPES[(hash >>> 0) % OPEN_TYPES.length];
 }
 
-module.exports = { signatureOf };
+module.exports = { signatureOf, ORB_IDS, ORB_LABELS };
