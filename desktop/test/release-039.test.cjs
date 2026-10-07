@@ -21,7 +21,7 @@ test('threads caption does not repeat AGENTS and the theme control accepts a poi
   const style = fs.readFileSync(path.join(__dirname, '../src/style.css'), 'utf8');
   const renderer = fs.readFileSync(path.join(__dirname, '../src/renderer.js'), 'utf8');
   const main = fs.readFileSync(path.join(__dirname, '../src/main.cjs'), 'utf8');
-  assert.match(css, /\.side-caption:not\(\.threads-caption\)::before/);
+  assert.match(css, /\.side-caption:not\(\.threads-caption\):not\(\.watching-caption\)::before/);
   assert.equal(css.includes('.side-caption::before { content: "AGENTS"; }'), false);
   assert.match(style, /\.theme-row\{[^}]*-webkit-app-region:no-drag/);
   assert.match(style, /\.theme-toggle\{[^}]*-webkit-app-region:no-drag/);

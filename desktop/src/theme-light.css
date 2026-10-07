@@ -97,7 +97,9 @@ html[data-theme="light"] .signin-form input[type="password"] { background: #ffff
 html[data-theme="light"] .screen-count button { background: #ffffff; color: #1c1c21; }
 html[data-theme="light"] .screen-grid { background: #f6f6f8; }
 html[data-theme="light"] .screen-cell { background: #ffffff; color: #1c1c21; border: 1px solid #d5d5dc; box-shadow: none; }
-html[data-theme="light"] .screen-cell.active { border-color: #c9a227; box-shadow: inset 0 0 0 1px #c9a227; }
+html[data-theme="light"] .bot-role { background: #ececef; color: #3a3a44; }
+html[data-theme="light"] .screen-count button[aria-pressed="true"] { box-shadow: inset 0 0 0 1px #7a5cff; color: #1c1c21; }
+html[data-theme="light"] .screen-cell.active { border-color: #7a5cff; box-shadow: inset 0 0 0 1px #7a5cff; }
 html[data-theme="light"] .bops-handoff,
 html[data-theme="light"] .preview-badge { color: #8a5a12; }
 html[data-theme="light"] .preview-live { color: #5e5e68; }

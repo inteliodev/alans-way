@@ -48,7 +48,8 @@ function decorateSession(session, profileId) {
     ...session,
     profileId: session.profileId || profileId,
     sourceLabel: sourceLabel(session.source),
-    preview: String(session.preview || session.last_message || '').slice(0, 180),
+    preview: String(session.last_message || session.preview || '').slice(0, 180),
+    last_message: String(session.last_message || session.preview || '').slice(0, 180),
     at,
     timeLabel: timeLabel(at),
   };
@@ -86,6 +87,8 @@ function decorate(agent) {
     color: agent.color || '',
     needsSignIn: agent.needsSignIn === true,
     gatewayNote: String(agent.gatewayNote || '').slice(0, 160),
+    title: String(agent.title || agent.role || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80),
+    description: String(agent.description || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 240),
   };
 }
 
@@ -97,7 +100,7 @@ function parseProfiles(json) {
     const id = String(typeof item === 'string' ? item : (item?.id || item?.name || '')).trim().toLowerCase();
     if (!id || !PROFILE_RE.test(id) || excludedAgent(id)) continue;
     const name = typeof item === 'string' ? titleCase(id) : (item.name || titleCase(id));
-    agents.push(decorate({ id, name, color: item?.color, orb: item?.orb, needsSignIn: item?.needsSignIn, gatewayNote: item?.gatewayNote }));
+    agents.push(decorate({ id, name, color: item?.color, orb: item?.orb, needsSignIn: item?.needsSignIn, gatewayNote: item?.gatewayNote, title: item?.title || item?.role, description: item?.description }));
   }
   return agents.length ? agents : null;
 }

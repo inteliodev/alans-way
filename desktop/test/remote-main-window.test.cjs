@@ -62,7 +62,7 @@ function installDom() {
         return {
           agents: [
             { id: 'intelio', name: 'Intelio', orb: 'connecting' },
-            { id: 'prc', name: 'PRC', orb: 'solving' },
+            { id: 'prc', name: 'PRC', orb: 'solving', title: 'Outreach', description: 'In one short sentence, who are you?' },
             { id: 'alignment', name: 'Alignment', orb: 'searching' },
             { id: 'hhp', name: 'HHP', orb: 'weaving' },
           ],
@@ -102,10 +102,16 @@ test('the main window factory receives root and renders the agent list', async (
   let sessions = [];
   while (Date.now() < deadline) {
     sessions = byId('remote-sessions').children.filter((node) => node.className.includes('session-item'));
-    if (byId('bot-list').children.length === 4 && sessions.length >= 1) break;
+    if (byId('bot-count').textContent === '4' && byId('bot-list').children.length === 3 && sessions.length >= 1) break;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  assert.equal(byId('bot-list').children.length, 4);
+  assert.equal(byId('bot-list').children.length, 3);
+  assert.equal(byId('lead-card').classList.hidden, false);
+  const prc = byId('bot-list').children.find((node) => node.dataset.botId === 'prc');
+  const prcText = collectedText(prc);
+  assert.equal(prcText.includes('In one short sentence'), false);
+  assert.ok(prcText.includes('Outreach'));
+  assert.ok(prcText.includes('Drafted intros.'));
   assert.equal(byId('bot-count').textContent, '4');
   assert.ok(sessions.length >= 1);
   assert.equal(byId('remote-status').textContent, '');
@@ -135,8 +141,8 @@ test('threads for the selected agent sit under the agents, and the sessions list
   const deadline = Date.now() + 1000;
   let threads = [];
   while (Date.now() < deadline) {
-    threads = byId('sidebar-threads').children.filter((node) => String(node.className).includes('session-item'));
-    if (api.sidebar() === 'agents' && byId('bot-list').children.length === 4 && threads.length >= 1) break;
+    threads = byId('sidebar-threads').children.filter((node) => String(node.className).includes('thread-line'));
+    if (api.sidebar() === 'agents' && byId('bot-count').textContent === '4' && threads.length >= 1) break;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.equal(api.sidebar(), 'agents');
@@ -187,7 +193,7 @@ test('threads for the selected agent sit under the agents, and the sessions list
   api.setSidebar('agents');
   assert.equal(api.sidebar(), 'agents');
   assert.equal(byId('bot-list').classList.hidden, false);
-  assert.equal(byId('bot-list').children.length, 4);
+  assert.equal(byId('bot-list').children.length, 3);
   assert.equal(byId('all-sessions').classList.hidden, true);
   assert.equal(saved.at(-1).value.sidebarTab, 'agents');
 });

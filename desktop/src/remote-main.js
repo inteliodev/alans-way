@@ -47,7 +47,7 @@
       return `${agent.name || ''} ${agent.id || ''} ${agent.orb || ''}`.toLowerCase().includes(needle);
     }).map((agent) => {
       const orb = agent.orb || signatureOf(agent.id);
-      return { id: agent.id, name: shownAgent(agent.id, agent.name), orb, color: agent.color || '', title: agent.title || agent.description || '', needsSignIn: Boolean(agent.needsSignIn), gatewayNote: agent.gatewayNote || '', subtitle: orb, selected: agent.id === selected };
+      return { id: agent.id, name: shownAgent(agent.id, agent.name), orb, color: agent.color || '', title: roleOf(agent), needsSignIn: Boolean(agent.needsSignIn), gatewayNote: agent.gatewayNote || '', subtitle: orb, selected: agent.id === selected };
     });
   }
 
@@ -247,7 +247,7 @@
     const title = $('chat-title');
     if (title) title.textContent = agent ? shownAgent(agent.id, agent.name) : 'VPS Hermes';
     const role = $('chat-role');
-    if (role) role.textContent = agent?.title || agent?.description || '';
+    if (role) role.textContent = roleOf(agent);
     const status = $('chat-status');
     if (status) {
       const count = workCount();
@@ -279,10 +279,32 @@
     }
   }
 
+  function cleanLine(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function personaLine(text) {
+    const value = cleanLine(text);
+    if (!value) return false;
+    return /^in one short sentence\b/i.test(value) || /\bwho are you\b/i.test(value);
+  }
+
+  function roleOf(agent) {
+    const title = cleanLine(agent?.title);
+    if (title && !personaLine(title)) return title.slice(0, 48);
+    const description = cleanLine(agent?.description);
+    if (description && !personaLine(description) && description.length <= 40 && !description.includes('?')) return description.slice(0, 48);
+    return '';
+  }
+
   function statusLine(id) {
     const pool = ui.allSessions.length ? ui.allSessions : (ui.selected === id ? ui.sessions : []);
     const latest = pool.filter((session) => !session.profileId || session.profileId === id).slice().sort((a, b) => sessionAt(b) - sessionAt(a))[0];
-    return latest?.preview || latest?.title || '';
+    const raw = latest?.last_message || latest?.preview || '';
+    const shown = root.IntelioTranscript ? root.IntelioTranscript.preview(raw) : raw;
+    const value = cleanLine(shown || raw);
+    if (!value || personaLine(value)) return '';
+    return value.slice(0, 140);
   }
 
   function paintLead(rows) {
@@ -352,8 +374,12 @@
         root.openAgentDetails?.(row.id);
       };
       const copy = el('span', 'bot-copy');
-      const preview = row.needsSignIn ? 'Needs sign-in' : (row.gatewayNote || statusLine(row.id));
-      copy.append(el('div', 'bot-name', row.name), el('div', 'bot-preview', preview));
+      const line = el('span', 'bot-line');
+      line.append(el('span', 'bot-name', row.name));
+      if (row.title) line.append(el('span', 'bot-role', row.title));
+      copy.append(line);
+      const preview = row.needsSignIn ? 'Needs sign-in' : statusLine(row.id);
+      if (preview) copy.append(el('div', 'bot-preview', preview));
       node.append(avatar, copy);
       node.onclick = () => selectAgent(row.id);
       node.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectAgent(row.id); } };

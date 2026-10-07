@@ -225,4 +225,12 @@ test('the profile switcher uses the PWA orb types', () => {
     ['hhp', 'weaving', 'weaving', false],
   ]);
   assert.deepEqual(switcherRows(SAMPLE.agents, { query: 'weav', selected: 'hhp' }).map((row) => row.id), ['hhp']);
+  const titled = switcherRows([
+    { id: 'prc', name: 'PRC', title: 'Outreach', description: 'In one short sentence, who are you?' },
+    { id: 'hhp', name: 'HHP', description: 'In one short sentence, who are you?' },
+    { id: 'lumen', name: 'Lumen', description: 'Research' },
+  ], {});
+  assert.equal(titled[0].title, 'Outreach');
+  assert.equal(titled[1].title, '');
+  assert.equal(titled[2].title, 'Research');
 });

@@ -110,6 +110,11 @@ test('window icon is a real PNG', () => {
   assert.equal(pkg.build.win.signAndEditExecutable, undefined);
   assert.equal(pkg.build.nsis.shortcutName, 'intelio');
   assert.equal(pkg.build.nsis.uninstallDisplayName, 'intelio');
+  assert.equal(pkg.build.nsis.include, 'nsis/installer.nsh');
+  const installer = fs.readFileSync(path.join(repo, 'desktop/nsis/installer.nsh'), 'utf8');
+  assert.match(installer, /Delete "\$\{dir\}\\Intelio\.lnk"/);
+  assert.match(installer, /CreateShortCut "\$\{dir\}\\intelio\.lnk" "\$appExe"/);
+  assert.match(installer, /Delete "\$SMPROGRAMS\\Intelio\\Intelio\.lnk"/);
 });
 
 test('the VPS sidecar uses strict defaults and refuses YOLO', () => {
