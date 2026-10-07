@@ -35,8 +35,8 @@ function fixture() {
 
 test('access JWT accepts a matching RS256 token and denies the rest', () => {
   const { privateKey, keys, pem, now, token } = fixture();
-  assert.deepEqual(verifyAccessJwt(token, { keys }, { now }), { ok: true });
-  assert.deepEqual(verifyAccessJwt(token, [{ kid: 'test', pem }], { now }), { ok: true });
+  assert.deepEqual(verifyAccessJwt(token, { keys }, { now }), { ok: true, email: EMAIL });
+  assert.deepEqual(verifyAccessJwt(token, [{ kid: 'test', pem }], { now }), { ok: true, email: EMAIL });
   const audList = sign(privateKey, { iss: `${TEAM}/`, aud: ['other', AUD], email: EMAIL.toUpperCase(), exp: Math.floor(now / 1000) + 10 });
   assert.equal(verifyAccessJwt(audList, { keys }, { now }).ok, true);
   assert.throws(() => verifyAccessJwt(token, { keys }, { now, email: 'other@intelio.co' }), /denied/);

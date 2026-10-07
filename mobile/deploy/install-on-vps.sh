@@ -98,15 +98,22 @@ VOICE_THREADS="${INTELIO_VOICE_THREADS:-$(env_get INTELIO_VOICE_THREADS)}"
 VOICE_THREADS="${VOICE_THREADS:-2}"
 
 ACCESS="${INTELIO_PWA_ACCESS:-$(env_get INTELIO_PWA_ACCESS)}"
-if [[ "$ACCESS" == "1" && -z "$BIND" ]]; then
-  BIND="127.0.0.1"
-fi
+LOCAL_PORT="${INTELIO_PWA_LOCAL_PORT:-$(env_get INTELIO_PWA_LOCAL_PORT)}"
+LOCAL_PORT="${LOCAL_PORT:-8644}"
+ACCESS_TEAM="${INTELIO_PWA_ACCESS_TEAM:-$(env_get INTELIO_PWA_ACCESS_TEAM)}"
+ACCESS_AUD="${INTELIO_PWA_ACCESS_AUD:-$(env_get INTELIO_PWA_ACCESS_AUD)}"
+ACCESS_EMAILS="${INTELIO_PWA_ACCESS_EMAILS:-$(env_get INTELIO_PWA_ACCESS_EMAILS)}"
+VNC_URL="${INTELIO_PWA_VNC_URL:-$(env_get INTELIO_PWA_VNC_URL)}"
 if [[ -z "$BIND" ]]; then
   echo "Set INTELIO_PWA_BIND to the Tailscale name or tailnet address." >&2
   exit 1
 fi
 if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [[ "$PORT" -lt 1 || "$PORT" -gt 65535 ]]; then
   echo "INTELIO_PWA_PORT must be 1-65535." >&2
+  exit 1
+fi
+if [[ "$ACCESS" == "1" ]] && { ! [[ "$LOCAL_PORT" =~ ^[0-9]+$ ]] || [[ "$LOCAL_PORT" -lt 1 || "$LOCAL_PORT" -gt 65535 ]]; }; then
+  echo "INTELIO_PWA_LOCAL_PORT must be 1-65535." >&2
   exit 1
 fi
 
@@ -116,9 +123,10 @@ echo "Phone client root: $ROOT"
 echo "Bind: $BIND port $PORT"
 echo "Hermes upstream: $HERMES_URL profile $PROFILE"
 if [[ "$ACCESS" == "1" ]]; then
-  echo "Access hostname app.intelio-ai.com → http://127.0.0.1:${PORT}/"
-  echo "Tunnel ingress service: http://127.0.0.1:${PORT}"
-  echo "No path prefix. start_url and scope are /. Do not open UFW 8643."
+  echo "Tailnet listener stays on ${BIND}:${PORT}."
+  echo "Access listener: http://127.0.0.1:${LOCAL_PORT}"
+  echo "Tunnel ingress: hostname app.intelio-ai.com service http://127.0.0.1:${LOCAL_PORT}"
+  echo "No path prefix. start_url and scope are /. Do not open UFW for the Access listener."
 else
   echo "ufw: allow in on tailscale0 to port $PORT proto tcp"
 fi
@@ -178,7 +186,14 @@ umask 077
 {
   printf 'INTELIO_PWA_BIND=%s\n' "$BIND"
   printf 'INTELIO_PWA_PORT=%s\n' "$PORT"
-  if [[ "$ACCESS" == "1" ]]; then printf 'INTELIO_PWA_ACCESS=1\n'; fi
+  if [[ "$ACCESS" == "1" ]]; then
+    printf 'INTELIO_PWA_ACCESS=1\n'
+    printf 'INTELIO_PWA_LOCAL_PORT=%s\n' "$LOCAL_PORT"
+    if [[ -n "$ACCESS_TEAM" ]]; then printf 'INTELIO_PWA_ACCESS_TEAM=%s\n' "$ACCESS_TEAM"; fi
+    if [[ -n "$ACCESS_AUD" ]]; then printf 'INTELIO_PWA_ACCESS_AUD=%s\n' "$ACCESS_AUD"; fi
+    if [[ -n "$ACCESS_EMAILS" ]]; then printf 'INTELIO_PWA_ACCESS_EMAILS=%s\n' "$ACCESS_EMAILS"; fi
+    if [[ -n "$VNC_URL" ]]; then printf 'INTELIO_PWA_VNC_URL=%s\n' "$VNC_URL"; fi
+  fi
   printf 'INTELIO_HERMES_URL=%s\n' "$HERMES_URL"
   printf 'INTELIO_HERMES_PROFILE=%s\n' "$PROFILE"
   if [[ -n "$LOGINS" ]]; then printf 'INTELIO_PWA_ALLOWED_LOGINS=%s\n' "$LOGINS"; fi
@@ -221,7 +236,7 @@ else
 fi
 
 if [[ "$ACCESS" == "1" ]]; then
-  echo "Cloudflare tunnel reaches 127.0.0.1:${PORT}. No UFW rule was added."
+  echo "Cloudflare tunnel reaches http://127.0.0.1:${LOCAL_PORT}. The tailnet listener is unchanged. No UFW rule was added for Access."
 elif sudo ufw status | grep -F "Intelio phone client" | grep -q "$PORT"; then
   echo "ufw tailnet rule already present for port $PORT"
 else

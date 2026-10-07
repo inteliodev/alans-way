@@ -16,8 +16,7 @@
     (function () {
       var saved = '';
       try { saved = localStorage.getItem('intelio-theme') || ''; } catch (e) { saved = ''; }
-      var light = window.matchMedia('(prefers-color-scheme: light)').matches;
-      var theme = saved === 'light' || saved === 'dark' ? saved : (light ? 'light' : 'dark');
+      var theme = saved === 'dark' ? 'dark' : 'light';
       document.documentElement.dataset.theme = theme;
       var meta = document.querySelector('meta[name="theme-color"]');
       if (meta) meta.setAttribute('content', theme === 'light' ? '#f4f4f6' : '#070708');

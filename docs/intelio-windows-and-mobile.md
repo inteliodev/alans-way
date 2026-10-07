@@ -275,22 +275,28 @@ A dedicated email address and a Twilio in-app waveform are follow-ups.
 
 ### Phone at app.intelio-ai.com
 
-Point the Cloudflare tunnel at loopback. No path prefix. Do not open UFW 8643. Cloudflare terminates TLS. The Access app is on the same team as `os.intelio-ai.com`.
+The phone does not need Tailscale. The existing Cloudflare tunnel `intelio-os` sends `app.intelio-ai.com` to a loopback HTTP listener. Cloudflare terminates TLS. Access app `Intelio OS` (team `muddy-scene-4e1c.cloudflareaccess.com`) covers both `os.intelio-ai.com` and `app.intelio-ai.com` and signs Hayden in with email OTP. Put this ingress rule on that tunnel. No path prefix. Do not open UFW for this port.
 
 ```yaml
 - hostname: app.intelio-ai.com
-  service: http://127.0.0.1:8643
+  service: http://127.0.0.1:8644
 ```
 
-On the VPS, as the desktop user, rebind the existing phone service and turn on Access cookies:
+`INTELIO_PWA_ACCESS=1` keeps the existing tailnet HTTPS listener and adds plain HTTP on `127.0.0.1:8644` for cloudflared. Audience, team, and the email allowlist are environment variables. They are not hardcoded in the phone server. Add these lines to `~/.config/intelio/pwa.env` (mode 600), then restart only the phone service:
 
 ```sh
-cd "$(systemctl --user show -p WorkingDirectory --value intelio-pwa.service)"
-git pull
-INTELIO_PWA_ACCESS=1 INTELIO_PWA_BIND=127.0.0.1 bash mobile/deploy/install-on-vps.sh --with-voice
+INTELIO_PWA_ACCESS=1
+INTELIO_PWA_LOCAL_PORT=8644
+INTELIO_PWA_ACCESS_TEAM=https://muddy-scene-4e1c.cloudflareaccess.com
+INTELIO_PWA_ACCESS_AUD=9244bb370c6284088828a165bb1f0b08f52f49e57f7df871c4b5b92c9ec32108
+INTELIO_PWA_ACCESS_EMAILS=hayden@intelio.co
 ```
 
-`INTELIO_PWA_ACCESS=1` listens on `127.0.0.1:8643`, accepts `Cf-Access-Jwt-Assertion`, and does not add a firewall rule. `start_url` and `scope` stay `/`. Add to Home Screen uses the manifest, icons, and apple touch icon. This installer does not restart `hermes-gateway`.
+```sh
+systemctl --user restart intelio-pwa.service
+```
+
+A valid `Cf-Access-Jwt-Assertion` is Hayden’s human identity, including the vault. A request on `127.0.0.1:8644` with no valid JWT and no matching profile key is 401, except static files and the manifest. A wrong profile key is 401 and does not fall through. The shared :99 browser is proxied at `/browser/websockify` on this same origin (view-only until Take control). The process does not log the JWT or the profile key. `start_url` and `scope` stay `/`. Add to Home Screen uses the manifest, icons, and apple touch icon. This restart does not restart `hermes-gateway`.
 
 ## What you do
 

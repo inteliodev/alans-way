@@ -10,9 +10,9 @@ const CERTS_URL = `${TEAM}/cdn-cgi/access/certs`;
 const AUD = '9244bb370c6284088828a165bb1f0b08f52f49e57f7df871c4b5b92c9ec32108';
 const EMAIL = 'hayden@intelio.co';
 
-function denied() {
+function denied(code) {
   const error = new Error('denied');
-  error.code = 'denied';
+  error.code = code === 'email' ? 'email' : 'denied';
   throw error;
 }
 
@@ -29,7 +29,7 @@ function keyList(keys) {
   return [];
 }
 
-function verifyAccessJwt(token, keys, { aud = AUD, email = EMAIL, now = Date.now(), team = TEAM } = {}) {
+function verifyAccessJwt(token, keys, { aud = AUD, email = EMAIL, emails = null, now = Date.now(), team = TEAM } = {}) {
   try {
     const parts = String(token || '').split('.');
     if (parts.length !== 3 || parts.some((part) => !part)) denied();
@@ -49,14 +49,16 @@ function verifyAccessJwt(token, keys, { aud = AUD, email = EMAIL, now = Date.now
     const iss = String(payload.iss || '').replace(/\/$/, '');
     if (iss !== String(team || '').replace(/\/$/, '')) denied();
     const auds = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-    if (!auds.includes(aud)) denied();
-    if (String(payload.email || '').toLowerCase() !== String(email || '').toLowerCase()) denied();
+    if (!aud || !auds.includes(aud)) denied();
+    const allow = Array.isArray(emails) && emails.length ? emails : [email];
+    const got = String(payload.email || '').toLowerCase();
+    if (!allow.some((item) => String(item || '').toLowerCase() === got)) denied('email');
     const exp = Number(payload.exp);
     const expMs = exp > 1e12 ? exp : exp * 1000;
     if (!Number.isFinite(expMs) || expMs <= now) denied();
-    return { ok: true };
+    return { ok: true, email: String(payload.email || '') };
   } catch (error) {
-    if (error && error.code === 'denied') throw error;
+    if (error && (error.code === 'denied' || error.code === 'email')) throw error;
     denied();
   }
 }

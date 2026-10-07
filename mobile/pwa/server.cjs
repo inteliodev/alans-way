@@ -1,8 +1,12 @@
 'use strict';
 /**
- * Tailnet-only phone client for the VPS Hermes.
- * Sign-in is the caller's Tailscale login. The profile API key is read from
- * a mode-600 env file on this host and never written into the page or a cookie.
+ * Phone client for the VPS Hermes.
+ * The tailnet listener signs the caller in with Tailscale. When
+ * INTELIO_PWA_ACCESS=1, a second plain HTTP listener on loopback accepts
+ * Cloudflare Access (Cf-Access-Jwt-Assertion) for app.intelio-ai.com.
+ * Audience, team, and email allowlist come from the environment. This file
+ * does not embed them. The profile API key is read from a mode-600 env file
+ * on this host and never written into the page, a cookie, or a log.
  * Voice audio is transcribed and spoken here (or by Hermes, if that profile
  * advertises audio). The page never sees the key.
  */
@@ -144,6 +148,14 @@ function assertUpstream(raw) {
   return url;
 }
 
+function assertVnc(raw) {
+  const url = new URL(raw);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('VNC URL must be http(s).');
+  if (url.username || url.password) throw new Error('VNC URL must not carry credentials.');
+  if (!loopbackBind(url.hostname)) throw new Error('VNC URL must stay on loopback.');
+  return url;
+}
+
 function titleCase(name) {
   const raw = String(name || 'intelio');
   return raw.slice(0, 1).toUpperCase() + raw.slice(1);
@@ -176,6 +188,11 @@ function createPwaServer({
   profileOps = null,
   accessVerify = null,
   accessMode = process.env.INTELIO_PWA_ACCESS === '1',
+  accessAud = process.env.INTELIO_PWA_ACCESS_AUD || '',
+  accessEmails = parseAllowlist(process.env.INTELIO_PWA_ACCESS_EMAILS || ''),
+  accessTeam = String(process.env.INTELIO_PWA_ACCESS_TEAM || '').replace(/\/$/, ''),
+  localPort = Number(process.env.INTELIO_PWA_LOCAL_PORT || 8644),
+  vncUpstream = process.env.INTELIO_PWA_VNC_URL || 'http://127.0.0.1:6080',
   vaultRoot = process.env.INTELIO_VAULT_ROOT || '',
   filler = null,
   cdpImpl = null,
@@ -183,6 +200,8 @@ function createPwaServer({
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
+  if (accessMode && (!Number.isInteger(localPort) || localPort < 0 || localPort > 65535)) throw new Error('INTELIO_PWA_LOCAL_PORT must be 0-65535.');
+  const vncUrl = assertVnc(vncUpstream);
   const upstreamUrl = assertUpstream(upstream);
   const normalized = normalizeRemoteConfig({ host: '127.0.0.1', port: 8642, profile });
   const profileName = normalized.profile;
@@ -204,6 +223,9 @@ function createPwaServer({
   let listedProfiles = null;
   let featuresKnown = false;
   const denialLogAt = new Map();
+  const certCache = { at: 0, keys: null };
+  const NOVNC = path.resolve(__dirname, '../../desktop/node_modules/@novnc/novnc');
+  const HOP = new Set(['cf-access-jwt-assertion', 'authorization', 'cookie', 'host', 'connection', 'keep-alive', 'transfer-encoding', 'proxy-authorization', 'upgrade']);
 
   function prune() {
     for (const [token, session] of sessions) if (session.exp <= now()) sessions.delete(token);
@@ -262,12 +284,68 @@ function createPwaServer({
   function cookieHeaders(res) {
     return pendingCookies.has(res) ? { 'set-cookie': pendingCookies.get(res) } : {};
   }
-  async function verifyCloudflare(token) {
-    const { verifyAccessJwt, CERTS_URL, EMAIL } = require('../bootstrap/jwt.cjs');
-    const response = await fetchImpl(CERTS_URL);
+  function accessConfigured() {
+    return Boolean(accessAud && accessTeam && accessEmails.length);
+  }
+  async function accessCerts() {
+    if (!accessConfigured()) {
+      const error = new Error('denied');
+      error.code = 'denied';
+      throw error;
+    }
+    if (certCache.keys && now() - certCache.at < 10 * 60 * 1000) return certCache.keys;
+    const response = await fetchImpl(`${accessTeam}/cdn-cgi/access/certs`, { redirect: 'error' });
+    if (!response.ok) {
+      const error = new Error('denied');
+      error.code = 'denied';
+      throw error;
+    }
     const keys = await response.json();
-    verifyAccessJwt(token, keys);
-    return { ok: true, login: EMAIL };
+    certCache.at = now();
+    certCache.keys = keys;
+    return keys;
+  }
+  async function verifyCloudflare(token) {
+    const { verifyAccessJwt } = require('../bootstrap/jwt.cjs');
+    const keys = await accessCerts();
+    const result = verifyAccessJwt(token, keys, {
+      aud: accessAud,
+      email: '',
+      emails: accessEmails,
+      team: accessTeam,
+      now: now(),
+    });
+    return { ok: true, login: String(result.email || '').slice(0, 200) };
+  }
+  async function resolveAccess(token) {
+    if (!token) return { ok: false, status: 401 };
+    try {
+      const ident = accessVerify ? await accessVerify(token) : await verifyCloudflare(token);
+      if (!ident || !ident.ok) return { ok: false, status: ident?.status === 403 ? 403 : 401 };
+      return { ok: true, login: String(ident.login || '').slice(0, 200) };
+    } catch (error) {
+      return { ok: false, status: error?.status === 403 || error?.code === 'email' ? 403 : 401 };
+    }
+  }
+  function rememberAccess(req, res, login) {
+    let session = sessionFrom(req);
+    if (!session || session.login !== login || !session.access) {
+      const token = crypto.randomBytes(32).toString('base64url');
+      session = { login, exp: now() + SESSION_MS, access: true };
+      sessions.set(token, session);
+      queueCookie(req, res, token);
+    }
+    authFor.set(req, session);
+    return session;
+  }
+  async function acceptAccess(req, res) {
+    const assertion = String(req.headers['cf-access-jwt-assertion'] || '');
+    const ident = await resolveAccess(assertion);
+    if (!ident.ok) {
+      if (assertion) log(ident.status === 403 ? 'intelio-pwa denied access-email' : 'intelio-pwa denied access-jwt');
+      return ident;
+    }
+    return { ok: true, session: rememberAccess(req, res, ident.login) };
   }
   async function authorize(req, res) {
     const existing = sessionFrom(req);
@@ -580,6 +658,151 @@ function createPwaServer({
     for (const agent of profiles) conversations.push(...await sessionsFor(agent.id));
     return { sample: false, label: '', profiles, conversations, skills: [], jobs: [], skillsOk: false, jobsOk: false };
   }
+  function publicAsset(pathname) {
+    if (STATIC[pathname] || iconBytes[pathname]) return true;
+    if (pathname === '/bops.js') return true;
+    if (pathname.startsWith('/avatars/') && /^\/avatars\/[a-z0-9-]+\.png$/.test(pathname)) return true;
+    return Boolean(novncFile(pathname));
+  }
+  function novncFile(pathname) {
+    if (!pathname.startsWith('/novnc/')) return '';
+    const rel = pathname.slice('/novnc/'.length);
+    if (!rel || rel.split('/').some((part) => !part || part === '..')) return '';
+    const file = path.resolve(NOVNC, rel);
+    const root = NOVNC.endsWith(path.sep) ? NOVNC : NOVNC + path.sep;
+    if (!file.startsWith(root)) return '';
+    try {
+      if (!fs.statSync(file).isFile()) return '';
+    } catch { return ''; }
+    return file;
+  }
+  function serveAsset(req, res, url) {
+    if (url.pathname.startsWith('/avatars/')) {
+      const name = path.basename(url.pathname);
+      if (!/^[a-z0-9-]+\.png$/.test(name)) return send(res, 404, { error: 'Not found.' });
+      const payload = renderOrbPng(name.slice(0, -4), 256);
+      res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'image/png', 'content-length': payload.length, 'cache-control': 'public, max-age=86400' });
+      return res.end(payload);
+    }
+    if (iconBytes[url.pathname]) {
+      const payload = iconBytes[url.pathname];
+      res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'image/png', 'content-length': payload.length, 'cache-control': 'public, max-age=86400' });
+      return res.end(payload);
+    }
+    const novnc = novncFile(url.pathname);
+    if (novnc) {
+      const payload = fs.readFileSync(novnc);
+      const ext = path.extname(novnc);
+      const type = ext === '.js' ? 'text/javascript; charset=utf-8' : (TYPES[ext] || 'application/octet-stream');
+      res.writeHead(200, { ...cookieHeaders(res), 'content-type': type, 'content-length': payload.length, 'cache-control': 'public, max-age=300' });
+      return res.end(payload);
+    }
+    if (url.pathname === '/bops.js') {
+      const file = path.join(__dirname, '../../desktop/src/intelio/bops.cjs');
+      const payload = fs.readFileSync(file);
+      res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'text/javascript; charset=utf-8', 'content-length': payload.length, 'cache-control': 'no-cache' });
+      return res.end(payload);
+    }
+    if (STATIC[url.pathname]) {
+      const name = STATIC[url.pathname];
+      const file = path.join(PUBLIC, name);
+      const payload = fs.readFileSync(file);
+      const ext = path.extname(name);
+      res.writeHead(200, { ...cookieHeaders(res), 'content-type': TYPES[ext] || 'application/octet-stream', 'content-length': payload.length, 'cache-control': name === 'sw.js' ? 'no-cache' : 'public, max-age=300' });
+      return res.end(payload);
+    }
+    return send(res, 404, { error: 'Not found.' });
+  }
+  function upstreamHeaders(req) {
+    const headers = {};
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (HOP.has(String(key).toLowerCase())) continue;
+      headers[key] = value;
+    }
+    headers.host = vncUrl.host;
+    return headers;
+  }
+  function proxyBrowser(req, res, pathname) {
+    const search = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    const lib = vncUrl.protocol === 'https:' ? https : http;
+    const preq = lib.request({
+      hostname: vncUrl.hostname,
+      port: vncUrl.port || (vncUrl.protocol === 'https:' ? 443 : 80),
+      path: `${pathname || '/'}${search}`,
+      method: req.method,
+      headers: upstreamHeaders(req),
+    }, (pres) => {
+      res.writeHead(pres.statusCode || 502, pres.headers);
+      pres.pipe(res);
+    });
+    preq.on('error', () => {
+      if (!res.headersSent) send(res, 502, { error: 'The shared browser is not connected.' });
+    });
+    if (req.method === 'GET' || req.method === 'HEAD') preq.end();
+    else req.pipe(preq);
+  }
+  async function browserAllowed(req, res) {
+    const bearer = presentedBearer(req);
+    if (bearer.present) {
+      let profileId = profileName;
+      try { profileId = chosenProfile(req, {}); } catch { profileId = profileName; }
+      if (!keyEquals(bearer.token, profileId)) return { ok: false, status: 401 };
+      return { ok: true };
+    }
+    return acceptAccess(req, res);
+  }
+  function proxyUpgrade(req, socket, head) {
+    const targetPath = String(req.url || '/').replace(/^\/browser/, '') || '/';
+    const headers = upstreamHeaders(req);
+    headers.connection = 'Upgrade';
+    headers.upgrade = req.headers.upgrade || 'websocket';
+    const lib = vncUrl.protocol === 'https:' ? https : http;
+    const preq = lib.request({
+      hostname: vncUrl.hostname,
+      port: vncUrl.port || (vncUrl.protocol === 'https:' ? 443 : 80),
+      path: targetPath,
+      method: 'GET',
+      headers,
+    });
+    const fail = () => { try { socket.destroy(); } catch { /* already closed */ } };
+    preq.on('upgrade', (pres, upstream, upstreamHead) => {
+      const lines = [`HTTP/1.1 ${pres.statusCode || 101} ${pres.statusMessage || 'Switching Protocols'}`];
+      for (const [key, value] of Object.entries(pres.headers)) {
+        const list = Array.isArray(value) ? value : [value];
+        for (const item of list) if (item != null) lines.push(`${key}: ${item}`);
+      }
+      socket.write(`${lines.join('\r\n')}\r\n\r\n`);
+      if (upstreamHead && upstreamHead.length) socket.write(upstreamHead);
+      if (head && head.length) upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+      socket.on('error', () => upstream.destroy());
+      upstream.on('error', () => socket.destroy());
+      socket.on('close', () => upstream.destroy());
+      upstream.on('close', () => socket.destroy());
+    });
+    preq.on('error', fail);
+    preq.on('response', (pres) => { pres.resume(); fail(); });
+    preq.end();
+  }
+  async function onUpgrade(req, socket, head, accessListener) {
+    req.accessListener = accessListener;
+    try {
+      const url = new URL(req.url || '/', 'http://127.0.0.1');
+      if (!url.pathname.startsWith('/browser/')) { socket.destroy(); return; }
+      const allowed = accessListener ? await browserAllowed(req, { writeHead() {}, end() {} }) : await authorize(req, { writeHead() {}, end() {} });
+      const ok = accessListener ? allowed.ok : Boolean(allowed);
+      if (!ok) {
+        const status = accessListener && allowed.status === 403 ? 403 : 401;
+        socket.write(`HTTP/1.1 ${status} ${status === 403 ? 'Forbidden' : 'Unauthorized'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+        socket.destroy();
+        return;
+      }
+      proxyUpgrade(req, socket, head);
+    } catch {
+      socket.destroy();
+    }
+  }
   async function optionalList(profileId, pathname, normalize) {
     try {
       const response = await fetchImpl(hermesUrl(profileId, pathname), {
@@ -615,6 +838,9 @@ function createPwaServer({
             logVaultDenial(profileId, 'key');
             return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
           }
+        } else if (req.accessListener) {
+          const access = await acceptAccess(req, res);
+          if (!access.ok) return send(res, access.status === 403 ? 403 : 401, { error: access.status === 403 ? 'This account is not allowed.' : 'This Tailscale identity is not allowed.' });
         } else if (await peerIsSelf(normalizeIp(req.socket.remoteAddress))) {
           logVaultDenial(profileId, 'local');
           return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
@@ -657,7 +883,31 @@ function createPwaServer({
         }
         return send(res, 404, { error: 'Not found.' });
       }
-      const session = await authorize(req, res);
+      if (req.method === 'GET' && req.accessListener && publicAsset(url.pathname)) return serveAsset(req, res, url);
+      if (req.accessListener && url.pathname.startsWith('/browser')) {
+        const browserAuth = await browserAllowed(req, res);
+        if (!browserAuth.ok) return send(res, browserAuth.status === 403 ? 403 : 401, { error: browserAuth.status === 403 ? 'This account is not allowed.' : 'This Tailscale identity is not allowed.' });
+        if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'Not found.' });
+        return proxyBrowser(req, res, url.pathname.replace(/^\/browser/, '') || '/');
+      }
+      if (req.accessListener) {
+        const keyed = presentedBearer(req);
+        if (keyed.present) {
+          let profileId = profileName;
+          try { profileId = chosenProfile(req, {}); } catch { profileId = profileName; }
+          if (!keyEquals(keyed.token, profileId)) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+        } else {
+          const access = await acceptAccess(req, res);
+          if (!access.ok) return send(res, access.status === 403 ? 403 : 401, { error: access.status === 403 ? 'This account is not allowed.' : 'This Tailscale identity is not allowed.' });
+        }
+      }
+      let session = sessionFrom(req);
+      const keyedOk = Boolean(req.accessListener && presentedBearer(req).present);
+      if (!session && !keyedOk) session = await authorize(req, res);
+      if (!session && keyedOk) {
+        session = { login: '', exp: now() + SESSION_MS, keyed: true };
+        authFor.set(req, session);
+      }
       if (!session) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
       if (req.method === 'GET' && (url.pathname === '/session' || url.pathname === '/session/')) {
         return send(res, 200, { ok: true, login: session.login || '' });
@@ -785,31 +1035,12 @@ function createPwaServer({
         }
         return await forward(req, res, '/api/sessions', { method: 'POST', body: { title: String(body.title || '').slice(0, 200) }, profileId: chosenProfile(req, body) });
       }
-      if (req.method === 'GET' && url.pathname.startsWith('/avatars/')) {
-        const name = path.basename(url.pathname);
-        if (!/^[a-z0-9-]+\.png$/.test(name)) return send(res, 404, { error: 'Not found.' });
-        const payload = renderOrbPng(name.slice(0, -4), 256);
-        res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'image/png', 'content-length': payload.length, 'cache-control': 'public, max-age=86400' });
-        return res.end(payload);
-      }
-      if (req.method === 'GET' && iconBytes[url.pathname]) {
-        const payload = iconBytes[url.pathname];
-        res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'image/png', 'content-length': payload.length, 'cache-control': 'public, max-age=86400' });
-        return res.end(payload);
-      }
-      if (req.method === 'GET' && url.pathname === '/bops.js') {
-        const file = path.join(__dirname, '../../desktop/src/intelio/bops.cjs');
-        const payload = fs.readFileSync(file);
-        res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'text/javascript; charset=utf-8', 'content-length': payload.length, 'cache-control': 'no-cache' });
-        return res.end(payload);
-      }
-      if (req.method === 'GET' && STATIC[url.pathname]) {
-        const name = STATIC[url.pathname];
-        const file = path.join(PUBLIC, name);
-        const payload = fs.readFileSync(file);
-        const ext = path.extname(name);
-        res.writeHead(200, { ...cookieHeaders(res), 'content-type': TYPES[ext] || 'application/octet-stream', 'content-length': payload.length, 'cache-control': name === 'sw.js' ? 'no-cache' : 'public, max-age=300' });
-        return res.end(payload);
+      if (req.method === 'GET' && (publicAsset(url.pathname) || url.pathname.startsWith('/browser'))) {
+        if (url.pathname.startsWith('/browser')) {
+          if (!sessionFrom(req)) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+          return proxyBrowser(req, res, url.pathname.replace(/^\/browser/, '') || '/');
+        }
+        return serveAsset(req, res, url);
       }
       return send(res, 404, { error: 'Not found.' });
     } catch (error) {
@@ -819,23 +1050,45 @@ function createPwaServer({
   }
 
   let server;
+  let localServer = null;
+  const tailnetHandle = (req, res) => { req.accessListener = false; return handle(req, res); };
   if (certPath || keyPath) {
     if (!certPath || !keyPath) throw new Error('Set both INTELIO_PWA_CERT and INTELIO_PWA_KEY, or neither.');
-    server = https.createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }, handle);
-  } else server = http.createServer(handle);
+    server = https.createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }, tailnetHandle);
+  } else server = http.createServer(tailnetHandle);
+  server.on('upgrade', (req, socket, head) => { onUpgrade(req, socket, head, false); });
+  if (accessMode) {
+    localServer = http.createServer((req, res) => { req.accessListener = true; return handle(req, res); });
+    localServer.on('upgrade', (req, socket, head) => { onUpgrade(req, socket, head, true); });
+  }
+
+  function close(done) {
+    const finish = typeof done === 'function' ? done : () => {};
+    let pending = 1 + (localServer ? 1 : 0);
+    const step = () => { pending -= 1; if (pending === 0) finish(); };
+    server.close(step);
+    if (localServer) localServer.close(step);
+  }
 
   return {
     server,
+    local: localServer,
     sessions,
     sample: Boolean(sample),
     voice: runtime,
     warmVoice() {
       return runtime.warm ? runtime.warm() : Promise.resolve();
     },
+    close,
     listen() {
       return new Promise((resolve, reject) => {
+        const startLocal = () => {
+          if (!localServer) return resolve(server.address());
+          localServer.once('error', reject);
+          localServer.listen(localPort, '127.0.0.1', () => resolve(server.address()));
+        };
         server.once('error', reject);
-        server.listen(port, bind, () => resolve(server.address()));
+        server.listen(port, bind, startLocal);
       });
     },
   };
@@ -855,6 +1108,10 @@ if (require.main === module) {
   const app = createPwaServer();
   app.listen().then((address) => {
     process.stdout.write(`Intelio phone client listening on ${address.address}:${address.port}\n`);
+    if (app.local) {
+      const local = app.local.address();
+      process.stdout.write(`Intelio Access listener on ${local.address}:${local.port}\n`);
+    }
     if (process.env.INTELIO_VOICE_PYTHON) {
       app.warmVoice().catch((error) => {
         process.stderr.write(`Voice engines did not warm: ${error.message}\n`);

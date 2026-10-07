@@ -34,7 +34,9 @@
     listening: false,
     searching: false,
     connecting: false,
+    browserControl: false,
   };
+  let rfb = null;
   let audioCtx = null;
   let mic = null;
   let vadHandle = 0;
@@ -93,6 +95,7 @@
       library: '<circle cx="7" cy="12" r="2"/><circle cx="17" cy="8" r="2"/><circle cx="17" cy="16" r="2"/><path d="M9 12h6M15 8l-6 3M15 16l-6-3"/>',
       goals: '<path d="M5 12.5l4 4 10-10"/>',
       down: '<path d="M6 10l6 6 6-6"/>',
+      monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
     };
     const wrap = el('span', 'ico');
     wrap.innerHTML = `<svg viewBox="0 0 24 24">${paths[name] || ''}</svg>`;
@@ -191,7 +194,8 @@
   }
 
   const FACE_PX = { avatar: 72, 'avatar sm': 36, 'avatar lg': 148, face: 32, tile: 96, pip: 28, mark: 96 };
-  const CLIENT_VERSION = 'intelio-pwa-7';
+  const VPS_AGENTS = ['intelio', 'prc', 'alignment', 'hhp'];
+  const CLIENT_VERSION = 'intelio-pwa-8';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);
@@ -243,12 +247,8 @@
     return saved === 'light' || saved === 'dark' ? saved : '';
   }
 
-  function systemTheme() {
-    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-  }
-
   function currentTheme() {
-    return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
   }
 
   function setTheme(mode, persist) {
@@ -297,9 +297,19 @@
     return items;
   }
 
+  function vpsAgents(profiles) {
+    const rows = Array.isArray(profiles) ? profiles : [];
+    return VPS_AGENTS.map((id) => rows.find((item) => String(item.id || '').toLowerCase() === id)).filter(Boolean);
+  }
+
   function visibleChats() {
+    const id = String(state.bot?.id || 'intelio').toLowerCase();
     const q = state.query.trim().toLowerCase();
-    return state.home.conversations.filter((row) => !q || `${row.title} ${row.preview}`.toLowerCase().includes(q));
+    return state.home.conversations.filter((row) => {
+      const profile = String(row.profileId || '').toLowerCase();
+      if (!VPS_AGENTS.includes(profile) || profile !== id) return false;
+      return !q || `${row.title} ${row.preview}`.toLowerCase().includes(q);
+    });
   }
 
   async function unlockAudio() {
@@ -380,10 +390,13 @@
     const screen = el('div', 'screen');
     screen.append(statusBar());
     if (state.sample) screen.append(sampleFlag());
+    const hint = installHint();
+    if (hint) screen.append(hint);
     if (state.error) screen.append(el('div', 'toast', state.error));
     if (state.view === 'call') screen.append(callView());
     else if (state.view === 'icons') screen.append(iconsView());
     else if (state.view === 'settings') screen.append(settingsView());
+    else if (state.view === 'browser') screen.append(browserView());
     else {
       screen.append(topBar());
       const stage = el('div', 'stage');
@@ -406,7 +419,7 @@
   function loginView() {
     const wrap = el('div', 'login');
     const orb = face({ id: 'intelio', name: 'Intelio' }, 'mark');
-    wrap.append(statusBar(), orb, el('h1', '', 'Intelio'), el('p', 'credit', 'Alan’s Way'), el('p', 'note', state.error || 'Checking Tailscale…'));
+    wrap.append(statusBar(), orb, el('h1', '', 'Intelio'), el('p', 'credit', 'Alan’s Way'), el('p', 'note', state.error || 'Checking sign-in…'));
     return wrap;
   }
 
@@ -436,7 +449,17 @@
     gear.setAttribute('aria-label', 'Settings');
     gear.append(icon('gear'));
     gear.addEventListener('click', () => openSettings());
-    bar.append(menu);
+    const theme = el('button', 'theme-mini');
+    theme.type = 'button';
+    theme.setAttribute('aria-label', currentTheme() === 'light' ? 'Switch to dark' : 'Switch to light');
+    theme.textContent = currentTheme() === 'light' ? 'Light' : 'Dark';
+    theme.addEventListener('click', () => { setTheme(currentTheme() === 'light' ? 'dark' : 'light', true); render(); });
+    const browser = el('button', 'iconbtn');
+    browser.type = 'button';
+    browser.setAttribute('aria-label', 'Agent browser');
+    browser.append(icon('monitor'));
+    browser.addEventListener('click', () => openBrowser());
+    bar.append(menu, theme);
     if (state.view === 'chat' || state.tab === 'sessions') {
       const hero = el('div', 'hero');
       hero.append(face(state.bot, 'avatar'));
@@ -446,14 +469,14 @@
       hero.append(pill);
       bar.append(hero);
     }
-    bar.append(gear);
+    bar.append(browser, gear);
     return bar;
   }
 
   function sessionsView() {
     const list = el('div', 'feed');
     list.id = 'list';
-    list.append(agentStrip());
+    list.append(el('p', 'kicker', `${state.bot.name || 'Intelio'} threads`));
     const rows = visibleChats();
     if (!rows.length) list.append(el('p', 'empty', state.sample ? 'No sample conversations.' : 'No conversations yet.'));
     for (const row of rows) list.append(sessionCard(row));
@@ -584,35 +607,27 @@
     gear.append(icon('gear'));
     gear.addEventListener('click', () => openSettings());
     head.append(gear);
+    const appearance = el('button', 'theme-toggle');
+    appearance.type = 'button';
+    appearance.textContent = currentTheme() === 'light' ? 'Light' : 'Dark';
+    appearance.setAttribute('aria-label', currentTheme() === 'light' ? 'Switch to dark' : 'Switch to light');
+    appearance.addEventListener('click', () => { setTheme(currentTheme() === 'light' ? 'dark' : 'light', true); render(); });
+    head.append(appearance);
     panel.append(head);
-    const settingsRow = el('button', 'navbtn');
-    settingsRow.type = 'button';
-    settingsRow.append(icon('gear'), el('span', '', 'Settings'));
-    settingsRow.addEventListener('click', () => openSettings());
-    panel.append(settingsRow);
     panel.append(el('div', 'kicker', 'AGENTS'));
-    for (const profile of state.home.profiles) {
+    const agents = vpsAgents(state.home.profiles);
+    for (const profile of agents) {
       const button = el('button', `navbtn${profile.id === state.bot.id ? ' on' : ''}`);
       button.type = 'button';
       button.append(face(profile, 'pip'), el('span', '', profile.name || profile.id));
       button.addEventListener('click', () => selectProfile(profile));
       panel.append(button);
     }
-    const create = el('button', 'navbtn');
-    create.type = 'button';
-    create.append(icon('plus'), el('span', '', 'New agent'));
-    create.addEventListener('click', () => { state.drawer = false; openSheet('agent'); });
-    panel.append(create, el('div', 'kicker', 'TABS'));
-    for (const [id, label, glyph] of tabs()) {
-      const button = el('button', `navbtn${(id === 'chat' ? state.view === 'chat' : state.tab === id && state.view !== 'chat') ? ' on' : ''}`);
-      button.type = 'button';
-      button.append(icon(glyph), el('span', '', label));
-      button.addEventListener('click', () => selectTab(id));
-      panel.append(button);
-    }
-    panel.append(el('div', 'kicker', 'SIDE CHATS'));
+    panel.append(el('div', 'kicker', 'THREADS'));
     const sides = el('div', 'sides');
-    for (const row of visibleChats()) {
+    const threads = visibleChats();
+    if (!threads.length) sides.append(el('p', 'empty', 'No threads for this agent.'));
+    for (const row of threads) {
       const button = el('button', 'sidechat', row.title);
       button.type = 'button';
       button.addEventListener('click', () => openChat(row));
@@ -643,9 +658,100 @@
     return root;
   }
 
+  function installHint() {
+    let standalone = false;
+    try { standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true; } catch { standalone = false; }
+    if (standalone) return null;
+    const ua = navigator.userAgent || '';
+    const ios = /iPhone|iPad|iPod/.test(ua);
+    const safari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|Chrome/.test(ua);
+    if (!ios || !safari) return null;
+    try { if (localStorage.getItem('intelio-a2hs') === '1') return null; } catch { /* keep the hint */ }
+    const bar = el('div', 'a2hs');
+    bar.append(el('p', '', 'Add Intelio to your Home Screen. Tap Share, then Add to Home Screen.'));
+    const close = el('button', 'a2hs-x', 'OK');
+    close.type = 'button';
+    close.addEventListener('click', () => {
+      try { localStorage.setItem('intelio-a2hs', '1'); } catch { /* still hide it */ }
+      bar.remove();
+    });
+    bar.append(close);
+    return bar;
+  }
+
+  function openBrowser() {
+    haptic();
+    state.view = 'browser';
+    state.drawer = false;
+    render();
+  }
+
+  function browserView() {
+    const wrap = el('div', 'browser-sheet');
+    const bar = el('div', 'browser-bar');
+    const back = el('button', 'iconbtn');
+    back.type = 'button';
+    back.setAttribute('aria-label', 'Back');
+    back.append(icon('back'));
+    back.addEventListener('click', () => {
+      try { rfb?.disconnect(); } catch { /* already closed */ }
+      rfb = null;
+      state.view = state.chatId ? 'chat' : 'home';
+      render();
+    });
+    const title = el('strong', 'browser-title', `${state.bot.name || 'Intelio'} browser`);
+    const control = el('button', 'control-button', state.browserControl ? 'Stop control' : 'Take control');
+    control.type = 'button';
+    control.id = 'take-control';
+    control.setAttribute('aria-pressed', state.browserControl ? 'true' : 'false');
+    control.addEventListener('click', () => {
+      state.browserControl = !state.browserControl;
+      control.textContent = state.browserControl ? 'Stop control' : 'Take control';
+      control.setAttribute('aria-pressed', state.browserControl ? 'true' : 'false');
+      if (rfb) rfb.viewOnly = !state.browserControl;
+      const hint = document.getElementById('browser-hint');
+      if (hint) hint.textContent = state.browserControl ? 'You control this view.' : 'Watching. Take control to use the pointer and keyboard.';
+    });
+    bar.append(back, title, control);
+    const hint = el('p', 'browser-hint', state.browserControl ? 'You control this view.' : 'Watching. Take control to use the pointer and keyboard.');
+    hint.id = 'browser-hint';
+    const screen = el('div', 'vnc-screen');
+    screen.id = 'vnc-screen';
+    screen.append(el('p', 'browser-empty', 'Watching the shared browser'));
+    wrap.append(bar, hint, screen);
+    queueMicrotask(() => connectBrowser(screen));
+    return wrap;
+  }
+
+  async function connectBrowser(screen) {
+    if (!screen.isConnected) return;
+    try { rfb?.disconnect(); } catch { /* already closed */ }
+    rfb = null;
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${proto}//${location.host}/browser/websockify`;
+    try {
+      const mod = await import('/novnc/core/rfb.js');
+      const RFB = mod.default;
+      if (!screen.isConnected) return;
+      const client = new RFB(screen, url);
+      client.viewOnly = !state.browserControl;
+      client.scaleViewport = true;
+      client.resizeSession = false;
+      client.focusOnClick = state.browserControl;
+      client.background = currentTheme() === 'light' ? '#f4f4f6' : '#070708';
+      client.addEventListener('connect', () => {
+        const empty = screen.querySelector('.browser-empty');
+        if (empty) empty.remove();
+      });
+      rfb = client;
+    } catch {
+      if (!screen.querySelector('.browser-empty')) screen.append(el('p', 'browser-empty', 'The shared browser is not connected.'));
+    }
+  }
+
   function iconsView() {
     const wrap = el('div', 'icons');
-    const names = [['Intelio', 'intelio'], ['PRC', 'prc'], ['Alignment', 'alignment'], ['HHP', 'hhp'], ['Kid A', 'kid-a'], ['Lumen', 'lumen'], ['Nimbus', 'nimbus']];
+    const names = [['Intelio', 'intelio'], ['PRC', 'prc'], ['Alignment', 'alignment'], ['HHP', 'hhp']];
     names.forEach(([label, id]) => {
       const figure = document.createElement('figure');
       figure.append(face({ id }, 'tile', { paused: true, still: true, pinned: true }), el('figcaption', '', label));
@@ -794,6 +900,8 @@
     const home = await fetch('/api/home');
     if (home.status === 401) { state.view = 'login'; state.error = 'This Tailscale identity is not allowed.'; render(); return; }
     state.home = await home.json();
+    state.home.profiles = vpsAgents(state.home.profiles);
+    state.home.conversations = (state.home.conversations || []).filter((row) => VPS_AGENTS.includes(String(row.profileId || '').toLowerCase()));
     state.sample = Boolean(state.home.sample);
     state.bot = state.home.profiles[0] || state.bot;
     state.skills = Array.isArray(state.home.skills) ? state.home.skills : [];
@@ -866,9 +974,12 @@
   function selectProfile(profile) {
     haptic();
     state.bot = profile;
-    state.drawer = false;
-    state.view = 'home';
-    state.tab = 'sessions';
+    state.drawer = true;
+    if (state.view === 'chat' || state.view === 'browser') {
+      state.view = 'home';
+      state.tab = 'sessions';
+      state.chatId = '';
+    }
     render();
   }
 
@@ -890,9 +1001,9 @@
   }
 
   function signInLine() {
-    if (state.sample) return 'SAMPLE DATA. Signed in with Tailscale. The profile key stays on the VPS.';
-    if (state.login && state.login !== 'sample') return `Signed in with Tailscale as ${state.login}. The profile key stays on the VPS.`;
-    return 'Signed in with Tailscale. The profile key stays on the VPS.';
+    if (state.sample) return 'SAMPLE DATA. The profile key stays on the VPS.';
+    if (state.login && state.login !== 'sample') return `Signed in as ${state.login}. The profile key stays on the VPS.`;
+    return 'Signed in. The profile key stays on the VPS.';
   }
 
   function voiceFields() {
@@ -949,7 +1060,7 @@
       setTheme(currentTheme() === 'light' ? 'dark' : 'light', true);
       paintToggle();
     });
-    wrap.append(toggle, el('p', '', 'Follows this phone until you tap. The choice is saved on this device.'));
+    wrap.append(toggle, el('p', '', 'Light is the default. Your choice is saved on this device.'));
     wrap.append(el('h2', '', 'About'));
     wrap.append(el('p', '', 'Intelio · Alan’s Way'));
     wrap.append(el('p', 'version', `Version ${CLIENT_VERSION}`));
@@ -1778,20 +1889,39 @@
       render();
       openSheet('agent');
       return true;
+    } else if (name === 'browser') {
+      state.call.active = false;
+      state.view = 'browser';
+      state.drawer = false;
+      state.browserControl = false;
+    } else if (name === 'signin') {
+      state.call.active = false;
+      state.thinking = false;
+      state.chatId = 'sample-intelio';
+      state.messages = await loadMessages('sample-intelio', []);
+      state.view = 'chat';
+      state.tab = 'chat';
+      state.drawer = false;
+      state.bops = {
+        profile: 'intelio',
+        agentName: 'Intelio',
+        focusedId: 'signin-1',
+        orchestration: 'single-session',
+        tasks: [{
+          id: 'signin-1',
+          title: 'Sign in',
+          status: 'blocked',
+          dismissed: false,
+          blocker: { kind: 'login', domain: 'accounts.example.com' },
+        }],
+      };
     }
     render();
     return true;
   };
 
   const savedTheme = storedTheme();
-  if (savedTheme) setTheme(savedTheme, false);
-  else {
-    setTheme(systemTheme(), false);
-    const media = window.matchMedia('(prefers-color-scheme: light)');
-    const followSystem = () => { if (!storedTheme()) setTheme(systemTheme(), false); };
-    if (media.addEventListener) media.addEventListener('change', followSystem);
-    else if (media.addListener) media.addListener(followSystem);
-  }
+  setTheme(savedTheme || 'light', false);
 
   fetch('/session').then((response) => {
     if (response.status === 401) {
