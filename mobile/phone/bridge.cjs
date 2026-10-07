@@ -285,6 +285,10 @@ function attachFrames(socket, { onText, onClose, max = BODY_LIMIT }) {
   let buf = Buffer.alloc(0);
   let fragments = [];
   socket.on('error', () => {});
+  socket.on('end', () => {
+    onClose();
+    if (!socket.destroyed) socket.destroy();
+  });
   socket.on('data', (chunk) => {
     buf = Buffer.concat([buf, chunk]);
     while (buf.length >= 2) {

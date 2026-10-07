@@ -169,7 +169,7 @@ function connectRelay(port, signature) {
         resolve({
           messages,
           send(obj) { socket.write(clientFrame(JSON.stringify(obj))); },
-          close() { socket.end(); },
+          close() { socket.destroy(); },
         });
       }
       while (buf.length >= 2) {
