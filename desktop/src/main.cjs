@@ -1276,7 +1276,7 @@ else {
     if (process.env.INTELIO_E2E !== '1') await extensionStore.restore();
     broadcast();
     if (process.env.INTELIO_E2E === '1') process.stderr.write('intelio e2e: window ready\n');
-    if (tailscaleFirstRun) {
+    if (tailscaleFirstRun && process.env.INTELIO_E2E !== '1') {
       checkTailscale().then(async (status) => {
         const prompt = firstRunMessage(status);
         if (!prompt || !win || win.isDestroyed()) return;
