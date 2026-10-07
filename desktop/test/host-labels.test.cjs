@@ -46,4 +46,6 @@ test('light theme paints the screen grid with theme borders', () => {
   assert.match(ui, /vpsHermesLine/);
   assert.match(renderer, /state\?\.host\?\.pane/);
   assert.match(renderer, /hermesChecklist/);
+  const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
+  assert.equal(html.includes('host-labels.cjs'), false);
 });
