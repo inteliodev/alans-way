@@ -402,7 +402,8 @@ test('a wide browser gets the desktop window and a phone stays on the phone shel
     const boot = fs.readFileSync(path.join(__dirname, '../../mobile/pwa/public/desktop-boot.js'), 'utf8');
     assert.match(boot, /max-width: 999px/);
     assert.match(page.body, /\/ui\/intelio\/desktop-voice\.cjs/);
-    assert.match(page.body, /desktop-transport\.js\?v=19/);
+    assert.match(page.body, /desktop-transport\.js\?v=20/);
+    assert.match(page.body, /\/ui\/intelio\/model-picker\.cjs/);
     const voiceJs = await request(address.port, 'GET', '/ui/intelio/desktop-voice.cjs');
     assert.equal(voiceJs.status, 200);
     assert.match(voiceJs.body, /Voice isn't set up on the server yet/);
@@ -531,5 +532,143 @@ test('Hermes audio wins on the Access listener when capabilities advertise it', 
   } finally {
     await new Promise((resolve) => app.close(resolve));
     await new Promise((resolve) => upstream.close(resolve));
+  }
+});
+
+test('model routes use the Hermes catalog on the tailnet and the Access listener', async () => {
+  const os = require('node:os');
+  const prcKey = 'prc-key-not-real-0002';
+  const vaultRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-models-'));
+  const config = [
+    'model:',
+    "  provider: 'openai-codex'",
+    "  default: 'codex-live-a'",
+    "  base_url: 'https://chatgpt.com/backend-api/codex'",
+    'other:',
+    '  default: keep-me',
+    '',
+  ].join('\n');
+  fs.mkdirSync(path.join(vaultRoot, 'intelio'), { recursive: true });
+  fs.writeFileSync(path.join(vaultRoot, 'intelio', 'config.yaml'), config);
+  const seen = [];
+  let restarted = 0;
+  const upstream = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      seen.push({ url: req.url, method: req.method, body: raw, auth: req.headers.authorization || '' });
+      if (req.headers.authorization !== `Bearer ${KEY}`) { res.statusCode = 401; res.end('{"error":"no"}'); return; }
+      if (req.url === '/p/intelio/v1/capabilities') {
+        res.end(JSON.stringify({ features: { session_model_lock: true } }));
+        return;
+      }
+      if (req.url === '/p/intelio/api/model/options') {
+        res.end(JSON.stringify({
+          providers: [
+            { slug: 'openai-codex', authenticated: true, auth_type: 'oauth', models: ['codex-live-a', 'codex-live-b'], warning: 'ignore', key_env: 'OPENAI_API_KEY' },
+            { slug: 'anthropic', authenticated: true, auth_type: 'oauth', models: ['claude-live-a'] },
+            { slug: 'openai', authenticated: true, auth_type: 'api_key', models: ['gpt-key-only'] },
+          ],
+        }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/p/intelio/api/sessions/thread-1/model') {
+        res.end(JSON.stringify({ object: 'hermes.session.model_lock', session_id: 'thread-1' }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/p/intelio/api/sessions/thread-1/chat/stream') {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end('event: assistant.delta\ndata: {"delta":"ok"}\n\n');
+        return;
+      }
+      res.statusCode = 404;
+      res.end('{}');
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const app = createPwaServer({
+    bind: '127.0.0.1',
+    port: 0,
+    localPort: 0,
+    upstream: `http://127.0.0.1:${upstream.address().port}`,
+    fetchImpl: globalThis.fetch,
+    profileKey: KEY,
+    vaultRoot,
+    identify: allowLocal,
+    accessMode: true,
+    accessVerify: async () => ({ ok: false }),
+    profileOps: {
+      keyFor: (id) => (id === 'prc' ? prcKey : KEY),
+      restart() { restarted += 1; },
+    },
+  });
+  const address = await app.listen();
+  const tailnet = address.port;
+  const access = app.local.address().port;
+  try {
+    const login = await request(tailnet, 'GET', '/session');
+    const cookie = login.headers['set-cookie'][0].split(';')[0];
+    const listed = await request(tailnet, 'GET', '/api/models?profile=intelio', { cookie, headers: { 'x-intelio-profile': 'intelio' } });
+    assert.equal(listed.status, 200, listed.body);
+    const menu = JSON.parse(listed.body);
+    assert.equal(menu.model, 'codex-live-a');
+    assert.equal(menu.provider, 'openai-codex');
+    assert.deepEqual(menu.groups.map((group) => group.provider), ['openai-codex', 'anthropic']);
+    assert.equal(listed.body.includes('OPENAI_API_KEY'), false);
+    assert.equal(listed.body.includes('gpt-key-only'), false);
+    assert.equal(listed.body.includes(KEY), false);
+    const headers = { authorization: `Bearer ${KEY}`, 'x-intelio-profile': 'intelio', 'content-type': 'application/json' };
+    const locked = await request(access, 'POST', '/api/sessions/thread-1/model', {
+      headers,
+      body: JSON.stringify({ profile: 'intelio', model: 'claude-live-a', provider: 'anthropic', effort: 'medium' }),
+    });
+    assert.equal(locked.status, 200);
+    assert.equal(JSON.parse(locked.body).applied, 'session');
+    assert.equal(JSON.parse(locked.body).restartRequired, false);
+    const forwarded = seen.find((row) => row.url === '/p/intelio/api/sessions/thread-1/model');
+    const forwardedBody = JSON.parse(forwarded.body);
+    assert.equal(forwardedBody.provider, 'anthropic');
+    assert.equal(forwardedBody.model, 'claude-live-a');
+    assert.equal(forwardedBody.model_options.reasoning.effort, 'medium');
+    const saved = await request(access, 'POST', '/api/agent/model', {
+      headers,
+      body: JSON.stringify({ profile: 'intelio', model: 'claude-live-a', provider: 'anthropic' }),
+    });
+    assert.equal(saved.status, 200, saved.body);
+    assert.match(JSON.parse(saved.body).note, /New threads for intelio use this model/);
+    assert.equal(JSON.parse(saved.body).restartRequired, false);
+    assert.equal(restarted, 0);
+    const written = fs.readFileSync(path.join(vaultRoot, 'intelio', 'config.yaml'), 'utf8');
+    assert.match(written, /provider: 'anthropic'/);
+    assert.match(written, /default: 'claude-live-a'/);
+    assert.match(written, /base_url: 'https:\/\/chatgpt.com\/backend-api\/codex'/);
+    assert.match(written, /default: keep-me/);
+    const backups = fs.readdirSync(path.join(vaultRoot, 'intelio')).filter((name) => name.startsWith('config.yaml.bak-'));
+    assert.equal(backups.length, 1);
+    const chat = await request(access, 'POST', '/api/sessions/thread-1/chat', {
+      headers,
+      body: JSON.stringify({ input: 'hello', profile: 'intelio', model: 'codex-live-b', provider: 'openai-codex', effort: 'low' }),
+    });
+    assert.equal(chat.status, 200);
+    const chatBody = JSON.parse(seen.find((row) => row.url.endsWith('/chat/stream')).body);
+    assert.equal(chatBody.model, 'codex-live-b');
+    assert.equal(chatBody.provider, 'openai-codex');
+    assert.equal(chatBody.model_options.reasoning_effort, 'low');
+    const wrong = await request(access, 'GET', '/api/models?profile=intelio', { headers: { authorization: `Bearer ${prcKey}`, 'x-intelio-profile': 'intelio' } });
+    assert.equal(wrong.status, 401);
+    assert.equal(wrong.body.includes(KEY), false);
+    assert.equal(wrong.body.includes(prcKey), false);
+    const other = await request(access, 'POST', '/api/agent/model', {
+      headers: { authorization: `Bearer ${KEY}`, 'x-intelio-profile': 'prc', 'content-type': 'application/json' },
+      body: JSON.stringify({ profile: 'prc', model: 'claude-live-a', provider: 'anthropic' }),
+    });
+    assert.equal(other.status, 401);
+    assert.equal(other.body.includes(KEY), false);
+    assert.equal(other.body.includes(prcKey), false);
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
+    fs.rmSync(vaultRoot, { recursive: true, force: true });
   }
 });

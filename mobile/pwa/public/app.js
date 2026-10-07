@@ -50,6 +50,14 @@
     colorOpen: false,
     screens: [],
     updateReady: false,
+    modelOpen: false,
+    modelId: '',
+    modelProvider: '',
+    modelEffort: 'auto',
+    modelGroups: [],
+    modelApplied: '',
+    modelNote: '',
+    profileModel: '',
   };
   let rfb = null;
   let audioCtx = null;
@@ -255,7 +263,7 @@
     if (name.toLowerCase() === 'intelio') return 'intelio';
     return name || 'intelio';
   }
-  const CLIENT_VERSION = 'intelio-pwa-16';
+  const CLIENT_VERSION = 'intelio-pwa-17';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);
@@ -719,6 +727,7 @@
     mic.id = 'dictate';
     mic.title = 'Dictate';
     mic.setAttribute('aria-label', 'Dictate');
+    const pill = modelPill();
     const voice = roundButton('waveform', () => { if (state.chatId) startCall(state.chatId); });
     voice.title = 'Voice conversation';
     voice.setAttribute('aria-label', 'Voice conversation');
@@ -727,7 +736,9 @@
     send.type = 'submit';
     send.title = 'Send';
     send.setAttribute('aria-label', 'Send');
-    form.append(plus, input, mic, voice, send);
+    form.append(plus, input, pill, mic, voice, send);
+    if (state.modelOpen) wrap.append(modelMenu());
+    if (state.modelNote) wrap.append(el('p', 'model-note', state.modelNote));
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       const text = input.value.trim();
@@ -1660,12 +1671,15 @@
   async function openChat(row) {
     state.chatId = row.id;
     state.bot = profileById(row.profileId);
+    state.modelApplied = '';
+    state.modelOpen = false;
     state.view = 'chat';
     state.tab = 'chat';
     state.drawer = false;
     state.messages = [];
     render();
     await loadMessages(row.id, state.messages);
+    loadModelOptions().catch(() => {});
     if (state.call.active && state.call.sessionId === row.id) state.captions = state.messages;
     render();
   }
@@ -1696,9 +1710,121 @@
     if (!id) { state.error = body.error || 'Could not start a chat.'; render(); return; }
     state.chatId = id;
     state.messages = [];
+    state.modelApplied = '';
     state.view = 'chat';
     state.tab = 'chat';
     state.drawer = false;
+    render();
+    loadModelOptions().catch(() => {});
+  }
+
+  function modelApi() {
+    return window.IntelioModelPicker || null;
+  }
+
+  function modelPill() {
+    const api = modelApi();
+    const pill = el('button', 'model-pill');
+    pill.type = 'button';
+    pill.id = 'model-pill';
+    pill.setAttribute('aria-haspopup', 'listbox');
+    pill.setAttribute('aria-expanded', state.modelOpen ? 'true' : 'false');
+    const text = api ? api.pillLabel(state.modelId) : (state.modelId || 'Model');
+    pill.textContent = `${text} ▾`;
+    pill.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.modelOpen) { state.modelOpen = false; render(); return; }
+      await loadModelOptions();
+      state.modelOpen = true;
+      render();
+    });
+    return pill;
+  }
+
+  function modelOption(label, selected, onClick) {
+    const button = el('button', '');
+    button.type = 'button';
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', selected ? 'true' : 'false');
+    button.textContent = label;
+    button.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); onClick(); });
+    return button;
+  }
+
+  function modelMenu() {
+    const api = modelApi();
+    const menu = el('div', 'model-menu');
+    menu.id = 'model-menu';
+    menu.setAttribute('role', 'listbox');
+    if (!api) return menu;
+    const groups = state.modelGroups || [];
+    if (!groups.length && state.modelId) {
+      menu.append(el('div', 'model-label', api.providerLabel(state.modelProvider)));
+      menu.append(modelOption(state.modelId, true, () => {}));
+    }
+    for (const group of groups) {
+      menu.append(el('div', 'model-label', group.label || api.providerLabel(group.provider)));
+      for (const id of group.models || []) menu.append(modelOption(id, id === state.modelId, () => choosePhoneModel(group.provider, id)));
+    }
+    menu.append(el('div', 'model-label', 'Thinking'));
+    for (const effort of api.EFFORTS) menu.append(modelOption(api.EFFORT_LABELS[effort], effort === (state.modelEffort || 'auto'), () => choosePhoneEffort(effort)));
+    menu.append(modelOption(`Make default for ${agentLabel(state.bot)}`, false, () => makePhoneDefault()));
+    return menu;
+  }
+
+  async function loadModelOptions() {
+    const id = state.bot?.id || '';
+    const session = state.chatId ? `&session=${encodeURIComponent(state.chatId)}` : '';
+    const response = await fetch(`/api/models?profile=${encodeURIComponent(id)}${session}`, { headers: profileHeaders(id) });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) return;
+    state.modelProvider = json.provider || '';
+    state.modelId = json.model || '';
+    state.modelEffort = json.effort || 'auto';
+    state.modelGroups = Array.isArray(json.groups) ? json.groups : [];
+    state.profileModel = json.profileModel || '';
+    if (state.view === 'chat') render();
+  }
+
+  async function applyPhoneModel(provider, model, effort) {
+    const api = modelApi();
+    state.modelProvider = api ? api.canonicalProvider(provider) : provider;
+    state.modelId = model;
+    state.modelEffort = effort || state.modelEffort || 'auto';
+    state.modelOpen = false;
+    state.modelNote = '';
+    if (!state.chatId) { state.modelApplied = 'request'; render(); return; }
+    const response = await fetch(`/api/sessions/${encodeURIComponent(state.chatId)}/model`, {
+      method: 'POST',
+      headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ profile: state.bot?.id || '', model, provider: state.modelProvider, effort: state.modelEffort }),
+    });
+    const json = await response.json().catch(() => ({}));
+    state.modelApplied = response.ok ? (json.applied || 'request') : 'request';
+    if (!response.ok) state.modelNote = json.error || 'Could not switch the model for this thread.';
+    render();
+  }
+
+  function choosePhoneModel(provider, model) { return applyPhoneModel(provider, model, state.modelEffort || 'auto'); }
+  function choosePhoneEffort(effort) {
+    const model = state.modelId || state.profileModel;
+    if (!model) return;
+    return applyPhoneModel(state.modelProvider, model, effort);
+  }
+
+  async function makePhoneDefault() {
+    const model = state.modelId || state.profileModel;
+    state.modelOpen = false;
+    if (!model) return;
+    const response = await fetch('/api/agent/model', {
+      method: 'POST',
+      headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ profile: state.bot?.id || '', model, provider: state.modelProvider }),
+    });
+    const json = await response.json().catch(() => ({}));
+    state.modelNote = response.ok ? (json.note || '') : (json.error || 'Could not save that model.');
+    if (response.ok) state.profileModel = model;
     render();
   }
 
@@ -2541,10 +2667,16 @@
     state.thinking = true;
     paintLive();
     try {
+    const payload = { input: text, profile: state.bot?.id || '' };
+    if (state.modelApplied === 'request' && state.modelId && state.modelProvider) {
+      payload.model = state.modelId;
+      payload.provider = state.modelProvider;
+      payload.effort = state.modelEffort || 'auto';
+    }
     const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/chat`, {
       method: 'POST',
       headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
-      body: JSON.stringify({ input: text, profile: state.bot?.id || '' }),
+      body: JSON.stringify(payload),
     });
     if (!response.ok || !response.body) {
       pending.text = 'The reply did not start.';

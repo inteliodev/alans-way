@@ -28,7 +28,8 @@ const { renderOrbPng } = require('./orbs.cjs');
 const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
 const { resolveVncUpstream, readVncPassword, bridgeVnc } = require('./vnc-proxy.cjs');
 const { resolveCdpUrl } = require('../../desktop/src/intelio/cdp-fill.cjs');
-const { harnessId, excludedAgent, buildCard, readProfileFiles, writePaused, writeReasoning, writeProfile, cleanColor } = require('../../desktop/src/intelio/agent-card.cjs');
+const { harnessId, excludedAgent, buildCard, readProfileFiles, writePaused, writeReasoning, writeProfile, cleanColor, backupFile } = require('../../desktop/src/intelio/agent-card.cjs');
+const picker = require('../../desktop/src/intelio/model-picker.cjs');
 const { preview: previewTranscript } = require('../../desktop/src/intelio/transcript.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
@@ -45,7 +46,7 @@ const STATIC = {
 };
 const DESKTOP_SRC = path.resolve(__dirname, '../../desktop/src');
 const UI_EXT = new Set(['.css', '.js', '.woff2', '.png', '.svg']);
-const UI_CJS = new Set(['intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs', 'intelio/calls.cjs', 'intelio/desktop-voice.cjs']);
+const UI_CJS = new Set(['intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs', 'intelio/calls.cjs', 'intelio/desktop-voice.cjs', 'intelio/model-picker.cjs']);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json' };
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -230,6 +231,7 @@ function createPwaServer({
   const cachedKeys = new Map();
   let keyError = '';
   let audioApi = false;
+  let sessionModelLock = false;
   let listedProfiles = null;
   let featuresKnown = false;
   const denialLogAt = new Map();
@@ -281,6 +283,7 @@ function createPwaServer({
       let json = {};
       if (probe.ok) { try { json = JSON.parse(text); } catch { json = {}; } }
       audioApi = Boolean(json.features && json.features.audio_api);
+      sessionModelLock = Boolean(json.features && (json.features.session_model_lock || json.endpoints?.session_model_lock));
       listedProfiles = Array.isArray(json.profiles) ? json.profiles : null;
     } catch {
       audioApi = false;
@@ -563,6 +566,68 @@ function createPwaServer({
     res.end(text);
   }
 
+  async function hermesJson(profileId, pathname, { method = 'GET', body } = {}) {
+    const response = await fetchImpl(hermesUrl(profileId, pathname), {
+      method,
+      headers: {
+        Authorization: `Bearer ${bearerKey(profileId)}`,
+        Accept: 'application/json',
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      redirect: 'error',
+    });
+    const text = await response.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+    return { status: response.status, json };
+  }
+  async function catalogFor(profileId, current) {
+    if (sample || !picker.subscriptionProvider(current.provider) || current.secret) return [];
+    let groups = [];
+    try {
+      const options = await hermesJson(profileId, '/api/model/options');
+      if (options.status === 200 && options.json) groups = picker.modelsFromHermes(options.json);
+    } catch { groups = []; }
+    if (groups.length) return groups;
+    try {
+      const listed = await hermesJson(profileId, '/v1/models');
+      const models = listed.status === 200 ? picker.modelsFromList(listed.json) : [];
+      const provider = picker.canonicalProvider(current.provider);
+      if (!models.length || !picker.subscriptionProvider(provider)) return [];
+      return [{ provider, label: picker.providerLabel(provider), models }];
+    } catch { return []; }
+  }
+  function modelState(profileId) {
+    const id = harnessId(profileId);
+    const files = id ? readProfileFiles(vaultRootPath, id) : null;
+    const current = picker.configModel(files?.configText || '');
+    return {
+      id,
+      files,
+      current,
+      effort: picker.effortFromConfig(files?.configText || ''),
+      keyless: picker.subscriptionProvider(current.provider) && !current.secret,
+    };
+  }
+  function modelAllowed(state, provider, model, groups) {
+    const canon = picker.canonicalProvider(provider);
+    if (!picker.keepId(model) || !picker.subscriptionProvider(canon)) return false;
+    if (!state.keyless) return false;
+    const listed = (groups || []).some((group) => group.provider === canon && group.models.includes(model));
+    const same = picker.canonicalProvider(state.current.provider) === canon && state.current.model === model;
+    return listed || same;
+  }
+  async function threadModel(profileId, sessionId) {
+    if (!sessionId || !ID_RE.test(sessionId)) return '';
+    try {
+      const hit = await hermesJson(profileId, `/api/sessions/${sessionId}`);
+      const id = String(hit.json?.model || hit.json?.session?.model || '').trim();
+      if (!picker.keepId(id) || id === profileId) return '';
+      return id;
+    } catch { return ''; }
+  }
+
   function engineChoice(req) {
     const raw = String(req.headers['x-intelio-engine'] || 'auto').toLowerCase();
     if (raw === 'hermes' || raw === 'vps' || raw === 'web' || raw === 'auto') return raw;
@@ -705,10 +770,10 @@ function createPwaServer({
       "img-src 'self' data: blob: crx:",
     );
     html = html.replace(/(href|src)="(?!\/|https?:|data:)([^"]+)"/g, '$1="/ui/$2"');
-    html = html.replace('</head>', '<script src="/desktop-boot.js?v=19"></script></head>');
+    html = html.replace('</head>', '<script src="/desktop-boot.js?v=20"></script></head>');
     html = html.replace(
       '<script src="/ui/renderer.js"></script>',
-      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=19"></script><script src="/ui/renderer.js"></script>',
+      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=20"></script><script src="/ui/renderer.js"></script>',
     );
     return html;
   }
@@ -1303,6 +1368,81 @@ function createPwaServer({
           return send(res, 503, { error: String(error.message || 'Speech failed.').slice(0, 200), fallback: 'web' });
         }
       }
+      if (req.method === 'GET' && url.pathname === '/api/models') {
+        const state = modelState(chosenProfile(req, {}));
+        if (!state.id) return send(res, 404, { error: 'Unknown agent.' });
+        if (!sample && state.keyless) await learnFeatures();
+        const groups = state.keyless && !sample ? await catalogFor(state.id, state.current) : [];
+        const sessionId = url.searchParams.get('session') || '';
+        const thread = !sample && state.keyless ? await threadModel(state.id, sessionId) : '';
+        return send(res, 200, {
+          provider: state.keyless ? picker.canonicalProvider(state.current.provider) : '',
+          model: thread || state.current.model || '',
+          profileModel: state.current.model || '',
+          effort: state.effort,
+          efforts: picker.EFFORTS,
+          groups,
+          keyless: state.keyless,
+          sessionModelLock: Boolean(sessionModelLock),
+          restartRequired: false,
+        });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/agent/model') {
+        if (!presentedBearer(req).present && !mutationOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
+        const body = await readBody(req, 4096);
+        const gated = chosenProfile(req, {});
+        const asked = chosenProfile(req, body);
+        if (gated !== asked) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+        const state = modelState(asked);
+        if (!state.id || !state.files) return send(res, 404, { error: 'That agent was not found.' });
+        const provider = picker.canonicalProvider(body.provider || state.current.provider);
+        const model = String(body.model || '').trim();
+        const groups = sample ? [] : await catalogFor(state.id, state.current);
+        if (!modelAllowed(state, provider, model, groups)) return send(res, 400, { error: 'That model is not available.' });
+        const file = path.join(vaultRootPath, state.id, 'config.yaml');
+        const next = picker.applyModelDefault(state.files.configText, model, provider);
+        if (next == null) return send(res, 400, { error: 'That model cannot be saved.' });
+        backupFile(file, fs);
+        fs.writeFileSync(file, next.endsWith('\n') ? next : `${next}\n`, { mode: 0o600 });
+        return send(res, 200, {
+          ok: true,
+          model,
+          provider,
+          restartRequired: false,
+          note: picker.defaultNote(displayName(state.id)),
+        });
+      }
+      const sessionModelRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/model$/);
+      if (req.method === 'POST' && sessionModelRoute && ID_RE.test(sessionModelRoute[1])) {
+        if (!presentedBearer(req).present && !mutationOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
+        const body = await readBody(req, 4096);
+        const gated = chosenProfile(req, {});
+        const asked = chosenProfile(req, body);
+        if (gated !== asked) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+        const state = modelState(asked);
+        if (!state.id) return send(res, 404, { error: 'Unknown agent.' });
+        const provider = picker.canonicalProvider(body.provider || state.current.provider);
+        const model = String(body.model || '').trim();
+        const effort = picker.EFFORTS.includes(String(body.effort || '').toLowerCase()) ? String(body.effort).toLowerCase() : 'auto';
+        const groups = sample ? [] : await catalogFor(state.id, state.current);
+        if (!modelAllowed(state, provider, model, groups)) return send(res, 400, { error: 'That model is not available.' });
+        if (!sample) await learnFeatures();
+        let applied = 'request';
+        if (!sample) {
+          try {
+            const locked = await hermesJson(state.id, `/api/sessions/${sessionModelRoute[1]}/model`, {
+              method: 'POST',
+              body: picker.sessionSwitchBody(provider, model, effort),
+            });
+            if (locked.status === 404 || locked.status === 405) applied = 'request';
+            else if (locked.status >= 200 && locked.status < 300) applied = 'session';
+            else return send(res, 502, { error: 'Could not switch the model for this thread.' });
+          } catch {
+            applied = 'request';
+          }
+        }
+        return send(res, 200, { ok: true, applied, model, provider, effort, restartRequired: false });
+      }
       if (req.method === 'GET' && url.pathname === '/api/sessions') {
         return await forward(req, res, '/api/sessions', { query: { source: url.searchParams.get('source') || '', limit: '100', offset: '0' }, profileId: chosenProfile(req) });
       }
@@ -1323,7 +1463,20 @@ function createPwaServer({
           res.end('event: assistant.delta\ndata: {"delta":"SAMPLE DATA reply."}\n\n');
           return;
         }
-        return await forward(req, res, `/api/sessions/${chat[1]}/chat/stream`, { method: 'POST', body: { input: String(body.input || '').slice(0, 100000) }, stream: true, profileId: chosenProfile(req, body) });
+        const agent = chosenProfile(req, body);
+        const state = modelState(agent);
+        const groups = !sample && body.model ? await catalogFor(agent, state.current) : [];
+        const extra = picker.chatFields({
+          ...body,
+          profileModel: state.current.model,
+          profileProvider: state.current.provider,
+        }, groups);
+        return await forward(req, res, `/api/sessions/${chat[1]}/chat/stream`, {
+          method: 'POST',
+          body: { input: String(body.input || '').slice(0, 100000), ...extra },
+          stream: true,
+          profileId: agent,
+        });
       }
       if (req.method === 'POST' && url.pathname === '/api/sessions') {
         const body = await readBody(req, 4096);

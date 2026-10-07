@@ -1076,6 +1076,7 @@
     if (input) input.disabled = false;
     if (send) send.disabled = false;
     try { await loadMessages(id); } catch (error) { setStatus(error.message); showProfileError(error.message); }
+    loadModelOptions().catch(() => {});
   }
 
   function sessionRows() {
@@ -1208,7 +1209,10 @@
       paintSessions();
       const target = sessionId && ui.sessions.some((session) => session.id === sessionId) ? sessionId : ui.sessions[0]?.id;
       if (target) await openSession(target);
-      else setStatus('No sessions for this agent yet. Send a message to start one.');
+      else {
+        setStatus('No sessions for this agent yet. Send a message to start one.');
+        loadModelOptions().catch(() => {});
+      }
     } catch (error) { setStatus(error.message); showProfileError(error.message); }
   }
 
@@ -1244,6 +1248,13 @@
     if (voice) voice.onclick = () => toggleCall();
     const mic = $('remote-mic');
     if (mic) mic.onclick = () => dictate();
+    const model = $('remote-model');
+    if (model) model.onclick = (event) => { event.preventDefault(); event.stopPropagation(); toggleModelMenu(); };
+    root.document.addEventListener('pointerdown', (event) => {
+      if (event.target.closest?.('#remote-model, #model-menu')) return;
+      const menu = $('model-menu');
+      if (menu && !menu.classList.contains('hidden')) closeModelMenu();
+    });
     const headerCall = $('chat-call');
     if (headerCall) headerCall.onclick = () => callPhone();
     $('tab-agents')?.addEventListener('click', () => setSidebar('agents'));
@@ -1337,6 +1348,134 @@
     await Promise.all(jobs);
   }
 
+  function pickerApi() {
+    return root.IntelioModelPicker || null;
+  }
+
+  function paintModel() {
+    const api = pickerApi();
+    const label = $('model-pill-label');
+    const button = $('remote-model');
+    const text = api ? api.pillLabel(ui.modelId) : (ui.modelId || 'Model');
+    if (label) label.textContent = text;
+    if (button) button.setAttribute('aria-label', text);
+  }
+
+  function closeModelMenu() {
+    ui.modelOpen = false;
+    $('model-menu')?.classList.add('hidden');
+    $('remote-model')?.setAttribute('aria-expanded', 'false');
+  }
+
+  function menuButton(label, selected, onClick) {
+    const button = el('button', '', label);
+    button.type = 'button';
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', selected ? 'true' : 'false');
+    button.onclick = (event) => { event.preventDefault(); event.stopPropagation(); onClick(); };
+    return button;
+  }
+
+  async function loadModelOptions() {
+    paintModel();
+    if (!root.remoteHermes) return;
+    try {
+      const result = await root.remoteHermes.request('model-options', { profile: ui.selected, id: ui.sessionId });
+      ui.modelProvider = result?.provider || '';
+      ui.modelId = result?.model || '';
+      ui.modelEffort = result?.effort || 'auto';
+      ui.modelGroups = Array.isArray(result?.groups) ? result.groups : [];
+      ui.profileModel = result?.profileModel || '';
+      if (!ui.modelApplied) ui.modelApplied = '';
+      paintModel();
+      if (ui.modelOpen) paintModelMenu();
+    } catch { paintModel(); }
+  }
+
+  function paintModelMenu() {
+    const menu = $('model-menu');
+    const api = pickerApi();
+    if (!menu || !api) return;
+    menu.replaceChildren();
+    const groups = ui.modelGroups || [];
+    if (!groups.length && ui.modelId) {
+      menu.append(el('div', 'model-label', api.providerLabel(ui.modelProvider)));
+      menu.append(menuButton(ui.modelId, true, () => {}));
+    }
+    for (const group of groups) {
+      menu.append(el('div', 'model-label', group.label || api.providerLabel(group.provider)));
+      for (const id of group.models || []) menu.append(menuButton(id, id === ui.modelId, () => chooseModel(group.provider, id)));
+    }
+    menu.append(el('div', 'model-label', 'Thinking'));
+    for (const effort of api.EFFORTS) {
+      menu.append(menuButton(api.EFFORT_LABELS[effort], effort === (ui.modelEffort || 'auto'), () => chooseEffort(effort)));
+    }
+    const agent = selectedAgent();
+    const name = agent ? shownAgent(agent.id, agent.name) : (ui.selected || 'this agent');
+    menu.append(menuButton(`Make default for ${name}`, false, () => makeModelDefault(name)));
+  }
+
+  async function toggleModelMenu() {
+    if (ui.modelOpen) { closeModelMenu(); return; }
+    await loadModelOptions();
+    ui.modelOpen = true;
+    paintModelMenu();
+    $('model-menu')?.classList.remove('hidden');
+    $('remote-model')?.setAttribute('aria-expanded', 'true');
+  }
+
+  async function applyThreadModel(provider, model, effort) {
+    const api = pickerApi();
+    ui.modelProvider = api ? api.canonicalProvider(provider) : provider;
+    ui.modelId = model;
+    ui.modelEffort = effort || ui.modelEffort || 'auto';
+    paintModel();
+    closeModelMenu();
+    if (!ui.sessionId || ui.sample) { ui.modelApplied = 'request'; return; }
+    try {
+      const result = await root.remoteHermes.request('session-model', {
+        id: ui.sessionId,
+        profile: ui.selected,
+        model: ui.modelId,
+        provider: ui.modelProvider,
+        effort: ui.modelEffort,
+      });
+      ui.modelApplied = result?.applied || 'request';
+    } catch (error) {
+      ui.modelApplied = 'request';
+      showInline('composer-note', error?.message || 'Could not switch the model for this thread.');
+    }
+  }
+
+  function chooseModel(provider, model) { return applyThreadModel(provider, model, ui.modelEffort || 'auto'); }
+  function chooseEffort(effort) {
+    const model = ui.modelId || ui.profileModel;
+    if (!model) return;
+    return applyThreadModel(ui.modelProvider, model, effort);
+  }
+
+  async function makeModelDefault(name) {
+    const model = ui.modelId || ui.profileModel;
+    if (!model) return;
+    closeModelMenu();
+    try {
+      const result = await root.remoteHermes.request('agent-model', {
+        profile: ui.selected,
+        model,
+        provider: ui.modelProvider,
+      });
+      ui.profileModel = model;
+      showInline('composer-note', result?.note || (pickerApi()?.defaultNote(name) || ''));
+    } catch (error) {
+      showInline('composer-note', error?.message || 'Could not save that model.');
+    }
+  }
+
+  function modelSendFields() {
+    if (ui.modelApplied !== 'request' || !ui.modelId || !ui.modelProvider) return {};
+    return { model: ui.modelId, provider: ui.modelProvider, effort: ui.modelEffort || 'auto' };
+  }
+
   async function send(event) {
     event?.preventDefault?.();
     const input = $('remote-input');
@@ -1388,7 +1527,7 @@
     pane?.append(ui.streaming, ui.liveTools, stop);
     setStatus('');
     try {
-      const jobs = [root.remoteHermes.request('send', { id: ui.sessionId, profile: ui.selected, input: text })];
+      const jobs = [root.remoteHermes.request('send', { id: ui.sessionId, profile: ui.selected, input: text, ...modelSendFields() })];
       if (plan.handoff) jobs.push(runHandoff(plan.handoff, token));
       await Promise.all(jobs);
       if (!ui.bops?.tasks?.some((task) => task.status === 'blocked')) {

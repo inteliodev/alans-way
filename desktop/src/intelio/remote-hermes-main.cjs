@@ -460,7 +460,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return `${scheme}://${host}:${port}`;
   }
 
-  async function pwaRequest(profile, key, pathname, body, { timeoutMs = 1200, expectId = true } = {}) {
+  async function pwaRequest(profile, key, pathname, body, { timeoutMs = 1200, expectId = true, query = '' } = {}) {
     let cfg;
     try { cfg = await config(); } catch { return null; }
     const cloud = Boolean(cfg?.origin || cfg?.activeMode === 'cloud');
@@ -471,7 +471,9 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await doFetch(`${base}${pathname}?profile=${encodeURIComponent(profile)}`, {
+      const extra = query ? `&${String(query).replace(/^\?/, '')}` : '';
+      const join = String(pathname).includes('?') ? '&' : '?';
+      const response = await doFetch(`${base}${pathname}${join}profile=${encodeURIComponent(profile)}${extra}`, {
         method: body ? 'POST' : 'GET',
         headers: {
           ...(key ? { Authorization: `Bearer ${key}` } : {}),
@@ -690,6 +692,35 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return { ...card, paused: paused === true, localOnly: true };
   }
 
+  async function modelCall(profile, pathname, body, query = '') {
+    const id = harnessId(profile) || 'intelio';
+    const key = await getKey(id).catch(() => '');
+    const remote = await pwaRequest(id, key, pathname, body, { timeoutMs: 8000, expectId: false, query });
+    if (!remote) throw new Error('Could not reach the model list.');
+    return remote;
+  }
+
+  async function modelOptions(profile, sessionId) {
+    const query = sessionId ? `session=${encodeURIComponent(sessionId)}` : '';
+    try { return await modelCall(profile, '/api/models', null, query); }
+    catch { return { model: '', provider: '', groups: [], effort: 'auto', efforts: ['auto', 'low', 'medium', 'high'], restartRequired: false }; }
+  }
+
+  async function sessionModel(profile, value = {}) {
+    const id = String(value.id || '');
+    return modelCall(profile, `/api/sessions/${encodeURIComponent(id)}/model`, {
+      profile: harnessId(profile) || 'intelio',
+      model: value.model,
+      provider: value.provider,
+      effort: value.effort,
+    });
+  }
+
+  async function agentModel(profile, value = {}) {
+    const id = harnessId(profile) || 'intelio';
+    return modelCall(id, '/api/agent/model', { profile: id, model: value.model, provider: value.provider });
+  }
+
   function register() {
     ipcMain.handle('remote-hermes', async (event, name, value = {}) => {
       trusted(event);
@@ -725,15 +756,23 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
           case 'voice-status': return await voiceStatus(value.profile);
           case 'voice-transcribe': return await voiceTranscribe(value.profile, value);
           case 'voice-speak': return await voiceSpeak(value.profile, value);
+          case 'model-options': return await modelOptions(value.profile, value.id);
+          case 'session-model': return await sessionModel(value.profile, value);
+          case 'agent-model': return await agentModel(value.profile, value);
           case 'screens': return { data: await listRemoteScreens() };
           case 'send': {
             const id = String(value.id);
             const controller = new AbortController();
             inflight.set(id, controller);
             try {
+              const picker = require('./model-picker.cjs');
+              const switched = value.model && value.provider && picker.keepId(value.model) && picker.subscriptionProvider(value.provider)
+                ? picker.sessionSwitchBody(value.provider, value.model, value.effort)
+                : null;
               return await client.chat(id, String(value.input || '').slice(0, 100000), {
                 signal: controller.signal,
                 profile: value.profile,
+                model: switched,
                 onEvent: (evt) => { if (!event.sender.isDestroyed()) event.sender.send('remote-hermes:event', { sessionId: id, event: evt.event, data: evt.data }); },
               });
             } finally { inflight.delete(id); }

@@ -35,7 +35,7 @@
   function baseState() {
     return {
       name: 'intelio',
-      version: '0.3.18',
+      version: '0.3.19',
       intelio: { ok: true, profileName: 'intelio', brand: { mark: '/icon-192.png' }, hermes: {} },
       bots: [],
       order: [],
@@ -188,7 +188,11 @@
       const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/chat`, {
         method: 'POST',
         headers: { Accept: 'text/event-stream', 'content-type': 'application/json', 'x-intelio-profile': profile },
-        body: JSON.stringify({ input: String(value.input || '').slice(0, 100000), profile }),
+        body: JSON.stringify({
+          input: String(value.input || '').slice(0, 100000),
+          profile,
+          ...(value.model && value.provider ? { model: value.model, provider: value.provider, effort: value.effort || 'auto' } : {}),
+        }),
         credentials: 'same-origin',
         redirect: 'manual',
         signal: controller.signal,
@@ -301,6 +305,20 @@
       return { ...json, id, session: json.session || { id } };
     }
     if (name === 'send') return sendChat(value);
+    if (name === 'model-options') {
+      const session = value.id ? `&session=${encodeURIComponent(value.id)}` : '';
+      return fetchJson(`/api/models?profile=${encodeURIComponent(profile || 'intelio')}${session}`, { profile });
+    }
+    if (name === 'session-model') {
+      return fetchJson(`/api/sessions/${encodeURIComponent(value.id || '')}/model`, {
+        method: 'POST',
+        profile,
+        body: { profile, model: value.model, provider: value.provider, effort: value.effort },
+      });
+    }
+    if (name === 'agent-model') {
+      return fetchJson('/api/agent/model', { method: 'POST', profile, body: { profile, model: value.model, provider: value.provider } });
+    }
     if (name === 'cancel') {
       inflight.get(String(value.id || ''))?.abort();
       return true;

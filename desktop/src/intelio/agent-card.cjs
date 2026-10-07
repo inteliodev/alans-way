@@ -415,6 +415,7 @@ module.exports = {
   PALETTE,
   cleanColor,
   readProfileFiles,
+  backupFile,
   writePaused,
   writeReasoning,
   writeProfile,
