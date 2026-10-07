@@ -27,7 +27,8 @@ test('functional capthvnsen references point at the Intelio forks', () => {
     let text;
     try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
     if (text.includes('\0')) continue;
-    const rel = path.relative(repo, file);
+    // Forward slashes on every OS so the desktop/test/ and tests/ checks hold on Windows.
+    const rel = path.relative(repo, file).split(path.sep).join('/');
     const isTest = rel.startsWith('desktop/test/') || rel.startsWith('tests/');
     if (!isTest) text.split(/\r?\n/).forEach((line, index) => {
       if (!line.includes('capthvnsen')) return;
