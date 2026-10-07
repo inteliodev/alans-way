@@ -6,9 +6,9 @@
   function apply(state) {
     const intelio = state?.intelio;
     if (!intelio) return;
-    const title = intelio.brand?.windowTitle || 'Intelio';
-    const profile = intelio.ok ? intelio.profileName : 'Profile not loaded';
-    document.title = intelio.ok ? `${title} — ${profile}` : title;
+    const raw = String(intelio.brand?.windowTitle || '').trim();
+    const title = !raw || raw.toLowerCase() === 'intelio' ? 'Intelio' : raw;
+    document.title = 'Intelio';
     text('product-title', title);
     const mark = $('intelio-mark');
     if (mark && intelio.brand?.mark) { mark.src = intelio.brand.mark; mark.hidden = false; }

@@ -212,7 +212,7 @@
     const name = String(profile?.name || '').trim();
     return name || 'Intelio';
   }
-  const CLIENT_VERSION = 'intelio-pwa-10';
+  const CLIENT_VERSION = 'intelio-pwa-11';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);
@@ -1026,7 +1026,14 @@
       state.browserControl = !state.browserControl;
       control.textContent = state.browserControl ? 'Stop control' : 'Take control';
       control.setAttribute('aria-pressed', state.browserControl ? 'true' : 'false');
-      if (rfb) rfb.viewOnly = !state.browserControl;
+      if (rfb) {
+        rfb.viewOnly = !state.browserControl;
+        rfb.scaleViewport = true;
+        const restore = rfb._viewOnly;
+        rfb._viewOnly = false;
+        try { if (typeof rfb._requestRemoteResize === 'function') rfb._requestRemoteResize(); }
+        finally { rfb._viewOnly = restore; }
+      }
       const hint = document.getElementById('browser-hint');
       if (hint) hint.textContent = state.browserControl ? 'You control this view.' : 'Watching. Take control to use the pointer and keyboard.';
     });
@@ -1067,16 +1074,33 @@
       const RFB = mod.default;
       if (!screen.isConnected) return;
       const client = new RFB(screen, url);
+      const fit = () => {
+        if (rfb !== client) return;
+        const restore = client._viewOnly;
+        client._viewOnly = false;
+        try {
+          client.scaleViewport = true;
+          client.resizeSession = true;
+          if (typeof client._requestRemoteResize === 'function') client._requestRemoteResize();
+        } finally {
+          client._viewOnly = restore;
+        }
+      };
       client.viewOnly = !state.browserControl;
       client.scaleViewport = true;
-      client.resizeSession = false;
+      client.resizeSession = true;
       client.focusOnClick = state.browserControl;
       client.background = currentTheme() === 'light' ? '#f4f4f6' : '#070708';
+      if (screen._fit) screen._fit.disconnect();
+      screen._fit = new ResizeObserver(() => fit());
+      screen._fit.observe(screen);
       timer = setTimeout(fail, 8000);
       client.addEventListener('connect', () => {
         clearTimeout(timer);
         const empty = screen.querySelector('.browser-empty');
         if (empty) empty.remove();
+        fit();
+        setTimeout(fit, 160);
       });
       client.addEventListener('disconnect', () => {
         clearTimeout(timer);
@@ -2092,6 +2116,26 @@
     pushLine('user', text);
     const pending = { role: 'assistant', text: '', pending: true };
     for (const bucket of buckets()) bucket.push(pending);
+    const steps = [];
+    let sawTool = false;
+    const placeSteps = () => {
+      for (const bucket of buckets()) {
+        for (let i = bucket.length - 1; i >= 0; i -= 1) {
+          if (bucket[i] && bucket[i].liveStep) bucket.splice(i, 1);
+        }
+        const at = bucket.indexOf(pending);
+        const rows = steps.map((step) => ({
+          role: 'activity',
+          liveStep: true,
+          text: step.detail || '',
+          title: step.name,
+          status: step.failed ? 'Failed' : (step.running ? 'Running' : 'Done'),
+        }));
+        if (at >= 0) bucket.splice(at, 0, ...rows);
+        else bucket.push(...rows);
+      }
+      paintThread();
+    };
     paintThread();
     unspoken = '';
     state.thinking = true;
@@ -2119,15 +2163,14 @@
           state.searching = !done;
           paintLive();
         }
-        if (event.includes('start') || done) {
-          pushLine('activity', payload.summary || payload.error || name, { title: name, status: failed ? 'Failed' : (done ? 'Done' : 'Running') });
-        }
+        if (!sawTool) { steps.length = 0; sawTool = true; }
+        const detail = payload.summary || payload.error || '';
         if (done) {
-          pending.pending = false;
-          const next = { role: 'assistant', text: '', pending: true };
-          for (const bucket of buckets()) bucket.push(next);
-          Object.assign(pending, next);
-        }
+          const open = [...steps].reverse().find((step) => step.running && step.name === name);
+          if (open) { open.running = false; open.failed = failed; if (detail) open.detail = detail; }
+          else steps.push({ name, detail, running: false, failed });
+        } else steps.push({ name, detail, running: true, failed: false });
+        placeSteps();
         return;
       }
       const delta = payload.delta || payload.text || '';
@@ -2136,7 +2179,12 @@
       pending.text += delta;
       const after = window.IntelioTranscript ? window.IntelioTranscript.peel(pending.text).prose : pending.text;
       const spoken = after.startsWith(before) ? after.slice(before.length) : '';
-      paintThread();
+      if (!sawTool && window.IntelioTranscript) {
+        const peeled = window.IntelioTranscript.peel(pending.text);
+        steps.length = 0;
+        for (const part of peeled.chips) steps.push({ name: part.name, detail: part.detail || '', running: false, failed: false });
+        placeSteps();
+      } else paintThread();
       if (spoken && state.call.active && state.call.speaker) feedSpeech(spoken);
     });
     pending.pending = false;

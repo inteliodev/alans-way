@@ -136,11 +136,11 @@ test('the phone card route reads the profile files and refuses a cross-origin wr
     assert.equal(fs.readFileSync(path.join(dir, 'intelio-paused'), 'utf8').trim(), '1');
     const sw = fs.readFileSync(path.join(__dirname, '../../mobile/pwa/public/sw.js'), 'utf8');
     const page = fs.readFileSync(path.join(__dirname, '../../mobile/pwa/public/app.js'), 'utf8');
-    assert.match(sw, /intelio-pwa-12/);
+    assert.match(sw, /intelio-pwa-13/);
     assert.match(sw, /skipWaiting/);
     assert.match(sw, /clients\.claim/);
     assert.match(sw, /cache\.put/);
-    assert.match(page, /intelio-pwa-10/);
+    assert.match(page, /intelio-pwa-11/);
     assert.match(page, /New version\. Tap to reload\./);
     assert.match(page, /Manage in Vault/);
   } finally {

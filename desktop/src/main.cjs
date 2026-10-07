@@ -147,9 +147,7 @@ function assertIntelioAgentUrl(url) {
   if (!decision.ok) throw Object.assign(new Error(decision.error), { status: decision.status });
 }
 function intelioTitle() {
-  const title = intelioSession?.public?.brand?.windowTitle || 'Intelio';
-  const profile = intelioSession?.public?.profileName;
-  return profile ? `${title} — ${profile}` : title;
+  return 'Intelio';
 }
 function currentTheme() { return normalizeTheme(prefs?.theme); }
 let pushedTelegramTheme = '';
@@ -1188,7 +1186,7 @@ function createWindow() {
   win.on('enter-full-screen', broadcast); win.on('leave-full-screen', broadcast);
   win.on('close', (event) => { if (!isQuitting) { event.preventDefault(); win.hide(); } });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: intelioSession?.public?.brand?.windowTitle || 'Intelio', submenu: [{ label: 'About Intelio', click: () => dialog.showMessageBox(win, { type: 'info', title: 'About Intelio', message: `Intelio ${app.getVersion()}`, detail: "Alan's Way by Alex Hansen (MIT). Hermes Agent by Nous Research." }) }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: 'Intelio', submenu: [{ label: 'About Intelio', click: () => dialog.showMessageBox(win, { type: 'info', title: 'About Intelio', message: `Intelio ${app.getVersion()}`, detail: "Alan's Way by Alex Hansen (MIT). Hermes Agent by Nous Research." }) }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { label: 'File', submenu: [{ label: 'New Browser Tab', accelerator: 'CmdOrCtrl+T', click: () => createTab({}) }, { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => extensionPopup?.browserWindow?.isFocused() ? extensionPopup.destroy() : closeTab(activeTabId) }] },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     { label: 'View', submenu: [{ label: 'Reload Page', accelerator: 'CmdOrCtrl+R', click: () => tabs.get(activeTabId)?.view.webContents.reload() }, { role: 'togglefullscreen' }, ...(app.isPackaged ? [] : [{ label: 'App Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => win.webContents.toggleDevTools() }])] },

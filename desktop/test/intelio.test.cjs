@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { originAllowed } = require('../src/intelio/origins.cjs');
 const { safetyDefaults, classifyUrl, agentNavigationDecision, redact } = require('../src/intelio/safety.cjs');
-const { loadIntelio, pngIcon } = require('../src/intelio/bridge.cjs');
+const { loadIntelio, pngIcon, displayTitle } = require('../src/intelio/bridge.cjs');
 const { linuxDemoEnabled, rendererSandbox } = require('../src/intelio/linux-demo.cjs');
 const { loadVpsPolicy, assertLoopbackBrowser } = require('../src/intelio/sidecar.cjs');
 const { app, agents, agentsSetup } = require('../src/intelio/forks.cjs');
@@ -94,6 +94,12 @@ test('window icon is a real PNG', () => {
   const png = pngIcon();
   assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
   assert.ok(png.length > 32);
+  assert.equal(displayTitle('intelio'), 'Intelio');
+  assert.equal(displayTitle(''), 'Intelio');
+  assert.equal(displayTitle('Notes'), 'Notes');
+  const main = fs.readFileSync(path.join(repo, 'desktop/src/main.cjs'), 'utf8');
+  assert.match(main, /function intelioTitle\(\) \{\n  return 'Intelio';\n\}/);
+  assert.match(main, /label: 'Intelio'/);
 });
 
 test('the VPS sidecar uses strict defaults and refuses YOLO', () => {

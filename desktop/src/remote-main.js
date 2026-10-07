@@ -275,6 +275,18 @@
     fillSessionList($('sidebar-threads'), mine);
   }
 
+  function paintLiveTools() {
+    if (!ui.liveTools || !root.IntelioTranscript) return;
+    const messages = (ui.liveSteps || []).map((step) => ({
+      role: 'tool',
+      tool_name: step.name,
+      content: step.detail || '',
+      status: step.failed ? 'Failed' : (step.running ? 'Running' : 'Done'),
+    }));
+    const items = root.IntelioTranscript.present(messages).filter((item) => item.kind === 'chip');
+    ui.liveTools.replaceChildren(...items.map((item) => chipNode(item)));
+  }
+
   function chipNode(item) {
     const wrap = el('div', 'tool-run');
     const button = el('button', `tool-chip${item.running ? ' running' : ''}${item.failed ? ' failed' : ''}`);
@@ -745,20 +757,24 @@
         ui.streamRaw = `${ui.streamRaw || ''}${data.delta}`;
         const peeled = root.IntelioTranscript ? root.IntelioTranscript.peel(ui.streamRaw) : { prose: ui.streamRaw, chips: [] };
         ui.streaming.textContent = peeled.prose;
-        if (!ui.toolEvents && ui.liveTools && root.IntelioTranscript) {
-          ui.liveTools.replaceChildren(...peeled.chips.map((part) => chipNode(root.IntelioTranscript.present([{ role: 'tool', tool_name: part.name, content: part.detail || '' }])[0])).filter(Boolean));
+        if (!ui.toolEvents) {
+          ui.liveSteps = peeled.chips.map((part) => ({ name: part.name, detail: part.detail || '', running: false, failed: false }));
+          paintLiveTools();
         }
       } else if (String(event).includes('tool')) {
+        if (!ui.toolEvents) ui.liveSteps = [];
         ui.toolEvents = true;
         const name = data?.tool_name || data?.name || 'tool';
         const done = /complete|result|finished|fail/i.test(event);
         const failed = /fail/i.test(event);
-        if (ui.liveTools && root.IntelioTranscript) {
-          if (done) ui.liveTools.querySelector('.tool-chip.running')?.closest('.tool-run')?.remove();
-          const item = root.IntelioTranscript.present([{ role: 'tool', tool_name: name, content: data?.summary || data?.error || '', status: failed ? 'Failed' : (done ? 'Done' : 'Running') }])[0];
-          if (item) ui.liveTools.append(chipNode(item));
-        }
-        setStatus(done ? '' : `Checking ${name}…`);
+        const detail = data?.summary || data?.error || '';
+        if (done) {
+          const open = [...ui.liveSteps].reverse().find((step) => step.running && step.name === name);
+          if (open) { open.running = false; open.failed = failed; if (detail) open.detail = detail; }
+          else ui.liveSteps.push({ name, detail, running: false, failed });
+        } else ui.liveSteps.push({ name, detail, running: true, failed: false });
+        paintLiveTools();
+        setStatus(done ? '' : 'Checking…');
       }
       const pane = $('remote-messages');
       if (pane) pane.scrollTop = pane.scrollHeight;
@@ -840,6 +856,7 @@
     }
     ui.streamRaw = '';
     ui.toolEvents = false;
+    ui.liveSteps = [];
     ui.liveTools = el('div', 'tool-live');
     ui.streaming = el('div', 'msg assistant', '');
     pane?.append(ui.liveTools, ui.streaming);

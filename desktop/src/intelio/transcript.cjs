@@ -34,15 +34,22 @@
   }
 
   function subjectFor(name, detail) {
-    const blob = `${name || ''}\n${detail || ''}`.toLowerCase();
+    const raw = String(name || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+    const blob = `${raw}\n${detail || ''}`.toLowerCase();
     if (/imessage|messaging\.imessage|platforms\.imessage/.test(blob)) return 'iMessage setup';
     if (/telegram/.test(blob)) return 'Telegram';
     if (/slack/.test(blob)) return 'Slack';
     if (/discord/.test(blob)) return 'Discord';
     if (/whatsapp/.test(blob)) return 'WhatsApp';
-    if (/web[_\s-]?extract|web[_\s-]?search|browse/.test(blob)) return 'a page';
-    if (/^(exec|terminal|shell|bash|command)$/i.test(String(name || '').trim())) return 'a command';
-    return human(name) || 'a tool';
+    if (/search files|find files|file search/.test(blob)) return 'files';
+    if (/skill/.test(blob)) return 'skills';
+    if (/clarif/.test(blob)) return 'a question';
+    if (/web[_\s-]?extract|web[_\s-]?search|browse|a page/.test(blob)) return 'a page';
+    if (/^(exec|terminal|shell|bash|command|a command)$/.test(raw)) return 'a command';
+    if (!raw || /^(tool|tool call|tool describe|tool result|function|function call)$/.test(raw)) return 'a tool';
+    const named = human(name);
+    if (!named || /tool call|tool describe|tool result/i.test(named)) return 'a tool';
+    return named;
   }
 
   function labelFor({ name, detail, running, failed, summary }) {
@@ -217,12 +224,37 @@
   }
 
   function push(items, item) {
-    const prev = items[items.length - 1];
-    if (item.kind === 'chip' && prev?.kind === 'chip' && prev.label === item.label && prev.running === item.running) {
-      if (item.detail && !prev.detail.includes(item.detail)) prev.detail = [prev.detail, item.detail].filter(Boolean).join('\n\n').slice(0, 2000);
-      return;
-    }
     items.push(item);
+  }
+
+  function collapseRuns(items) {
+    const out = [];
+    let run = [];
+    const flush = () => {
+      if (!run.length) return;
+      if (run.length === 1) { out.push(run[0]); run = []; return; }
+      const running = run.some((item) => item.running);
+      const failed = !running && run.some((item) => item.failed);
+      const latest = [...run].reverse().find((item) => item.running) || run[run.length - 1];
+      const lines = run.map((item) => {
+        const title = String(item.label || '').replace(/^(Checking|Checked|Could not check)\s+/i, '');
+        return item.detail ? `${title}\n${item.detail}` : title;
+      });
+      out.push({
+        kind: 'chip',
+        label: running ? latest.label : `Worked through ${run.length} steps`,
+        detail: lines.join('\n\n').slice(0, 4000),
+        running,
+        failed,
+      });
+      run = [];
+    };
+    for (const item of items) {
+      if (item.kind === 'chip') run.push(item);
+      else { flush(); out.push(item); }
+    }
+    flush();
+    return out;
   }
 
   function present(messages) {
@@ -256,7 +288,7 @@
       }
       if (peeled.prose) items.push({ kind: 'bubble', role: 'assistant', text: peeled.prose });
     }
-    return items;
+    return collapseRuns(items);
   }
 
   function preview(text) {

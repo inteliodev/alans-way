@@ -16,6 +16,25 @@ function status(message) { api.command('remote-status', { status: message }).cat
 function showEmpty(title, message, action = 'Reconnect') {
   $('remote-title').textContent = title; $('remote-message').textContent = message; $('configure').textContent = action; $('remote-empty').classList.remove('hidden');
 }
+function screenBg() { return document.documentElement.dataset.theme === 'light' ? '#f3f3f6' : '#070708'; }
+function requestRemoteFit(client) {
+  if (!client) return;
+  const run = () => {
+    if (client !== rfb) return;
+    const restore = client._viewOnly;
+    client._viewOnly = false;
+    try {
+      client.scaleViewport = true;
+      client.resizeSession = true;
+      if (typeof client._requestRemoteResize === 'function') client._requestRemoteResize();
+    } finally {
+      client._viewOnly = restore;
+    }
+  };
+  run();
+  clearTimeout(client._intelioFit);
+  client._intelioFit = setTimeout(run, 160);
+}
 function connect(value) {
   const version = ++connectionVersion;
   rfb?.disconnect(); connected = false; currentUrl = value;
@@ -24,14 +43,14 @@ function connect(value) {
   showEmpty('Connecting…', 'Opening your VPS desktop through its existing viewer.', 'Connection settings'); status('connecting');
   try {
     rfb = new RFB($('screen'), toSocket(value));
-    rfb.scaleViewport = true; rfb.resizeSession = false; rfb.clipViewport = false; rfb.focusOnClick = true; rfb.viewOnly = !state?.remoteControl; rfb.background = '#070708';
+    rfb.scaleViewport = true; rfb.resizeSession = true; rfb.clipViewport = false; rfb.focusOnClick = true; rfb.viewOnly = !state?.remoteControl; rfb.background = screenBg();
     if (!connect.fit) {
-      connect.fit = new ResizeObserver(() => { if (rfb) rfb.scaleViewport = true; });
+      connect.fit = new ResizeObserver(() => { if (rfb) requestRemoteFit(rfb); });
       connect.fit.observe($('screen'));
     }
     rfb.addEventListener('connect', () => {
       if (version !== connectionVersion) return;
-      connected = true; $('remote-empty').classList.add('hidden'); $('connection-dot').classList.add('connected'); status('connected'); render(state);
+      connected = true; $('remote-empty').classList.add('hidden'); $('connection-dot').classList.add('connected'); status('connected'); requestRemoteFit(rfb); render(state);
     });
     rfb.addEventListener('disconnect', () => {
       if (version !== connectionVersion) return;
@@ -61,7 +80,7 @@ function render(next) {
   state = next;
   applyTheme(state.theme);
   if (state.remoteUrl !== currentUrl) connect(state.remoteUrl);
-  if (rfb) { rfb.viewOnly = !state.remoteControl; if(!state.remoteControl)rfb.blur(); }
+  if (rfb) { rfb.background = screenBg(); rfb.viewOnly = !state.remoteControl; if(!state.remoteControl)rfb.blur(); requestRemoteFit(rfb); }
   $('control').textContent = state.remoteControl ? 'Stop control' : 'Take control'; $('control').classList.toggle('controlling', state.remoteControl);
   $('control').setAttribute('aria-pressed',String(state.remoteControl));
   $('control').disabled = !connected;

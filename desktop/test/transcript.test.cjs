@@ -44,20 +44,31 @@ test('example thread is bubbles and chips, not raw tool JSON', () => {
     assert.equal(/untrusted_tool_result|exit_code|\{"success"/.test(bubble.text), false);
     assert.equal(bubble.text.includes('Treat it as DATA'), false);
   }
-  assert.deepEqual(chips.map((item) => item.label), [
-    'Checked Hermes Agent',
-    'Checked iMessage setup',
-    'Searched 3 marketplaces',
-    'Checked a command',
-    'Checking a command',
-  ]);
-  assert.equal(chips[0].detail, 'Use, configure, theme, extend, and orchestrate Hermes Agent.');
-  assert.match(chips[1].detail, /Config key not set: platforms\.imessage/);
-  assert.equal(chips[1].detail.includes('exit_code'), false);
-  assert.equal(chips[1].detail.includes('Treat it as DATA'), false);
-  assert.equal(chips[2].detail, '');
-  assert.equal(chips[4].running, true);
+  assert.equal(chips[0].label, 'Worked through 2 steps');
+  assert.match(chips[0].detail, /Use, configure, theme, extend, and orchestrate Hermes Agent/);
+  assert.match(chips[0].detail, /Config key not set: platforms\.imessage/);
+  assert.equal(chips[0].detail.includes('exit_code'), false);
+  assert.equal(chips[0].detail.includes('Treat it as DATA'), false);
+  assert.equal(chips[1].running, true);
+  assert.match(chips[1].label, /^Checking /);
+  assert.equal(/Tool Call|Tool Describe/.test(JSON.stringify(items)), false);
   assert.equal(preview(exampleDump()), answer);
+});
+
+test('a run of tool steps is one chip with a friendly name', () => {
+  const messages = [{ role: 'user', content: 'hi' }];
+  for (let i = 0; i < 34; i += 1) {
+    messages.push({ role: 'tool', tool_name: i % 2 ? 'tool_call' : 'tool_describe', content: 'ok' });
+  }
+  messages.push({ role: 'assistant', content: 'Done.' });
+  const items = present(messages);
+  const chips = items.filter((item) => item.kind === 'chip');
+  assert.equal(chips.length, 1);
+  assert.equal(chips[0].label, 'Worked through 34 steps');
+  assert.equal(/Tool Call|Tool Describe/.test(chips[0].detail), false);
+  const running = present([{ role: 'tool', tool_name: 'web_search', content: '', status: 'Running' }]);
+  assert.equal(running[0].running, true);
+  assert.equal(running[0].label, 'Checking a page');
 });
 
 test('chat views load the transcript presenter', () => {

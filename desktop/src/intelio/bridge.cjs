@@ -54,12 +54,18 @@ function failure(message, extra = {}) {
   };
 }
 
+function displayTitle(raw) {
+  const title = String(raw || '').trim();
+  if (!title || title.toLowerCase() === 'intelio') return 'Intelio';
+  return title;
+}
+
 function fallbackBrand() {
   const titlePath = path.join(repoRoot, 'intelio', 'vendor', 'intelio-harness', 'brand', 'window-title.txt');
   let windowTitle = 'Intelio';
   try {
     const title = fs.readFileSync(titlePath, 'utf8').trim();
-    if (title && title.length <= 40) windowTitle = title;
+    if (title && title.length <= 40) windowTitle = displayTitle(title);
   } catch { /* the loader error stays the source of truth */ }
   return { windowTitle, tokens: { background: '#0a0a0a', foreground: '#ffffff', surface: '#f5f5f5', line: '#e5e5e5', font: 'Geist' }, mark: '' };
 }
@@ -88,7 +94,7 @@ function toSession(report, source) {
     launchArgv: hermes.launch_argv || [],
     browsingOrigins: profile.browsing_origins || [],
     safety: enforced,
-    brand: { windowTitle: brand.window_title || 'Intelio', tokens: brand.tokens || fallbackBrand().tokens, mark },
+    brand: { windowTitle: displayTitle(brand.window_title || 'Intelio'), tokens: brand.tokens || fallbackBrand().tokens, mark },
     hermes: {
       present: hermes.present === true,
       commandOk: hermes.command_ok === true,
@@ -197,4 +203,4 @@ function chunk(type, data) {
   return Buffer.concat([length, body, crc]);
 }
 
-module.exports = { repoRoot, profileFromArgv, resolveProfileDir, loadIntelio, publicIntelioState, pngIcon };
+module.exports = { repoRoot, profileFromArgv, resolveProfileDir, loadIntelio, publicIntelioState, pngIcon, displayTitle };

@@ -2,7 +2,7 @@
 (function remoteHermesUi() {
   const api = window.remoteHermes;
   const $ = (id) => document.getElementById(id);
-  const state = { sessions: [], activeId: '', busy: false, streaming: null, streamRaw: '', liveTools: null, toolEvents: false, timer: null };
+  const state = { sessions: [], activeId: '', busy: false, streaming: null, streamRaw: '', liveTools: null, liveSteps: [], toolEvents: false, timer: null };
   const SOURCE_LABEL = { telegram: 'Telegram', api_server: 'App / API', cli: 'CLI', cron: 'Cron', oneshot: 'One-shot' };
 
   function el(tag, cls, text) { const node = document.createElement(tag); if (cls) node.className = cls; if (text !== undefined) node.textContent = text; return node; }
@@ -60,6 +60,18 @@
     return wrap;
   }
 
+  function paintLive() {
+    if (!state.liveTools || !window.IntelioTranscript) return;
+    const messages = (state.liveSteps || []).map((step) => ({
+      role: 'tool',
+      tool_name: step.name,
+      content: step.detail || '',
+      status: step.failed ? 'Failed' : (step.running ? 'Running' : 'Done'),
+    }));
+    const items = window.IntelioTranscript.present(messages).filter((item) => item.kind === 'chip');
+    state.liveTools.replaceChildren(...items.map((item) => chipNode(item)));
+  }
+
   function renderPresented(messages) {
     const pane = $('rh-messages');
     pane.replaceChildren();
@@ -97,6 +109,7 @@
     state.busy = true; $('rh-send').disabled = true; $('rh-cancel').hidden = false; $('rh-input').value = '';
     state.streamRaw = '';
     state.toolEvents = false;
+    state.liveSteps = [];
     const pane = $('rh-messages');
     pane.append(el('div', 'msg user', input));
     state.liveTools = el('div', 'tool-live');
@@ -119,20 +132,24 @@
       state.streamRaw = `${state.streamRaw || ''}${data.delta}`;
       const peeled = window.IntelioTranscript ? window.IntelioTranscript.peel(state.streamRaw) : { prose: state.streamRaw, chips: [] };
       state.streaming.textContent = peeled.prose;
-      if (!state.toolEvents && state.liveTools && window.IntelioTranscript) {
-        state.liveTools.replaceChildren(...peeled.chips.map((part) => chipNode(window.IntelioTranscript.present([{ role: 'tool', tool_name: part.name, content: part.detail || '' }])[0])).filter(Boolean));
+      if (!state.toolEvents) {
+        state.liveSteps = peeled.chips.map((part) => ({ name: part.name, detail: part.detail || '', running: false, failed: false }));
+        paintLive();
       }
     } else if (String(event).includes('tool')) {
+      if (!state.toolEvents) state.liveSteps = [];
       state.toolEvents = true;
       const name = data?.tool_name || data?.name || 'tool';
       const done = /complete|result|finished|fail/i.test(event);
       const failed = /fail/i.test(event);
-      if (state.liveTools && window.IntelioTranscript) {
-        if (done) state.liveTools.querySelector('.tool-chip.running')?.closest('.tool-run')?.remove();
-        const item = window.IntelioTranscript.present([{ role: 'tool', tool_name: name, content: data?.summary || data?.error || '', status: failed ? 'Failed' : (done ? 'Done' : 'Running') }])[0];
-        if (item) state.liveTools.append(chipNode(item));
-      }
-      $('rh-activity').textContent = done ? 'Thinking…' : `Checking ${name}…`;
+      const detail = data?.summary || data?.error || '';
+      if (done) {
+        const open = [...state.liveSteps].reverse().find((step) => step.running && step.name === name);
+        if (open) { open.running = false; open.failed = failed; if (detail) open.detail = detail; }
+        else state.liveSteps.push({ name, detail, running: false, failed });
+      } else state.liveSteps.push({ name, detail, running: true, failed: false });
+      paintLive();
+      $('rh-activity').textContent = done ? 'Thinking…' : 'Checking…';
     }
     $('rh-messages').scrollTop = $('rh-messages').scrollHeight;
   });
