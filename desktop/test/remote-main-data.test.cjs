@@ -168,12 +168,12 @@ test('a missing key never calls fetch, and config is the last fallback', async (
   assert.equal(calls, 0);
 });
 
-test('a local Alignment catalog does not replace the four VPS harness profiles', async () => {
+test('VPS profiles stay listed and Kid A and Alignment-Bot-VPS stay out', async () => {
   const local = ['underwriting', 'intake', 'research', 'comps', 'buyers', 'critical-dates', 'deal-tracking'].map((id) => ({ name: id }));
   const { server, port } = await listen((req, res) => {
     if (req.url === '/api/home' || req.url === '/api/profiles') {
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ profiles: [...local, { id: 'intelio', name: 'Intelio' }, { name: 'prc' }, { name: 'alignment' }, { name: 'hhp' }] }));
+      res.end(JSON.stringify({ profiles: [...local, { id: 'intelio', name: 'intelio' }, { name: 'prc' }, { name: 'alignment' }, { name: 'hhp' }, { id: 'kid-a', name: 'Kid A' }, { id: 'alignment-bot-vps', name: 'Alignment Bot VPS' }, { id: 'lumen', name: 'Lumen', orb: 'listening' }] }));
       return;
     }
     res.statusCode = 404;
@@ -186,22 +186,30 @@ test('a local Alignment catalog does not replace the four VPS harness profiles',
       keyNames: () => Object.keys(KEYS),
     });
     const home = await main.listAgents();
-    assert.deepEqual(home.agents.map((agent) => agent.id), ['intelio', 'prc', 'alignment', 'hhp']);
-    assert.equal(home.agents.some((agent) => /underwriting|intake|comps|buyers|deal-tracking/i.test(agent.id)), false);
+    assert.deepEqual(home.agents.map((agent) => agent.id), ['intelio', 'prc', 'alignment', 'hhp', 'buyers', 'comps', 'critical-dates', 'deal-tracking', 'intake', 'lumen', 'research', 'underwriting']);
+    assert.equal(home.agents.some((agent) => agent.id === 'kid-a' || agent.id === 'alignment-bot-vps'), false);
+    assert.equal(home.agents.find((agent) => agent.id === 'lumen').orb, 'listening');
   } finally { server.close(); }
 
   const onlyLocal = selectHarnessAgents(local.map((item) => ({ id: item.name, name: item.name })), Object.keys(KEYS), 'intelio');
-  assert.deepEqual(onlyLocal.map((agent) => agent.id), ['intelio', 'prc', 'alignment', 'hhp']);
+  assert.deepEqual(onlyLocal.map((agent) => agent.id), ['buyers', 'comps', 'critical-dates', 'deal-tracking', 'intake', 'research', 'underwriting']);
   const foreignOnly = selectHarnessAgents(local.map((item) => ({ id: item.name, name: item.name })), [], 'intelio');
-  assert.deepEqual(foreignOnly.map((agent) => agent.id), ['intelio', 'prc', 'alignment', 'hhp']);
+  assert.deepEqual(foreignOnly.map((agent) => agent.id), onlyLocal.map((agent) => agent.id));
+  const kept = selectHarnessAgents([
+    { id: 'kid-a', name: 'Kid A' },
+    { id: 'Alignment-Bot-VPS', name: 'Alignment Bot VPS' },
+    { id: 'intelio', name: 'intelio' },
+    { id: 'lumen', name: 'Lumen', orb: 'listening' },
+  ], [], 'intelio');
+  assert.deepEqual(kept.map((agent) => agent.id), ['intelio', 'lumen']);
 
   const sidebar = chooseSidebar({
     remote: { enabled: true, host: 'intelio-vps.tail9c1007.ts.net', profilesWithKeys: Object.keys(KEYS) },
     localBots: local.map((item) => ({ id: item.name, name: item.name })),
-    remoteAgents: onlyLocal,
+    remoteAgents: kept,
   });
   assert.equal(sidebar.source, 'remote');
-  assert.deepEqual(sidebar.agents.map((agent) => agent.id), ['intelio', 'prc', 'alignment', 'hhp']);
+  assert.deepEqual(sidebar.agents.map((agent) => agent.id), ['intelio', 'lumen']);
   assert.equal(chooseSidebar({ remote: null, localBots: [{ id: 'underwriting', name: 'Underwriting' }] }).source, 'local');
 });
 

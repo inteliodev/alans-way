@@ -61,7 +61,7 @@ function agentNavigationDecision(url, options = {}) {
   const kind = classifyUrl(url);
   if (kind) return { ok: false, status: 409, error: `approval_required: ${kind} stays ask-first.` };
   const origins = options.origins || [];
-  if (!originAllowed(url, origins)) return { ok: false, status: 403, error: 'This origin is outside the Intelio browsing zone.' };
+  if (!originAllowed(url, origins)) return { ok: false, status: 403, error: 'This origin is outside the intelio browsing zone.' };
   return { ok: true };
 }
 

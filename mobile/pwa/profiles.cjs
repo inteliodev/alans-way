@@ -11,8 +11,14 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
+const { excludedAgent } = require('../../desktop/src/intelio/agent-card.cjs');
 
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+const TEMPLATE = 'intelio';
+const ORBS = ['connecting', 'solving', 'searching', 'weaving', 'working', 'listening', 'breathing', 'shaping'];
+const GATEWAY_NOTE = 'Ready after the next agent restart';
+const SIGN_IN_NOTE = 'Needs sign-in. This profile has no model credential of its own. The ChatGPT/Codex login stays in ~/.hermes/auth.json, which this app does not read, copy, or change, and it does not run hermes auth. Sign in on the VPS for this agent.';
+const SHARED_PROVIDERS = new Set(['openai-codex', 'openai_codex', 'codex', 'chatgpt']);
 
 function assertSlug(name) {
   const slug = String(name || '').trim().toLowerCase();
@@ -24,7 +30,7 @@ function assertSlug(name) {
 }
 
 const DISPLAY_NAMES = {
-  intelio: 'Intelio',
+  intelio: 'intelio',
   prc: 'PRC',
   alignment: 'Alignment',
   hhp: 'HHP',
@@ -90,13 +96,153 @@ function listProfiles({ home = os.homedir(), run = runCommand, fsImpl = fs } = {
   } catch { /* no profile directory yet */ }
   return run('hermes', ['profile', 'list']).then((result) => {
     if (result && result.code === 0) for (const slug of slugsFromList(result.stdout)) names.add(slug);
-    return [...names].sort().map((id) => ({
-      id,
-      name: displayName(id),
-      description: readDescription(path.join(root, id), fsImpl),
-      status: 'online',
-    }));
+    return [...names].filter((id) => !excludedAgent(id)).sort().map((id) => {
+      const marker = readMarker(path.join(root, id), fsImpl);
+      return {
+        id,
+        name: displayName(id),
+        description: readDescription(path.join(root, id), fsImpl),
+        status: 'online',
+        orb: marker.orb,
+        needsSignIn: marker.needsSignIn,
+        gatewayNote: marker.gatewayNote,
+      };
+    });
   });
+}
+
+function readMarker(dir, fsImpl) {
+  try {
+    const parsed = JSON.parse(fsImpl.readFileSync(path.join(dir, 'intelio-card.json'), 'utf8'));
+    const orb = ORBS.includes(parsed?.orb) ? parsed.orb : '';
+    return {
+      orb,
+      needsSignIn: parsed?.needsSignIn === true,
+      gatewayNote: String(parsed?.gatewayNote || '').slice(0, 160),
+      title: String(parsed?.title || '').slice(0, 80),
+    };
+  } catch {
+    return { orb: '', needsSignIn: false, gatewayNote: '', title: '' };
+  }
+}
+
+function cleanOrb(value, slug) {
+  const orb = String(value || '').trim().toLowerCase();
+  if (ORBS.includes(orb)) return orb;
+  const { signatureOf } = require('../../desktop/src/intelio/orb-signature.cjs');
+  const picked = signatureOf(slug);
+  return ORBS.includes(picked) ? picked : 'working';
+}
+
+function modelFrom(text) {
+  let provider = '';
+  let model = '';
+  let secret = false;
+  let inModel = false;
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    if (/^\s*model\s*:/.test(raw) && !raw.startsWith(' ')) {
+      inModel = true;
+      continue;
+    }
+    if (!inModel) continue;
+    if (raw.trim() && !/^\s/.test(raw)) { inModel = false; continue; }
+    if (/(api[_-]?key|token|secret|password|credential)\s*:/i.test(raw)) secret = true;
+    const providerLine = raw.match(/^\s*provider\s*:\s*(.+)$/);
+    if (providerLine) provider = providerLine[1].trim().replace(/^['"]|['"]$/g, '').slice(0, 80);
+    const modelLine = raw.match(/^\s*(?:default|name|model)\s*:\s*(.+)$/);
+    if (modelLine && !model) model = modelLine[1].trim().replace(/^['"]|['"]$/g, '').slice(0, 80);
+  }
+  return { provider, model, secret };
+}
+
+function toolsetsFrom(text) {
+  const found = [];
+  let inTools = false;
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    if (/^\s*platform_toolsets\s*:/.test(raw)) { inTools = true; continue; }
+    if (!inTools) continue;
+    if (raw.trim() && !/^\s/.test(raw)) break;
+    if (/^\s*(telegram|photon|imessage|slack|discord|whatsapp|email|mail|sms|signal)\s*:/i.test(raw)) continue;
+    const item = raw.match(/^\s*-\s+([A-Za-z0-9_-]+)\s*$/);
+    if (!item) continue;
+    const name = item[1].slice(0, 40);
+    if (!found.includes(name)) found.push(name);
+  }
+  if (!found.includes('intelio')) found.push('intelio');
+  return found.slice(0, 24);
+}
+
+function yamlQuote(value) {
+  return `'${String(value || '').replace(/'/g, "''").slice(0, 80)}'`;
+}
+
+function safeConfig({ provider, model, toolsets }) {
+  const lines = ['model:'];
+  if (provider) lines.push(`  provider: ${yamlQuote(provider)}`);
+  if (model) lines.push(`  default: ${yamlQuote(model)}`);
+  lines.push('platform_toolsets:', '  cli:');
+  for (const name of toolsets) lines.push(`    - ${name}`);
+  lines.push('');
+  return lines.join('\n');
+}
+
+function cleanSoul(value) {
+  return String(value || '').split(/\r?\n/).filter((line) => {
+    if (/(api[_-]?key|token|secret|password)\s*[:=]/i.test(line)) return false;
+    if (/bearer\s+\S+|sk-[a-z0-9]{8,}|-----BEGIN /i.test(line)) return false;
+    return true;
+  }).join('\n').trim().slice(0, 8000);
+}
+
+function existsDir(fsImpl, dir) {
+  if (typeof fsImpl.statSync !== 'function') return false;
+  try { return Boolean(fsImpl.statSync(dir).isDirectory()); } catch { return false; }
+}
+
+function dropFile(fsImpl, file) {
+  if (path.basename(file) === 'auth.json' && !file.includes(`${path.sep}profiles${path.sep}`)) return;
+  if (typeof fsImpl.unlinkSync !== 'function') return;
+  try { fsImpl.unlinkSync(file); } catch { /* absent */ }
+}
+
+function shapeProfile({ home, slug, title, soul, orb, fsImpl }) {
+  const root = path.join(home, '.hermes', 'profiles');
+  const dir = path.join(root, slug);
+  const templateFile = path.join(root, TEMPLATE, 'config.yaml');
+  let templateText = '';
+  try { templateText = fsImpl.readFileSync(templateFile, 'utf8'); } catch { templateText = ''; }
+  const model = modelFrom(templateText);
+  const provider = model.provider || 'openai-codex';
+  const toolsets = toolsetsFrom(templateText);
+  const needsSignIn = !templateText || model.secret || !SHARED_PROVIDERS.has(provider);
+  fsImpl.mkdirSync(dir, { recursive: true });
+  fsImpl.writeFileSync(path.join(dir, 'config.yaml'), safeConfig({
+    provider: SHARED_PROVIDERS.has(provider) ? provider : '',
+    model: model.secret ? '' : model.model,
+    toolsets,
+  }), { mode: 0o600 });
+  const instructions = cleanSoul(soul);
+  if (instructions) fsImpl.writeFileSync(path.join(dir, 'SOUL.md'), `${instructions}\n`, { mode: 0o600 });
+  const role = cleanDescription(title);
+  const chosen = cleanOrb(orb, slug);
+  const marker = {
+    title: role,
+    orb: chosen,
+    needsSignIn,
+    gatewayNote: GATEWAY_NOTE,
+  };
+  fsImpl.writeFileSync(path.join(dir, 'intelio-card.json'), `${JSON.stringify(marker)}\n`, { mode: 0o600 });
+  if (role) {
+    fsImpl.writeFileSync(path.join(dir, 'profile.yaml'), `description: ${yamlQuote(role)}\ntitle: ${yamlQuote(role)}\norb: ${chosen}\n`, { mode: 0o600 });
+  }
+  dropFile(fsImpl, path.join(dir, 'auth.json'));
+  dropFile(fsImpl, path.join(dir, 'bot-desktop', 'allow-shared-browser'));
+  const envFile = path.join(dir, '.env');
+  try {
+    const scrubbed = String(fsImpl.readFileSync(envFile, 'utf8')).split(/\r?\n/).filter((line) => line && !/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i.test(line.split('=')[0] || '')).join('\n');
+    fsImpl.writeFileSync(envFile, scrubbed ? `${scrubbed}\n` : '', { mode: 0o600 });
+  } catch { /* no env yet */ }
+  return { needsSignIn, orb: chosen, title: role, provider };
 }
 
 function cleanDescription(value) {
@@ -117,35 +263,43 @@ function writeFreshKey(file, fsImpl, randomBytes = (n) => crypto.randomBytes(n))
 async function createProfile({
   name,
   description = '',
-  cloneFrom = '',
+  title = '',
+  soul = '',
+  orb = '',
   home = os.homedir(),
   run = runCommand,
   fsImpl = fs,
 } = {}) {
   const slug = assertSlug(name);
-  const summary = cleanDescription(description);
-  let source = '';
-  if (String(cloneFrom || '').trim()) {
-    source = assertSlug(cloneFrom);
-    if (source === slug) throw Object.assign(new Error('Choose a different agent to start from.'), { status: 400 });
-  }
+  if (excludedAgent(slug)) throw Object.assign(new Error('That name is reserved.'), { status: 400 });
+  const summary = cleanDescription(title || description);
+  const dir = path.join(home, '.hermes', 'profiles', slug);
+  if (existsDir(fsImpl, dir)) throw Object.assign(new Error('That agent already exists.'), { status: 409 });
   const args = ['profile', 'create', slug, '--no-alias'];
   if (summary) args.push('--description', summary);
-  if (source) args.push('--clone-from', source);
+  args.push('--clone-from', TEMPLATE);
   const created = await run('hermes', args);
   if (!created || created.code !== 0) {
+    const detail = `${created?.stderr || ''} ${created?.stdout || ''}`;
+    if (/exist/i.test(detail)) throw Object.assign(new Error('That agent already exists.'), { status: 409 });
     throw Object.assign(new Error('Could not create that agent.'), { status: 502 });
   }
   const describeArgs = ['profile', 'describe', slug];
   if (summary) describeArgs.push('--text', summary);
   await run('hermes', describeArgs);
-  const provider = await run('hermes', ['-p', slug, 'config', 'set', 'model.provider', 'openai-codex']);
-  const model = await run('hermes', ['-p', slug, 'config', 'set', 'model.default', 'gpt-6-sol']);
-  if (!provider || provider.code !== 0 || !model || model.code !== 0) {
-    throw Object.assign(new Error('Could not set the Codex model on the new agent.'), { status: 502 });
-  }
-  writeFreshKey(path.join(home, '.hermes', 'profiles', slug, '.env'), fsImpl);
-  return { id: slug, name: displayName(slug), description: summary, needsGatewayRestart: true };
+  const shaped = shapeProfile({ home, slug, title: summary, soul, orb, fsImpl });
+  writeFreshKey(path.join(dir, '.env'), fsImpl);
+  return {
+    id: slug,
+    name: displayName(slug),
+    description: summary,
+    title: shaped.title,
+    orb: shaped.orb,
+    needsSignIn: shaped.needsSignIn,
+    signInNote: shaped.needsSignIn ? SIGN_IN_NOTE : '',
+    gatewayNote: GATEWAY_NOTE,
+    needsGatewayRestart: true,
+  };
 }
 
 async function restartGateway({ run = runCommand } = {}) {
@@ -162,4 +316,7 @@ module.exports = {
   createProfile,
   restartGateway,
   writeFreshKey,
+  shapeProfile,
+  GATEWAY_NOTE,
+  SIGN_IN_NOTE,
 };

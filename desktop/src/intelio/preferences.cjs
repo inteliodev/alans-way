@@ -4,10 +4,37 @@
  * object that omits the host, keeps the platform default. An explicit
  * enabled:false stays off.
  */
+const path = require('node:path');
 const { remoteHermesDefaults, normalizeRemoteConfig, VNC_URL } = require('./remote-hermes.cjs');
 const { normalizeTheme } = require('./theme.cjs');
 const { agentsFromKeys } = require('./remote-main-data.cjs');
 const { normalizeConnectionMode } = require('./cloud-connection.cjs');
+
+/**
+ * App data stays in "Hermes Workspace" when the product name or the exe name
+ * changes. A name-derived folder (Intelio, Electron) would ignore the saved theme.
+ */
+function resolveUserDataDir({ platform = 'win32', env = {}, home = '', appData = '' } = {}) {
+  const override = String(env.HERMES_WORKSPACE_DATA || '').trim();
+  if (override) return path.resolve(override);
+  let base = appData;
+  if (platform === 'win32') base = env.APPDATA || appData;
+  else if (platform === 'darwin') base = path.join(home, 'Library', 'Application Support');
+  else base = env.XDG_CONFIG_HOME || (home ? path.join(home, '.config') : appData);
+  return path.join(base, 'Hermes Workspace');
+}
+
+/** preferences.json may be UTF-8, UTF-8 with a BOM, or UTF-16 from Notepad. */
+function decodePreferencesText(input) {
+  const buf = Buffer.isBuffer(input) ? input : Buffer.from(String(input ?? ''), 'utf8');
+  if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE) return buf.slice(2).toString('utf16le').replace(/^\uFEFF/, '');
+  if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) return buf.slice(3).toString('utf8');
+  const sample = buf.subarray(0, Math.min(buf.length, 80));
+  let nulls = 0;
+  for (const byte of sample) if (byte === 0) nulls += 1;
+  if (sample.length > 8 && nulls > 4) return buf.toString('utf16le').replace(/^\uFEFF/, '');
+  return buf.toString('utf8').replace(/^\uFEFF/, '');
+}
 
 function mergeRemote(defaults, saved) {
   if (saved == null || typeof saved !== 'object' || Array.isArray(saved)) return { ...defaults };
@@ -28,7 +55,9 @@ function resolveDesktopUrl(remote, saved, env = {}) {
   return '';
 }
 
-function loadPreferences({ text = null, platform = 'darwin', env = {} } = {}) {
+function loadPreferences({ text = null, bytes = null, platform = 'darwin', env = {} } = {}) {
+  if (bytes != null) text = decodePreferencesText(bytes);
+  else if (typeof text === 'string') text = text.replace(/^\uFEFF/, '');
   const defaults = {
     bots: [],
     order: [],
@@ -110,4 +139,7 @@ function freshWindowPlan({ platform = 'win32', preferencesText = null, keyNames 
   };
 }
 
-module.exports = { mergeRemote, loadPreferences, freshWindowPlan, resolveDesktopUrl, initialDesktopTab };
+module.exports = {
+  mergeRemote, loadPreferences, freshWindowPlan, resolveDesktopUrl, initialDesktopTab,
+  resolveUserDataDir, decodePreferencesText,
+};

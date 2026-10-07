@@ -89,7 +89,7 @@ function tabIcon(tab) {
   icon.textContent = tab.symbol; return icon;
 }
 let agentPane = false;
-const agentUi = { id: '', tab: 'details', query: '', note: '', confirming: false, card: null, busy: false };
+const agentUi = { id: '', tab: 'details', query: '', note: '', confirming: false, card: null, busy: false, editing: false, picking: false, soulOpen: false };
 function pinTab(label, selected, onClick) {
   const node = element('div', `tab pin${selected ? ' active' : ''}`);
   node.setAttribute('role', 'tab');
@@ -186,11 +186,17 @@ function showExtensions() {
   renderExtensions();
 }
 function applyTheme(theme) {
-  const next = theme === 'light' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = next;
-  document.documentElement.style.colorScheme = next;
+  const next = String(theme || '').trim().toLowerCase() === 'light' ? 'light' : 'dark';
+  const root = document.documentElement;
+  root.dataset.theme = next;
+  root.style.colorScheme = next;
+  const lightVars = { '--bg': '#f6f6f8', '--text': '#1c1c21', '--muted': '#5e5e68', '--line': '#d5d5dc', '--panel': '#ffffff', '--intelio-surface': '#ffffff' };
   if (next === 'light') {
-    for (const key of ['--bg', '--text', '--line', '--muted', '--intelio-surface']) document.documentElement.style.removeProperty(key);
+    for (const [key, value] of Object.entries(lightVars)) root.style.setProperty(key, value);
+  } else {
+    for (const [key, value] of Object.entries(lightVars)) {
+      if (root.style.getPropertyValue(key).trim().toLowerCase() === value) root.style.removeProperty(key);
+    }
   }
   const button = $('theme-toggle');
   if (!button) return;
@@ -224,15 +230,32 @@ function hermesChecklist(current) {
 function agentOrb(id) {
   return window.IntelioRemote?.signatureOf?.(id) || 'connecting';
 }
-function openAgentPane() {
+function agentProfileId(id) {
+  const value = String(id || '').trim().toLowerCase();
+  const compact = value.replace(/[\s_]+/g, '-');
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(value)) return 'intelio';
+  if (value === 'default' || value === 'kid-a' || value === 'kida' || compact === 'kid-a' || value.includes('alignment-bot-vps') || compact.includes('alignment-bot-vps')) return 'intelio';
+  return value;
+}
+function openAgentPane(id) {
   agentPane = true;
-  const id = window.IntelioRemote?.selectedId?.() || 'intelio';
-  if (state?.activeTabId !== 'vps' && state?.showBrowser !== false) command('activate', { id: 'vps' }).catch(() => {});
-  loadAgentCard(id);
+  const profile = agentProfileId(id || window.IntelioRemote?.selectedId?.() || 'intelio');
+  if (state?.showBrowser === false) command('settings', { showBrowser: true }).catch(() => {});
+  loadAgentCard(profile);
   render(state);
 }
+window.openAgentDetails = openAgentPane;
+function openAgentComputer(id) {
+  agentPane = false;
+  const profile = agentProfileId(id);
+  if (window.IntelioRemote?.selectAgent) window.IntelioRemote.selectAgent(profile);
+  if (state?.showBrowser === false) command('settings', { showBrowser: true }).catch(() => {});
+  if (state?.activeTabId !== 'vps') command('activate', { id: 'vps' });
+  else render(state);
+}
+window.openAgentComputer = openAgentComputer;
 async function loadAgentCard(id) {
-  const profile = ['intelio', 'prc', 'alignment', 'hhp'].includes(id) ? id : 'intelio';
+  const profile = agentProfileId(id);
   agentUi.id = profile;
   agentUi.note = '';
   paintAgentCard();
@@ -260,7 +283,19 @@ function paintAgentCard() {
     confirmLabel: card.paused ? 'Resume' : 'Pause',
     busy: agentUi.busy,
     orb: agentOrb(card.id),
-    onTab(next) { agentUi.tab = next; agentUi.confirming = false; paintAgentCard(); },
+    accent: card.color || '',
+    editing: agentUi.editing,
+    picking: agentUi.picking,
+    soulOpen: agentUi.soulOpen,
+    onTab(next) { agentUi.tab = next; agentUi.confirming = false; agentUi.editing = false; paintAgentCard(); },
+    onPickColor() { agentUi.picking = !agentUi.picking; paintAgentCard(); },
+    async onColor(color) {
+      await saveAgentProfile({ color });
+    },
+    onEdit() { agentUi.editing = true; agentUi.soulOpen = true; paintAgentCard(); },
+    onCancelEdit() { agentUi.editing = false; paintAgentCard(); },
+    onSoul(open) { agentUi.soulOpen = open; paintAgentCard(); },
+    onSave(patch) { saveAgentProfile(patch); },
     onQuery(value) { agentUi.query = value; },
     onMessage() {
       agentPane = false;
@@ -319,6 +354,23 @@ function paintAgentCard() {
     },
   });
 }
+async function saveAgentProfile(patch) {
+  if (agentUi.busy || !agentUi.card) return;
+  agentUi.busy = true;
+  paintAgentCard();
+  try {
+    const next = await window.remoteHermes.request('agent-profile', { profile: agentUi.card.id, ...patch });
+    if (next?.id === agentUi.card.id) agentUi.card = next;
+    agentUi.editing = false;
+    agentUi.picking = false;
+    agentUi.note = '';
+  } catch (error) {
+    agentUi.note = error.message || 'Could not save that.';
+  } finally {
+    agentUi.busy = false;
+    paintAgentCard();
+  }
+}
 window.onIntelioAgent = (id) => { if (agentPane) loadAgentCard(id); };
 function remoteActive(next = state) {
   const remote = next?.remoteHermes;
@@ -334,7 +386,9 @@ function render(next) {
   $('telegram-slot').classList.toggle('hidden', nowRemote);
   $('telegram-note').classList.toggle('hidden', nowRemote);
   $('remote-chat')?.classList.toggle('hidden', !nowRemote);
-  $('add-bot').classList.toggle('hidden', nowRemote);
+  $('add-bot').classList.remove('hidden');
+  $('add-bot').title = nowRemote ? 'Add agent' : 'Open a Telegram bot';
+  $('add-bot').setAttribute('aria-label', $('add-bot').title);
   $('sort-bots').classList.toggle('hidden', nowRemote);
   window.HermesAvatars.update(state);
   const bot = state.bots.find((item) => item.id === state.selectedBotId);
@@ -348,8 +402,11 @@ function render(next) {
     window.IntelioRemote?.sync(state);
   } else {
     $('chat-title').textContent = bot?.name || 'Telegram';
+    const pill = $('chat-pill');
+    if (pill) { pill.onclick = null; pill.removeAttribute('role'); }
     window.HermesAvatars.paint($('chat-avatar'), bot || { id: '', name: 'Telegram' }, state);
     $('chat-avatar').title = bot ? `Customize ${bot.name} avatar` : 'Select a bot to customize its avatar';
+    $('chat-avatar').onclick = () => showAvatarEditor();
     $('agent-presence').classList.toggle('hidden', !bot);
     if (bot) {
       window.HermesAvatars.paint($('presence-avatar'), bot, state);
@@ -362,6 +419,7 @@ function render(next) {
   renderTabs(); renderSettingsBots(); renderSitePermissions(); renderExtensions();
   window.IntelioUI?.apply(state);
   applyTheme(state.theme);
+  themeReady = true;
   $('sidebar-threads-wrap')?.classList.toggle('hidden', !nowRemote);
   if (nowRemote) {
     const cloud = state.remoteHermes.activeMode === 'cloud';
@@ -698,6 +756,59 @@ function showAvatarEditor(botId = state.selectedBotId || orderedBots()[0]?.id) {
   openModal('Bot appearance');
   window.HermesAvatars.mountEditor($('modal-body'), { botId, command, onState: render, toast });
 }
+function showAddAgent() {
+  openModal('Add agent');
+  const form = element('form');
+  const name = element('input');
+  name.placeholder = 'name';
+  name.maxLength = 32;
+  name.autocomplete = 'off';
+  name.setAttribute('aria-label', 'Agent name');
+  const title = element('input');
+  title.placeholder = 'Title or role (optional)';
+  title.maxLength = 80;
+  title.setAttribute('aria-label', 'Title or role');
+  const orb = element('select');
+  orb.setAttribute('aria-label', 'Orb style');
+  for (const style of ['connecting', 'solving', 'searching', 'weaving', 'working', 'listening', 'breathing', 'shaping']) {
+    const option = element('option', '', style);
+    option.value = style;
+    orb.append(option);
+  }
+  const soul = element('textarea');
+  soul.placeholder = 'SOUL / instructions (optional)';
+  soul.maxLength = 8000;
+  soul.rows = 4;
+  soul.setAttribute('aria-label', 'SOUL instructions');
+  const note = element('p', 'settings-note', '');
+  const submit = element('button', 'primary-button', 'Create agent');
+  submit.type = 'submit';
+  form.append(name, title, orb, soul, submit, note);
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    note.textContent = '';
+    try {
+      const created = await window.remoteHermes.request('create-agent', {
+        name: name.value,
+        title: title.value,
+        orb: orb.value,
+        soul: soul.value,
+      });
+      const lines = [];
+      if (created?.needsSignIn) lines.push(created.signInNote || 'Needs sign-in');
+      if (created?.gatewayNote) lines.push(created.gatewayNote);
+      note.textContent = lines.join(' ') || 'Ready after the next agent restart';
+      await window.IntelioRemote?.refresh?.();
+      if (created?.id) openAgentPane(created.id);
+    } catch (error) {
+      note.textContent = error.message || 'Could not create that agent.';
+      submit.disabled = false;
+    }
+  };
+  $('modal-body').append(form);
+  name.focus();
+}
 function showAddBot() {
   openModal('Open a Telegram bot');
   const form = element('form'), field = element('div', 'field'), label = element('label', '', 'Bot username'); label.htmlFor = 'bot-username';
@@ -709,11 +820,13 @@ function showAddBot() {
 }
 $('search-toggle').onclick = () => { $('bot-search').classList.toggle('hidden'); if (!$('bot-search').classList.contains('hidden')) $('bot-search').focus(); else { $('bot-search').value = ''; if (remoteActive()) window.IntelioRemote?.filter(''); else renderBots(); } };
 $('bot-search').oninput = () => { if (remoteActive()) window.IntelioRemote?.filter($('bot-search').value); else renderBots(); };
-$('add-bot').onclick = showAddBot;
+$('add-bot').onclick = () => { if (remoteActive()) showAddAgent(); else showAddBot(); };
 $('settings-button').onclick = showSettings;
 $('settings-fallback').onclick = showSettings;
 let themeStamp = 0;
+let themeReady = false;
 function onThemeToggle() {
+  if (!themeReady) return;
   const now = Date.now();
   if (now - themeStamp < 400) return;
   themeStamp = now;
@@ -790,11 +903,11 @@ function showRemoteNotice(next) {
   toast(next.remoteHermesNotice);
 }
 function showStartupError(message) {
-  const text = message || 'Intelio did not finish starting.';
+  const text = message || 'intelio did not finish starting.';
   const profile = $('intelio-profile');
   if (profile) profile.textContent = text;
   toast(text);
 }
 api.onState((next) => { showRemoteNotice(next); render(next); });
 api.getState().then((next) => { showRemoteNotice(next); render(next); }).catch((error) => showStartupError(error.message));
-setTimeout(() => { if (!state) showStartupError('Intelio did not finish starting.'); }, 8000);
+setTimeout(() => { if (!state) showStartupError('intelio did not finish starting.'); }, 8000);

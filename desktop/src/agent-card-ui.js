@@ -1,4 +1,4 @@
-/** Agent profile page. Colors come from the app theme. No second palette. */
+/** Agent profile page. Orb color is a per-agent accent, separate from the app theme. */
 (function (root) {
   'use strict';
 
@@ -36,6 +36,27 @@
     return wrap;
   }
 
+  const PALETTE = ['#7a5cff', '#1d4ed8', '#059669', '#0f766e', '#7c3aed', '#db2777', '#0369a1', '#44403c'];
+
+  function colorPicker(card, actions) {
+    const wrap = el('div', 'color-picker');
+    for (const color of PALETTE) {
+      const button = el('button', 'swatch');
+      button.type = 'button';
+      button.style.background = color;
+      button.setAttribute('aria-label', color);
+      button.addEventListener('click', () => actions.onColor?.(color));
+      wrap.append(button);
+    }
+    const hex = el('input', 'hex-input');
+    hex.value = card.color || '';
+    hex.maxLength = 7;
+    hex.setAttribute('aria-label', 'Custom color');
+    hex.addEventListener('change', () => actions.onColor?.(hex.value.trim()));
+    wrap.append(hex);
+    return wrap;
+  }
+
   function mount(host, card, actions = {}) {
     if (!host || !card) return;
     const tab = actions.tab || 'details';
@@ -43,12 +64,17 @@
     host.classList.remove('hidden');
     const page = el('div', 'agent-page');
     const head = el('header', 'agent-head');
+    const orbHit = el('button', 'orb-hit');
+    orbHit.type = 'button';
+    orbHit.setAttribute('aria-label', 'Change color');
     const orb = el('canvas', 'agent-orb');
     orb.width = 72;
     orb.height = 72;
     if (root.ThinkingOrbs && actions.orb) {
-      root.ThinkingOrbs.mount(orb, { state: actions.orb, display: 72, size: 64, paused: true, speed: 1, accent: actions.accent || '' });
+      root.ThinkingOrbs.mount(orb, { state: actions.orb, display: 72, size: 64, paused: true, speed: 1, accent: card.color || actions.accent || '' });
     }
+    orbHit.append(orb);
+    orbHit.addEventListener('click', () => actions.onPickColor?.());
     const titles = el('div', 'agent-titles');
     titles.append(el('h2', '', card.name));
     if (card.title) titles.append(el('p', 'agent-role', card.title));
@@ -73,17 +99,23 @@
     email.setAttribute('aria-label', card.email ? `Email ${card.name}` : 'Email not configured');
     email.addEventListener('click', () => actions.onCopy?.(card.email, 'Email copied.'));
     tools.append(message, call, video, email);
-    head.append(orb, titles, tools);
+    head.append(orbHit, titles, tools);
     page.append(head);
+    if (actions.picking) page.append(colorPicker(card, actions));
+    if (card.needsSignIn) page.append(el('p', 'agent-note', 'Needs sign-in'));
+    if (card.gatewayNote) page.append(el('p', 'agent-muted', card.gatewayNote));
 
     const tabs = el('div', 'agent-subtabs');
     tabs.setAttribute('role', 'tablist');
-    for (const [id, label] of [['details', 'Details'], ['memory', 'Memory'], ['phone', card.phoneSoon ? 'Phone soon' : 'Phone']]) {
+    for (const [id, label] of [['computer', 'Computer'], ['details', 'Details'], ['memory', 'Memory'], ['phone', card.phoneSoon ? 'Phone soon' : 'Phone']]) {
       const button = el('button', 'agent-subtab', label);
       button.type = 'button';
       button.setAttribute('role', 'tab');
       button.setAttribute('aria-selected', String(tab === id));
-      button.addEventListener('click', () => actions.onTab?.(id));
+      button.addEventListener('click', () => {
+        if (id === 'computer') { actions.onComputer?.(); return; }
+        actions.onTab?.(id);
+      });
       tabs.append(button);
     }
     page.append(tabs);
@@ -109,8 +141,74 @@
     return row;
   }
 
+  function editor(card, actions) {
+    const form = el('form', 'profile-editor');
+    const specs = [
+      ['name', 'Name', card.name || ''],
+      ['title', 'Title / role', card.title || ''],
+      ['email', 'Email', card.email || ''],
+      ['mobile', 'Mobile', card.phoneLabel || card.phone || ''],
+    ];
+    const inputs = {};
+    for (const [key, label, value] of specs) {
+      const row = el('label', 'edit-field', label);
+      const input = el('input');
+      input.value = value;
+      inputs[key] = input;
+      row.append(input);
+      form.append(row);
+    }
+    const soulRow = el('label', 'edit-field', 'Instructions');
+    const soul = el('textarea');
+    soul.value = card.soul || '';
+    soul.rows = 6;
+    inputs.soul = soul;
+    soulRow.append(soul);
+    form.append(soulRow);
+    const actionsRow = el('div', 'edit-actions');
+    const save = el('button', 'agent-pause', 'Save');
+    save.type = 'submit';
+    const cancel = el('button', 'agent-text', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => actions.onCancelEdit?.());
+    actionsRow.append(save, cancel);
+    form.append(actionsRow);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      actions.onSave?.({
+        name: inputs.name.value,
+        title: inputs.title.value,
+        email: inputs.email.value,
+        mobile: inputs.mobile.value,
+        soul: inputs.soul.value,
+      });
+    });
+    return form;
+  }
+
   function detailsPane(card, actions) {
     const wrap = el('div', 'agent-details');
+    if (actions.editing) {
+      wrap.append(editor(card, actions));
+      return wrap;
+    }
+    const persona = el('div', 'agent-block');
+    const head = el('div', 'agent-block-head');
+    head.append(el('h3', '', 'Instructions'));
+    const edit = el('button', 'agent-text', 'Edit');
+    edit.type = 'button';
+    edit.addEventListener('click', () => actions.onEdit?.());
+    head.append(edit);
+    const text = String(card.soul || '').trim();
+    const open = actions.soulOpen || text.length <= 180;
+    persona.append(head, el('p', 'agent-muted', open ? (text || 'No instructions yet.') : `${text.slice(0, 180)}…`));
+    if (text.length > 180) {
+      const more = el('button', 'agent-text', actions.soulOpen ? 'Show less' : 'Show full');
+      more.type = 'button';
+      more.addEventListener('click', () => actions.onSoul?.(!actions.soulOpen));
+      persona.append(more);
+    }
+    wrap.append(persona);
     wrap.append(field(card.phone ? 'mobile · iMessage' : 'mobile', card.phoneLabel, 'Number copied.', actions.onCopy));
     wrap.append(field('email', card.email, 'Email copied.', actions.onCopy));
     const computer = el('button', 'agent-block agent-link');

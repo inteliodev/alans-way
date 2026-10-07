@@ -13,7 +13,7 @@
     query: '',
     searching: false,
     chatId: '',
-    bot: { id: 'intelio', name: 'Intelio', color: '#ff8a1f', status: 'online' },
+    bot: { id: 'intelio', name: 'intelio', color: '#ff8a1f', status: 'online' },
     messages: [],
     captions: [],
     engines: { recommended: 'web', hermesAudio: false, vps: false, web: true },
@@ -45,6 +45,10 @@
     profileConfirm: false,
     profileBusy: false,
     profileLoaded: '',
+    profileEdit: false,
+    soulOpen: false,
+    colorOpen: false,
+    screens: [],
     updateReady: false,
   };
   let rfb = null;
@@ -108,6 +112,7 @@
       down: '<path d="M6 10l6 6 6-6"/>',
       monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
       lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+      eye: '<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     };
     const wrap = el('span', 'ico');
     wrap.innerHTML = `<svg viewBox="0 0 24 24">${paths[name] || ''}</svg>`;
@@ -167,7 +172,7 @@
     intelio: ['#7a5cff', '#3de1ff'],
     prc: ['#059669', '#2dd4bf'],
     alignment: ['#1d4ed8', '#7dd3fc'],
-    hhp: ['#d97706', '#fbbf24'],
+    hhp: ['#0f766e', '#5eead4'],
     'kid-a': ['#e879f9', '#fb7185'],
     'kid a': ['#e879f9', '#fb7185'],
     kida: ['#e879f9', '#fb7185'],
@@ -180,6 +185,8 @@
   }
 
   function orbColors(profile) {
+    const custom = String(profile?.color || '').trim().toLowerCase();
+    if (/^#[0-9a-f]{6}$/.test(custom)) return [custom, custom];
     const key = String(profile?.id || profile?.name || 'intelio').trim().toLowerCase();
     if (AVATARS[key]) return AVATARS[key];
     const hue = hashHue(key);
@@ -197,7 +204,18 @@
   };
   const OPEN_TYPES = ['working', 'listening', 'breathing', 'shaping'];
 
+  const ORB_CHOICES = ['connecting', 'solving', 'searching', 'weaving', 'working', 'listening', 'breathing', 'shaping'];
+  function excludedAgent(id) {
+    const slug = String(id || '').trim().toLowerCase();
+    const compact = slug.replace(/[\s_]+/g, '-');
+    if (!slug || slug === 'default') return true;
+    if (slug === 'kid-a' || slug === 'kida' || slug === 'kid a' || compact === 'kid-a' || compact.startsWith('kid-a-')) return true;
+    if (slug.includes('alignment-bot-vps') || compact.includes('alignment-bot-vps')) return true;
+    return false;
+  }
   function signatureOf(profile) {
+    const chosen = String(profile?.orb || '').trim().toLowerCase();
+    if (ORB_CHOICES.includes(chosen)) return chosen;
     const key = String(profile?.id || profile?.name || profile || 'intelio').trim().toLowerCase();
     if (SIGNATURES[key]) return SIGNATURES[key];
     let hash = 2166136261;
@@ -207,7 +225,7 @@
 
   const FACE_PX = { avatar: 72, 'avatar sm': 36, 'avatar lg': 148, face: 32, tile: 96, pip: 28, mark: 96 };
   const VPS_AGENTS = ['intelio', 'prc', 'alignment', 'hhp'];
-  const AGENT_NAMES = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+  const AGENT_NAMES = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
   function workStatus() {
     const tasks = (state.bops?.tasks || []).filter((task) => task.status === 'running').length;
     const steps = (state.messages || []).filter((row) => row.liveStep && row.status === 'Running').length;
@@ -230,9 +248,10 @@
     const id = String(profile?.id || '').trim().toLowerCase();
     if (AGENT_NAMES[id]) return AGENT_NAMES[id];
     const name = String(profile?.name || '').trim();
-    return name || 'Intelio';
+    if (name.toLowerCase() === 'intelio') return 'intelio';
+    return name || 'intelio';
   }
-  const CLIENT_VERSION = 'intelio-pwa-12';
+  const CLIENT_VERSION = 'intelio-pwa-14';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);
@@ -335,8 +354,14 @@
   }
 
   function vpsAgents(profiles) {
-    const rows = Array.isArray(profiles) ? profiles : [];
-    return VPS_AGENTS.map((id) => rows.find((item) => String(item.id || '').toLowerCase() === id)).filter(Boolean).map((item) => ({ ...item, name: agentLabel(item) }));
+    const rows = (Array.isArray(profiles) ? profiles : []).filter((item) => !excludedAgent(item.id));
+    const rank = { intelio: 0, prc: 1, alignment: 2, hhp: 3 };
+    return rows.slice().sort((a, b) => {
+      const left = rank[String(a.id || '').toLowerCase()] ?? 9;
+      const right = rank[String(b.id || '').toLowerCase()] ?? 9;
+      if (left !== right) return left - right;
+      return String(a.id).localeCompare(String(b.id));
+    }).map((item) => ({ ...item, name: agentLabel(item) }));
   }
 
   function visibleChats() {
@@ -344,7 +369,7 @@
     const q = state.query.trim().toLowerCase();
     return state.home.conversations.filter((row) => {
       const profile = String(row.profileId || '').toLowerCase();
-      if (!VPS_AGENTS.includes(profile) || profile !== id) return false;
+      if (excludedAgent(profile) || profile !== id) return false;
       return !q || `${row.title} ${row.preview}`.toLowerCase().includes(q);
     });
   }
@@ -456,8 +481,8 @@
 
   function loginView() {
     const wrap = el('div', 'login');
-    const orb = face({ id: 'intelio', name: 'Intelio' }, 'mark');
-    wrap.append(statusBar(), orb, el('h1', '', 'Intelio'), el('p', 'credit', 'Alan’s Way'), el('p', 'note', state.error || 'Checking sign-in…'));
+    const orb = face({ id: 'intelio', name: 'intelio' }, 'mark');
+    wrap.append(statusBar(), orb, el('h1', '', 'intelio'), el('p', 'credit', 'Alan’s Way'), el('p', 'note', state.error || 'Checking sign-in…'));
     return wrap;
   }
 
@@ -476,51 +501,117 @@
   }
 
   function topBar() {
-    const bar = el('div', 'topbar');
+    const bar = el('div', state.view === 'chat' ? 'topbar chat-top' : 'topbar home-top');
+    if (state.view === 'chat') {
+      const back = el('button', 'iconbtn');
+      back.type = 'button';
+      back.setAttribute('aria-label', 'Back');
+      back.append(icon('back'));
+      back.addEventListener('click', () => { haptic(); state.view = 'home'; state.tab = 'sessions'; render(); });
+      const call = el('button', 'iconbtn');
+      call.type = 'button';
+      call.setAttribute('aria-label', `Call ${agentLabel(state.bot)}`);
+      call.append(icon('phone'));
+      call.addEventListener('click', () => { if (state.chatId) startCall(state.chatId); });
+      const hero = el('button', 'chat-hero');
+      hero.type = 'button';
+      hero.append(face(state.bot, 'avatar sm'));
+      const card = el('span', 'chat-card');
+      card.append(el('strong', '', agentLabel(state.bot)));
+      card.append(el('span', '', state.bot?.title || state.bot?.description || 'Agent'));
+      hero.append(card);
+      hero.addEventListener('click', () => { haptic(); openBrowser('agent'); });
+      bar.append(back, hero, call);
+      return bar;
+    }
     const menu = el('button', 'iconbtn');
     menu.type = 'button';
     menu.setAttribute('aria-label', 'Menu');
     menu.append(icon('menu'));
     menu.addEventListener('click', () => { haptic(); state.drawer = true; render(); });
-    const gear = el('button', 'iconbtn');
-    gear.type = 'button';
-    gear.setAttribute('aria-label', 'Settings');
-    gear.append(icon('gear'));
-    gear.addEventListener('click', () => openSettings());
-    const theme = el('button', 'theme-mini');
-    theme.type = 'button';
-    theme.setAttribute('aria-label', currentTheme() === 'light' ? 'Switch to dark' : 'Switch to light');
-    theme.textContent = currentTheme() === 'light' ? 'Light' : 'Dark';
-    theme.addEventListener('click', () => { setTheme(currentTheme() === 'light' ? 'dark' : 'light', true); render(); });
-    const browser = el('button', 'iconbtn');
-    browser.type = 'button';
-    browser.setAttribute('aria-label', 'Agent browser');
-    browser.append(icon('monitor'));
-    browser.addEventListener('click', () => openBrowser());
-    bar.append(menu, theme);
-    if (state.view === 'chat' || state.tab === 'sessions') {
-      const hero = el('div', 'hero');
-      hero.append(face(state.bot, 'avatar'));
-      const pill = el('button', 'name-pill');
-      pill.type = 'button';
-      pill.append(el('span', 'name-pill-title', agentLabel(state.bot)));
-      const status = workStatus();
-      if (status) pill.append(el('span', 'name-pill-status', status));
-      pill.addEventListener('click', () => { if (state.view !== 'chat') selectTab('chat'); });
-      hero.append(pill);
-      bar.append(hero);
-    }
-    bar.append(browser, gear);
+    const word = el('div', 'home-word', 'intelio');
+    const add = el('button', 'iconbtn');
+    add.type = 'button';
+    add.setAttribute('aria-label', 'Add agent');
+    add.append(icon('plus'));
+    add.addEventListener('click', () => openSheet('agent'));
+    bar.append(menu, word, add);
     return bar;
   }
 
+  function agentRole(profile) {
+    return String(profile?.title || profile?.description || 'Agent').replace(/\s+/g, ' ').trim().slice(0, 48) || 'Agent';
+  }
+
+  function leadCard() {
+    const profile = state.bot || {};
+    const button = el('button', 'lead-card');
+    button.type = 'button';
+    const orb = el('span', 'lead-orb');
+    orb.append(face(profile, 'avatar'));
+    const badge = el('span', 'lead-badge');
+    badge.setAttribute('aria-hidden', 'true');
+    orb.append(badge);
+    button.append(orb, el('strong', 'lead-name', agentLabel(profile)), el('span', 'lead-status', workStatus() || 'Online'));
+    button.addEventListener('click', () => { haptic(); openBrowser('agent'); });
+    return button;
+  }
+
+  function agentLine(profile) {
+    const button = el('button', 'agent-line');
+    button.type = 'button';
+    button.append(face(profile, 'pip'), el('span', 'agent-line-name', agentLabel(profile)), el('span', 'agent-role', agentRole(profile)));
+    button.addEventListener('click', () => openAgentChat(profile));
+    return button;
+  }
+
+  function watchingBlock() {
+    const rows = (state.screens || []).filter((row) => row && row.host && !excludedAgent(row.profileId));
+    if (!rows.length) return null;
+    const wrap = el('section', 'side-block');
+    wrap.append(el('p', 'section-label', 'WATCHING'));
+    rows.forEach((row) => {
+      const button = el('button', 'watch-row');
+      button.type = 'button';
+      const name = agentLabel(profileById(row.profileId) || { id: row.profileId, name: row.name });
+      const extra = rows.filter((item) => item.profileId === row.profileId).length > 1 ? ` ${row.screen}` : '';
+      button.append(icon('eye'), el('strong', '', row.host), el('span', '', ` · ${name}'s screen${extra}`));
+      button.addEventListener('click', () => {
+        state.bot = profileById(row.profileId) || state.bot;
+        openBrowser('computer');
+      });
+      wrap.append(button);
+    });
+    return wrap;
+  }
+
+  function threadLine(row) {
+    const button = el('button', `thread-line${row.id === state.chatId ? ' on' : ''}`);
+    button.type = 'button';
+    button.append(el('span', 'thread-title', row.title || 'Untitled'));
+    if (row.id === state.chatId && (state.thinking || state.connecting)) button.append(el('span', 'thread-dot'));
+    button.addEventListener('click', () => openChat(row));
+    return button;
+  }
+
   function sessionsView() {
-    const list = el('div', 'feed');
+    const list = el('div', 'home-list');
     list.id = 'list';
-    list.append(el('p', 'kicker', `${agentLabel(state.bot)} threads`));
+    list.append(leadCard());
+    const others = vpsAgents(state.home.profiles).filter((profile) => profile.id !== state.bot?.id);
+    if (others.length) {
+      const agents = el('div', 'agent-lines');
+      for (const profile of others) agents.append(agentLine(profile));
+      list.append(agents);
+    }
+    const watching = watchingBlock();
+    if (watching) list.append(watching);
+    const threads = el('section', 'side-block');
+    threads.append(el('p', 'section-label', 'THREADS'));
     const rows = visibleChats();
-    if (!rows.length) list.append(el('p', 'empty', state.sample ? 'No sample conversations.' : 'No conversations yet.'));
-    for (const row of rows) list.append(sessionCard(row));
+    if (!rows.length) threads.append(el('p', 'empty', state.sample ? 'No sample conversations.' : 'No conversations yet.'));
+    for (const row of rows) threads.append(threadLine(row));
+    list.append(threads);
     return list;
   }
 
@@ -656,12 +747,27 @@
     appearance.addEventListener('click', () => { setTheme(currentTheme() === 'light' ? 'dark' : 'light', true); render(); });
     head.append(appearance);
     panel.append(head);
-    panel.append(el('div', 'kicker', 'AGENTS'));
+    const agentHead = el('div', 'kicker-row');
+    agentHead.append(el('div', 'kicker', 'AGENTS'));
+    const addAgent = el('button', 'iconbtn');
+    addAgent.type = 'button';
+    addAgent.setAttribute('aria-label', 'Add agent');
+    addAgent.append(icon('plus'));
+    addAgent.addEventListener('click', () => { state.drawer = false; openSheet('agent'); });
+    agentHead.append(addAgent);
+    panel.append(agentHead);
     const agents = vpsAgents(state.home.profiles);
     for (const profile of agents) {
       const button = el('button', `navbtn${profile.id === state.bot.id ? ' on' : ''}`);
       button.type = 'button';
-      button.append(face(profile, 'pip'), el('span', '', agentLabel(profile)));
+      const orb = face(profile, 'pip');
+      orb.addEventListener('click', (event) => {
+        event.stopPropagation();
+        state.bot = profile;
+        state.drawer = false;
+        openBrowser('agent');
+      });
+      button.append(orb, el('span', '', agentLabel(profile)));
       button.addEventListener('click', () => selectProfile(profile));
       panel.append(button);
     }
@@ -714,7 +820,7 @@
     if (!ios || !safari) return null;
     try { if (localStorage.getItem('intelio-a2hs') === '1') return null; } catch { /* keep the hint */ }
     const bar = el('div', 'a2hs');
-    bar.append(el('p', '', 'Add Intelio to your Home Screen. Tap Share, then Add to Home Screen.'));
+    bar.append(el('p', '', 'Add intelio to your Home Screen. Tap Share, then Add to Home Screen.'));
     const close = el('button', 'a2hs-x', 'OK');
     close.type = 'button';
     close.addEventListener('click', () => {
@@ -729,7 +835,7 @@
 
   async function loadProfile(force) {
     const id = String(state.bot?.id || '').toLowerCase();
-    if (!VPS_AGENTS.includes(id)) return;
+    if (excludedAgent(id)) return;
     if (!force && state.profileLoaded === id) return;
     state.profileLoaded = id;
     const token = ++profileToken;
@@ -761,7 +867,17 @@
         body: JSON.stringify({ ...body, profile: id }),
       });
       const card = await response.json().catch(() => null);
-      if (card && card.id === id) state.profileCard = card;
+      if (!response.ok) {
+        state.profileNote = card?.error || 'Could not save that.';
+        return;
+      }
+      if (card && card.id === id) {
+        state.profileCard = card;
+        state.profileNote = '';
+        state.profileEdit = false;
+        state.colorOpen = false;
+        applyCardStyle(card);
+      }
       state.profileLoaded = id;
     } catch {
       state.profileNote = 'Could not save that.';
@@ -783,6 +899,40 @@
     const node = document.querySelector('.profile-note');
     if (node) node.textContent = state.profileNote;
     else if (state.view === 'browser') render();
+  }
+
+  const COLOR_SWATCHES = ['#7a5cff', '#1d4ed8', '#059669', '#0f766e', '#7c3aed', '#db2777', '#0369a1', '#44403c'];
+
+  function applyCardStyle(card) {
+    if (!card) return;
+    const patch = { color: card.color || '', title: card.title || '', name: card.name || '', orb: card.orb || '' };
+    state.bot = { ...state.bot, ...patch, id: state.bot?.id || card.id };
+    state.home.profiles = (state.home.profiles || []).map((row) => (row.id === card.id ? { ...row, ...patch } : row));
+  }
+
+  function colorPicker(card) {
+    const wrap = el('div', 'color-picker');
+    for (const color of COLOR_SWATCHES) {
+      const swatch = el('button', 'swatch');
+      swatch.type = 'button';
+      swatch.style.background = color;
+      swatch.setAttribute('aria-label', color);
+      swatch.addEventListener('click', () => postProfile('/api/agent/profile', { color }));
+      wrap.append(swatch);
+    }
+    const hex = document.createElement('input');
+    hex.className = 'hex-input';
+    hex.value = card.color || '';
+    hex.maxLength = 7;
+    hex.setAttribute('aria-label', 'Custom color');
+    hex.placeholder = '#7a5cff';
+    hex.addEventListener('change', () => {
+      const value = hex.value.trim();
+      if (/^#[0-9a-fA-F]{6}$/.test(value)) postProfile('/api/agent/profile', { color: value });
+      else state.profileNote = 'Use a hex color like #7a5cff.';
+    });
+    wrap.append(hex);
+    return wrap;
   }
 
   function profileField(label, value, copyNote) {
@@ -815,8 +965,77 @@
     return wrap;
   }
 
+  function profileEditor(card) {
+    const form = el('form', 'profile-editor');
+    const fields = [
+      ['name', 'Name', card.name || ''],
+      ['title', 'Title / role', card.title || ''],
+      ['email', 'Email', card.email || ''],
+      ['mobile', 'Mobile', card.phoneLabel || card.phone || ''],
+    ];
+    const inputs = {};
+    for (const [key, label, value] of fields) {
+      const row = el('label', 'edit-field', label);
+      const input = document.createElement('input');
+      input.value = value;
+      input.autocomplete = 'off';
+      inputs[key] = input;
+      row.append(input);
+      form.append(row);
+    }
+    const soulLabel = el('label', 'edit-field', 'Instructions');
+    const soul = document.createElement('textarea');
+    soul.value = card.soul || '';
+    soul.rows = 6;
+    inputs.soul = soul;
+    soulLabel.append(soul);
+    form.append(soulLabel);
+    const actions = el('div', 'edit-actions');
+    const save = el('button', 'profile-pause', 'Save');
+    save.type = 'submit';
+    const cancel = el('button', 'profile-text', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => { state.profileEdit = false; render(); });
+    actions.append(save, cancel);
+    form.append(actions);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      postProfile('/api/agent/profile', {
+        name: inputs.name.value,
+        title: inputs.title.value,
+        email: inputs.email.value,
+        mobile: inputs.mobile.value,
+        soul: inputs.soul.value,
+      });
+    });
+    return form;
+  }
+
   function profileDetails(card) {
     const wrap = el('div', 'profile-stack');
+    if (card.needsSignIn) wrap.append(el('p', 'profile-note', 'Needs sign-in'));
+    if (state.profileEdit) {
+      wrap.append(profileEditor(card));
+      return wrap;
+    }
+    const persona = el('div', 'profile-block');
+    const personaHead = el('div', 'profile-row');
+    personaHead.append(el('h3', '', 'Instructions'));
+    const edit = el('button', 'profile-text', 'Edit');
+    edit.type = 'button';
+    edit.addEventListener('click', () => { state.profileEdit = true; state.soulOpen = true; render(); });
+    personaHead.append(edit);
+    const text = String(card.soul || '').trim();
+    const shown = state.soulOpen || text.length <= 180 ? text : `${text.slice(0, 180)}…`;
+    persona.append(personaHead, el('p', 'profile-soul', shown || 'No instructions yet.'));
+    if (text.length > 180) {
+      const more = el('button', 'profile-text', state.soulOpen ? 'Show less' : 'Show full');
+      more.type = 'button';
+      more.addEventListener('click', () => { state.soulOpen = !state.soulOpen; render(); });
+      persona.append(more);
+    }
+    wrap.append(persona);
+    if (card.gatewayNote) wrap.append(el('p', 'profile-muted', card.gatewayNote));
     wrap.append(profileField(card.phone ? 'mobile · iMessage' : 'mobile', card.phoneLabel, 'Number copied.'));
     wrap.append(profileField('email', card.email, 'Email copied.'));
     const computer = el('button', 'profile-block profile-link');
@@ -940,7 +1159,13 @@
     const wrap = el('div', 'profile-sheet');
     const card = state.profileCard && state.profileCard.id === state.bot?.id ? state.profileCard : null;
     const head = el('header', 'profile-head');
-    head.append(face(state.bot, 'avatar', { still: true, pinned: true }));
+    const tinted = { ...state.bot, color: card?.color || state.bot?.color || '' };
+    const orbButton = el('button', 'orb-hit');
+    orbButton.type = 'button';
+    orbButton.setAttribute('aria-label', 'Change color');
+    orbButton.append(face(tinted, 'avatar', { still: true, pinned: true }));
+    orbButton.addEventListener('click', () => { state.colorOpen = !state.colorOpen; render(); });
+    head.append(orbButton);
     const titles = el('div', '');
     titles.append(el('h2', '', card?.name || agentLabel(state.bot)));
     if (card?.title) titles.append(el('p', 'profile-muted', card.title));
@@ -972,12 +1197,19 @@
     tools.append(message, call, video, email);
     head.append(tools);
     wrap.append(head);
+    if (state.colorOpen && card) wrap.append(colorPicker(card));
     const tabs = el('div', 'profile-subtabs');
-    for (const [id, label] of [['details', 'Details'], ['memory', 'Memory'], ['phone', card?.phoneSoon === false ? 'Phone' : 'Phone soon']]) {
+    for (const [id, label] of [['computer', 'Computer'], ['details', 'Details'], ['memory', 'Memory'], ['phone', card?.phoneSoon === false ? 'Phone' : 'Phone soon']]) {
       const button = el('button', 'profile-subtab', label);
       button.type = 'button';
-      button.setAttribute('aria-selected', String(state.profileTab === id));
-      button.addEventListener('click', () => { state.profileTab = id; state.profileConfirm = false; render(); });
+      button.setAttribute('aria-selected', String(id === 'computer' ? state.browserPane !== 'agent' : state.profileTab === id));
+      button.addEventListener('click', () => {
+        if (id === 'computer') { openBrowser('computer'); return; }
+        state.profileTab = id;
+        state.profileConfirm = false;
+        state.profileEdit = false;
+        render();
+      });
       tabs.append(button);
     }
     wrap.append(tabs);
@@ -1051,11 +1283,7 @@
       control.setAttribute('aria-pressed', state.browserControl ? 'true' : 'false');
       if (rfb) {
         rfb.viewOnly = !state.browserControl;
-        rfb.scaleViewport = true;
-        const restore = rfb._viewOnly;
-        rfb._viewOnly = false;
-        try { if (typeof rfb._requestRemoteResize === 'function') rfb._requestRemoteResize(); }
-        finally { rfb._viewOnly = restore; }
+        fitRemote(rfb, document.getElementById('vnc-screen'));
       }
       const hint = document.getElementById('browser-hint');
       if (hint) hint.textContent = state.browserControl ? 'You control this view.' : 'Watching. Take control to use the pointer and keyboard.';
@@ -1081,6 +1309,27 @@
     empty.classList.toggle('browser-error', Boolean(failed));
   }
 
+  function containRemote(cw, ch, fw, fh) {
+    if (!(cw > 0 && ch > 0 && fw > 0 && fh > 0)) return { scale: 0, width: 0, height: 0, x: 0, y: 0 };
+    const scale = Math.min(cw / fw, ch / fh);
+    const width = fw * scale;
+    const height = fh * scale;
+    return { scale, width, height, x: (cw - width) / 2, y: (ch - height) / 2 };
+  }
+
+  function fitRemote(client, screen) {
+    if (!client || !screen) return;
+    client.scaleViewport = true;
+    client.resizeSession = false;
+    client.clipViewport = false;
+    const cw = screen.clientWidth;
+    const ch = screen.clientHeight;
+    const fw = client._fbWidth || client._display?.width || 0;
+    const fh = client._fbHeight || client._display?.height || 0;
+    const fit = containRemote(cw, ch, fw, fh);
+    if (fit.scale > 0 && client._display) client._display.scale = fit.scale;
+  }
+
   async function connectBrowser(screen) {
     if (!screen.isConnected) return;
     try { rfb?.disconnect(); } catch { /* already closed */ }
@@ -1099,19 +1348,12 @@
       const client = new RFB(screen, url);
       const fit = () => {
         if (rfb !== client) return;
-        const restore = client._viewOnly;
-        client._viewOnly = false;
-        try {
-          client.scaleViewport = true;
-          client.resizeSession = true;
-          if (typeof client._requestRemoteResize === 'function') client._requestRemoteResize();
-        } finally {
-          client._viewOnly = restore;
-        }
+        fitRemote(client, screen);
       };
       client.viewOnly = !state.browserControl;
       client.scaleViewport = true;
-      client.resizeSession = true;
+      client.resizeSession = false;
+      client.clipViewport = false;
       client.focusOnClick = state.browserControl;
       client.background = currentTheme() === 'light' ? '#f4f4f6' : '#070708';
       if (screen._fit) screen._fit.disconnect();
@@ -1154,7 +1396,7 @@
 
   function iconsView() {
     const wrap = el('div', 'icons');
-    const names = [['Intelio', 'intelio'], ['PRC', 'prc'], ['Alignment', 'alignment'], ['HHP', 'hhp']];
+    const names = [['intelio', 'intelio'], ['PRC', 'prc'], ['Alignment', 'alignment'], ['HHP', 'hhp']];
     names.forEach(([label, id]) => {
       const figure = document.createElement('figure');
       figure.append(face({ id }, 'tile', { paused: true, still: true, pinned: true }), el('figcaption', '', label));
@@ -1347,9 +1589,14 @@
     if (home.status === 401) { state.view = 'login'; state.error = 'This Tailscale identity is not allowed.'; render(); return; }
     state.home = await home.json();
     state.home.profiles = vpsAgents(state.home.profiles);
-    state.home.conversations = (state.home.conversations || []).filter((row) => VPS_AGENTS.includes(String(row.profileId || '').toLowerCase()));
+    state.home.conversations = (state.home.conversations || []).filter((row) => !excludedAgent(row.profileId));
     state.sample = Boolean(state.home.sample);
     state.bot = state.home.profiles[0] || state.bot;
+    const screens = await fetch('/api/screens');
+    if (screens.ok) {
+      const body = await screens.json().catch(() => ({ data: [] }));
+      state.screens = Array.isArray(body.data) ? body.data : [];
+    }
     state.skills = Array.isArray(state.home.skills) ? state.home.skills : [];
     state.jobs = Array.isArray(state.home.jobs) ? state.home.jobs : [];
     state.skillsOk = Boolean(state.home.skillsOk);
@@ -1426,6 +1673,15 @@
       strip.append(button);
     }
     return strip;
+  }
+
+  async function openAgentChat(profile) {
+    haptic();
+    state.bot = profile;
+    state.drawer = false;
+    const latest = (state.home.conversations || []).find((row) => String(row.profileId || '').toLowerCase() === String(profile.id || '').toLowerCase() && !excludedAgent(row.profileId));
+    if (latest) { await openChat(latest); return; }
+    await startChatWith(profile);
   }
 
   function selectProfile(profile) {
@@ -1529,7 +1785,7 @@
     });
     wrap.append(toggle, el('p', '', 'Light is the default. Your choice is saved on this device.'));
     wrap.append(el('h2', '', 'About'));
-    wrap.append(el('p', '', 'Intelio · Alan’s Way'));
+    wrap.append(el('p', '', 'intelio · Alan’s Way'));
     wrap.append(el('p', 'version', `Version ${CLIENT_VERSION}`));
     return wrap;
   }
@@ -1668,7 +1924,7 @@
   function agentCard() {
     const frag = document.createDocumentFragment();
     const head = el('div', 'agent-head');
-    const preview = face({ id: 'new-agent', name: 'New' }, 'avatar sm', { still: true, pinned: true });
+    const preview = face({ id: 'new-agent', name: 'New', orb: 'working' }, 'avatar sm', { still: true, pinned: true });
     preview.id = 'agent-preview';
     head.append(preview, el('h2', '', 'New agent'));
     frag.append(head);
@@ -1677,43 +1933,50 @@
     name.placeholder = 'Name';
     name.autocomplete = 'off';
     name.maxLength = 32;
-    const description = document.createElement('input');
-    description.id = 'agent-description';
-    description.placeholder = 'One-line description';
-    description.maxLength = 240;
-    const select = document.createElement('select');
-    select.id = 'agent-from';
-    const blank = document.createElement('option');
-    blank.value = '';
-    blank.textContent = 'Start blank';
-    select.append(blank);
-    for (const profile of state.home.profiles) {
+    name.setAttribute('aria-label', 'Agent name');
+    const title = document.createElement('input');
+    title.id = 'agent-title';
+    title.placeholder = 'Title or role (optional)';
+    title.maxLength = 80;
+    title.setAttribute('aria-label', 'Title or role');
+    const orb = document.createElement('select');
+    orb.id = 'agent-orb';
+    orb.setAttribute('aria-label', 'Orb style');
+    for (const style of ORB_CHOICES) {
       const option = document.createElement('option');
-      option.value = profile.id;
-      option.textContent = `Start from ${agentLabel(profile)}`;
-      select.append(option);
+      option.value = style;
+      option.textContent = style;
+      orb.append(option);
     }
+    const soul = document.createElement('textarea');
+    soul.id = 'agent-soul';
+    soul.placeholder = 'SOUL / instructions (optional)';
+    soul.maxLength = 8000;
+    soul.rows = 4;
+    soul.setAttribute('aria-label', 'SOUL instructions');
     const save = el('button', 'block', 'Create agent');
     save.type = 'button';
-    save.addEventListener('click', () => createAgent(name.value, description.value, select.value));
-    name.addEventListener('input', () => {
+    save.addEventListener('click', () => createAgent(name.value, title.value, orb.value, soul.value));
+    const paint = () => {
       const slug = name.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || 'new-agent';
       const [core] = orbColors({ id: slug });
       preview.dataset.profile = slug;
       preview.dataset.accent = core;
       preview.style.setProperty('--orb', core);
-      if (window.ThinkingOrbs) window.ThinkingOrbs.sync(preview, { accent: core, state: signatureOf(slug), paused: true, display: 36, size: 64 });
-    });
-    frag.append(name, description, select, save);
-    frag.append(el('p', '', 'A new agent uses the shared Codex sign-in. Its route appears after the gateway restarts.'));
+      if (window.ThinkingOrbs) window.ThinkingOrbs.sync(preview, { accent: core, state: orb.value || signatureOf(slug), paused: true, display: 36, size: 64 });
+    };
+    name.addEventListener('input', paint);
+    orb.addEventListener('change', paint);
+    frag.append(name, title, orb, soul, save);
+    frag.append(el('p', '', 'Creates an isolated profile from intelio. Messaging platforms stay off. Ready after the next agent restart.'));
     return frag;
   }
 
-  async function createAgent(name, description, cloneFrom) {
+  async function createAgent(name, title, orb, soul) {
     const response = await fetch('/api/profiles', {
       method: 'POST',
       headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
-      body: JSON.stringify({ name, description, cloneFrom }),
+      body: JSON.stringify({ name, title, orb, soul }),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -1721,12 +1984,23 @@
       render();
       return;
     }
-    const created = { id: body.id, name: body.name || body.id, description: body.description || '', status: 'online' };
+    const created = {
+      id: body.id,
+      name: body.name || body.id,
+      description: body.description || '',
+      title: body.title || '',
+      orb: body.orb || orb,
+      needsSignIn: body.needsSignIn === true,
+      gatewayNote: body.gatewayNote || 'Ready after the next agent restart',
+      status: 'online',
+    };
     if (!state.home.profiles.some((item) => item.id === created.id)) state.home.profiles.push(created);
     state.bot = created;
+    state.profileCard = null;
+    state.profileLoaded = '';
+    state.profileNote = [created.needsSignIn ? 'Needs sign-in' : '', created.gatewayNote].filter(Boolean).join(' ');
     document.getElementById('sheet')?.remove();
-    render();
-    if (body.needsGatewayRestart) openSheet('restart');
+    openBrowser('agent');
   }
 
   function restartCard() {
@@ -2117,7 +2391,7 @@
     if (!sessionId || !text) return;
     const api = window.IntelioBops;
     if (api) {
-      const run = api.startRun({ text, profile: state.bot?.id || 'intelio', agentName: state.bot?.name || 'Intelio' });
+      const run = api.startRun({ text, profile: state.bot?.id || 'intelio', agentName: agentLabel(state.bot) });
       if (run.orchestration === 'app-fan-out' || run.handoff) {
         state.bops = run;
         state.readFor = text;
@@ -2492,7 +2766,7 @@
       state.drawer = false;
       state.bops = {
         profile: 'intelio',
-        agentName: 'Intelio',
+        agentName: 'intelio',
         focusedId: 'signin-1',
         orchestration: 'single-session',
         tasks: [{
@@ -2510,6 +2784,16 @@
 
   const savedTheme = storedTheme();
   setTheme(savedTheme || 'light', false);
+
+  function pinKeyboard() {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const inset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+    document.documentElement.style.setProperty('--kb', `${Math.round(inset)}px`);
+  }
+  window.visualViewport?.addEventListener('resize', pinKeyboard);
+  window.visualViewport?.addEventListener('scroll', pinKeyboard);
+  pinKeyboard();
 
   fetch('/session').then((response) => {
     if (response.status === 401) {

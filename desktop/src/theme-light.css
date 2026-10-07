@@ -1,13 +1,13 @@
 /* Light chrome. Every rule is gated so Dark stays the existing stylesheet. */
 html[data-theme="light"] { color-scheme: light; }
-html[data-theme="light"] body { background: #f6f6f8; color: #1c1c21; }
-html[data-theme="light"] .sidebar { background: #ffffff; border-right-color: #e4e4e8; }
+html[data-theme="light"] body { background: #f6f6f8 !important; color: #1c1c21; }
+html[data-theme="light"] .sidebar { background: #ffffff !important; border-right-color: #e4e4e8; }
 html[data-theme="light"] .workspace-pane,
-html[data-theme="light"] .splitter { background: #f6f6f8; }
+html[data-theme="light"] .splitter { background: #f6f6f8 !important; }
 html[data-theme="light"] .chat-pane,
 html[data-theme="light"] .remote-chat,
 html[data-theme="light"] .remote-thread,
-html[data-theme="light"] .remote-messages { background: #fff; }
+html[data-theme="light"] .remote-messages { background: #fff !important; }
 html[data-theme="light"] .splitter { border-left-color: #e4e4e8; }
 html[data-theme="light"] .splitter:hover,
 html[data-theme="light"] .splitter.active { background: #d5d5dc; }

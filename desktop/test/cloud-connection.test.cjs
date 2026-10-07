@@ -87,7 +87,7 @@ test('cloud health uses the origin and treats an Access redirect as sign-in', as
       getConfig: async () => ({ enabled: true, host: '127.0.0.1', port: 1, profile: 'intelio', origin: `http://127.0.0.1:${port}`, activeMode: 'cloud' }),
       getKey: async () => 'k'.repeat(32),
     });
-    await assert.rejects(client.health(), (error) => error.code === 'CLOUD_ACCESS' && error.message === 'Sign in to Intelio');
+    await assert.rejects(client.health(), (error) => error.code === 'CLOUD_ACCESS' && error.message === 'Sign in to intelio');
   } finally {
     server.close();
   }

@@ -18,7 +18,7 @@
     intelio: '#7a5cff',
     prc: '#059669',
     alignment: '#1d4ed8',
-    hhp: '#d97706',
+    hhp: '#0f766e',
     'kid-a': '#e879f9',
     'kid a': '#e879f9',
     kida: '#e879f9',
@@ -47,14 +47,14 @@
       return `${agent.name || ''} ${agent.id || ''} ${agent.orb || ''}`.toLowerCase().includes(needle);
     }).map((agent) => {
       const orb = agent.orb || signatureOf(agent.id);
-      return { id: agent.id, name: agent.name || agent.id, orb, subtitle: orb, selected: agent.id === selected };
+      return { id: agent.id, name: shownAgent(agent.id, agent.name), orb, color: agent.color || '', title: agent.title || agent.description || '', needsSignIn: Boolean(agent.needsSignIn), gatewayNote: agent.gatewayNote || '', subtitle: orb, selected: agent.id === selected };
     });
   }
 
   const SAMPLE = {
     label: 'SAMPLE DATA',
     agents: [
-      { id: 'intelio', name: 'Intelio', orb: 'connecting' },
+      { id: 'intelio', name: 'intelio', orb: 'connecting' },
       { id: 'prc', name: 'PRC', orb: 'solving' },
       { id: 'alignment', name: 'Alignment', orb: 'searching' },
       { id: 'hhp', name: 'HHP', orb: 'weaving' },
@@ -87,6 +87,7 @@
 
   const ui = {
     agents: [],
+    screens: [],
     sessions: [],
     messages: [],
     selected: '',
@@ -151,7 +152,7 @@
     if (host && text) host.textContent = text;
   }
   const HARNESS = [
-    { id: 'intelio', name: 'Intelio' },
+    { id: 'intelio', name: 'intelio' },
     { id: 'prc', name: 'PRC' },
     { id: 'alignment', name: 'Alignment' },
     { id: 'hhp', name: 'HHP' },
@@ -165,45 +166,70 @@
     return false;
   }
 
-  /** Remote mode owns the Agents list. Local Telegram / Alignment bots stay off it. */
+  function excludedAgent(id) {
+    const slug = String(id || '').trim().toLowerCase();
+    const compact = slug.replace(/[\s_]+/g, '-');
+    if (!slug || slug === 'default') return true;
+    if (slug === 'kid-a' || slug === 'kida' || slug === 'kid a' || compact === 'kid-a' || compact.startsWith('kid-a-')) return true;
+    if (slug.includes('alignment-bot-vps') || compact.includes('alignment-bot-vps')) return true;
+    return false;
+  }
+
+  /** Remote mode owns the Agents list. Kid A and Alignment-Bot-VPS stay off it. */
   function chooseSidebar({ remote, localBots = [], remoteAgents = [] } = {}) {
     if (!remoteConfigured(remote)) return { source: 'local', agents: localBots.slice() };
-    const live = new Map((remoteAgents || []).filter((agent) => HARNESS.some((row) => row.id === agent.id)).map((agent) => [agent.id, agent]));
-    const agents = HARNESS.map((agent) => live.get(agent.id) || { id: agent.id, name: agent.name, orb: signatureOf(agent.id) });
-    return { source: 'remote', agents };
+    const live = (remoteAgents || []).filter((agent) => agent?.id && !excludedAgent(agent.id));
+    if (!live.length) {
+      return {
+        source: 'remote',
+        agents: HARNESS.map((agent) => ({ ...agent, orb: signatureOf(agent.id), name: shownAgent(agent.id, agent.name) })),
+      };
+    }
+    const namedIds = new Set(HARNESS.map((agent) => agent.id));
+    const named = HARNESS.filter((agent) => live.some((row) => row.id === agent.id)).map((agent) => {
+      const row = live.find((item) => item.id === agent.id) || agent;
+      return { ...row, id: agent.id, name: shownAgent(agent.id, row.name), orb: row.orb || signatureOf(agent.id) };
+    });
+    const rest = live.filter((agent) => !namedIds.has(agent.id)).map((agent) => ({
+      ...agent,
+      name: shownAgent(agent.id, agent.name),
+      orb: agent.orb || signatureOf(agent.id),
+    }));
+    return { source: 'remote', agents: [...named, ...rest] };
   }
 
   function seedAgents(names, profile) {
     const stored = [...new Set((names || []).map((name) => String(name || '').trim().toLowerCase()).filter(Boolean))];
     const named = [
-      { id: 'intelio', name: 'Intelio' },
+      { id: 'intelio', name: 'intelio' },
       { id: 'prc', name: 'PRC' },
       { id: 'alignment', name: 'Alignment' },
       { id: 'hhp', name: 'HHP' },
     ].filter((agent) => stored.includes(agent.id)).map((agent) => ({ ...agent, orb: signatureOf(agent.id) }));
     if (named.length) return named;
     const fallback = String(profile || 'intelio').trim().toLowerCase() || 'intelio';
-    const known = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
-    return [{ id: fallback, name: known[fallback] || fallback.slice(0, 1).toUpperCase() + fallback.slice(1), orb: signatureOf(fallback) }];
+    const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+    return [{ id: fallback, name: known[fallback] || (fallback === 'intelio' ? 'intelio' : fallback.slice(0, 1).toUpperCase() + fallback.slice(1)), orb: signatureOf(fallback) }];
   }
   function selectedAgent() { return ui.agents.find((agent) => agent.id === ui.selected) || null; }
 
-  function mountOrb(canvas, id, orb, px, paused) {
+  function mountOrb(canvas, id, orb, px, paused, accent) {
     canvas.width = px;
     canvas.height = px;
     canvas.className = 'orb';
     canvas.dataset.profile = id;
     if (root.ThinkingOrbs) {
-      root.ThinkingOrbs.mount(canvas, { state: orb, display: px, size: 64, paused, speed: paused ? 1 : 0.42, accent: accentOf(id) });
+      root.ThinkingOrbs.mount(canvas, { state: orb, display: px, size: 64, paused, speed: paused ? 1 : 0.42, accent: accent || accentOf(id) });
     }
   }
 
   function shownAgent(id, name) {
     const key = String(id || '').trim().toLowerCase();
-    const known = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+    const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
     if (known[key]) return known[key];
     const raw = String(name || '').trim();
-    if (!raw || raw.toLowerCase() === 'intelio') return 'Agent';
+    if (!raw) return 'Agent';
+    if (raw.toLowerCase() === 'intelio') return 'intelio';
     return raw;
   }
 
@@ -220,6 +246,8 @@
     const agent = selectedAgent();
     const title = $('chat-title');
     if (title) title.textContent = agent ? shownAgent(agent.id, agent.name) : 'VPS Hermes';
+    const role = $('chat-role');
+    if (role) role.textContent = agent?.title || agent?.description || '';
     const status = $('chat-status');
     if (status) {
       const count = workCount();
@@ -230,9 +258,24 @@
     if (avatar && agent) {
       avatar.replaceChildren();
       const canvas = el('canvas');
-      mountOrb(canvas, agent.id, agent.orb || signatureOf(agent.id), 28, false);
+      mountOrb(canvas, agent.id, agent.orb || signatureOf(agent.id), 28, false, agent.color);
       avatar.append(canvas);
       avatar.title = shownAgent(agent.id, agent.name);
+      avatar.setAttribute('aria-label', `Open ${shownAgent(agent.id, agent.name)} details`);
+      avatar.onclick = (event) => {
+        event.stopPropagation();
+        root.openAgentDetails?.(agent.id);
+      };
+    }
+    const pill = $('chat-pill');
+    if (pill && agent) {
+      pill.onclick = (event) => {
+        if (event.target.closest('#bots-toggle')) return;
+        root.openAgentDetails?.(agent.id);
+      };
+      pill.setAttribute('role', 'button');
+      pill.tabIndex = 0;
+      pill.setAttribute('aria-label', `Open ${shownAgent(agent.id, agent.name)} details`);
     }
   }
 
@@ -242,12 +285,58 @@
     return latest?.preview || latest?.title || '';
   }
 
+  function paintLead(rows) {
+    const card = $('lead-card');
+    if (!card) return;
+    const lead = rows.find((row) => row.selected) || rows[0];
+    if (!lead || ui.sidebar !== 'agents') {
+      card.classList.add('hidden');
+      card.replaceChildren();
+      return;
+    }
+    card.classList.remove('hidden');
+    card.replaceChildren();
+    const orb = el('span', 'lead-orb');
+    const canvas = el('canvas');
+    mountOrb(canvas, lead.id, lead.orb, 72, true, lead.color);
+    const badge = el('span', 'lead-badge');
+    orb.append(canvas, badge);
+    const count = workCount();
+    card.append(orb, el('strong', 'lead-name', lead.name), el('span', 'lead-status', count ? `Working on ${count} ${count === 1 ? 'thing' : 'things'}` : 'Online'));
+    card.onclick = () => root.openAgentDetails?.(lead.id);
+  }
+
+  function paintWatching() {
+    const wrap = $('sidebar-watching-wrap');
+    const host = $('sidebar-watching');
+    if (!wrap || !host) return;
+    const rows = (ui.screens || []).filter((row) => row && row.host);
+    host.replaceChildren();
+    wrap.classList.toggle('hidden', ui.sidebar !== 'agents' || !rows.length);
+    for (const row of rows) {
+      const button = el('button', 'watch-row');
+      button.type = 'button';
+      const same = rows.filter((item) => item.profileId === row.profileId).length;
+      const extra = same > 1 ? ` ${row.screen}` : '';
+      const name = shownAgent(row.profileId, row.name);
+      button.append(el('span', 'watch-eye', '◉'), el('strong', '', row.host), el('span', '', ` · ${name}'s screen${extra}`));
+      button.onclick = () => {
+        ui.selected = row.profileId;
+        root.openAgentComputer?.(row.profileId);
+        if (!root.openAgentComputer) root.openAgentDetails?.(row.profileId);
+      };
+      host.append(button);
+    }
+  }
+
   function paintAgents() {
     const list = $('bot-list');
     if (!list) return;
     const rows = switcherRows(ui.agents, { query: ui.query, selected: ui.selected });
+    paintLead(rows);
+    paintWatching();
     list.replaceChildren();
-    for (const row of rows) {
+    for (const row of rows.filter((item) => !item.selected)) {
       const node = el('div', `bot-row${row.selected ? ' selected' : ''}`);
       node.setAttribute('role', 'button');
       node.tabIndex = 0;
@@ -255,10 +344,16 @@
       node.setAttribute('aria-label', `Open ${row.name}`);
       const avatar = el('span', 'avatar');
       const canvas = el('canvas');
-      mountOrb(canvas, row.id, row.orb, 36, true);
+      mountOrb(canvas, row.id, row.orb, 36, true, row.color);
       avatar.append(canvas);
+      avatar.title = `Open ${row.name} details`;
+      avatar.onclick = (event) => {
+        event.stopPropagation();
+        root.openAgentDetails?.(row.id);
+      };
       const copy = el('span', 'bot-copy');
-      copy.append(el('div', 'bot-name', row.name), el('div', 'bot-preview', statusLine(row.id)));
+      const preview = row.needsSignIn ? 'Needs sign-in' : (row.gatewayNote || statusLine(row.id));
+      copy.append(el('div', 'bot-name', row.name), el('div', 'bot-preview', preview));
       node.append(avatar, copy);
       node.onclick = () => selectAgent(row.id);
       node.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectAgent(row.id); } };
@@ -296,7 +391,20 @@
   function paintSessions() {
     const mine = ui.sessions.filter((session) => !session.profileId || session.profileId === ui.selected);
     fillSessionList($('remote-sessions'), mine);
-    fillSessionList($('sidebar-threads'), mine);
+    fillSidebarThreads($('sidebar-threads'), mine);
+  }
+
+  function fillSidebarThreads(list, mine) {
+    if (!list) return;
+    list.replaceChildren();
+    for (const session of mine) {
+      const item = el('li', `thread-line${session.id === ui.sessionId ? ' active' : ''}`);
+      item.append(el('span', 'thread-title', session.title || 'Untitled'));
+      if ((ui.busy && session.id === ui.sessionId) || session.unread) item.append(el('span', 'thread-dot'));
+      item.onclick = () => openSession(session.id);
+      list.append(item);
+    }
+    if (!mine.length) list.append(el('li', 'session-empty', 'No sessions yet.'));
   }
 
   function paintLiveTools() {
@@ -650,7 +758,7 @@
     all.value = '';
     select.append(all);
     for (const agent of ui.agents) {
-      const option = el('option', '', agent.name || agent.id);
+      const option = el('option', '', shownAgent(agent.id, agent.name));
       option.value = agent.id;
       select.append(option);
     }
@@ -776,6 +884,11 @@
       paintBanner();
       if (!ui.selected || !ui.agents.some((agent) => agent.id === ui.selected)) ui.selected = ui.agents[0]?.id || '';
       paintAgents();
+      try {
+        const screens = await root.remoteHermes.request('screens');
+        ui.screens = Array.isArray(screens?.data) ? screens.data : [];
+      } catch { ui.screens = []; }
+      paintWatching();
       await Promise.all([
         ui.selected ? selectAgent(ui.selected) : null,
         loadAllSessions(),
@@ -790,6 +903,8 @@
     form?.addEventListener('submit', send);
     const call = $('remote-call');
     if (call) call.onclick = () => toggleCall();
+    const headerCall = $('chat-call');
+    if (headerCall) headerCall.onclick = () => toggleCall();
     $('tab-agents')?.addEventListener('click', () => setSidebar('agents'));
     $('tab-sessions')?.addEventListener('click', () => setSidebar('sessions'));
     $('session-search')?.addEventListener('input', (event) => { ui.sessionQuery = event.target.value || ''; paintAllSessions(); });
@@ -984,6 +1099,7 @@
     wire();
     paintBanner();
     ui.allSessions = SAMPLE.sessions.slice().sort((a, b) => sessionAt(b) - sessionAt(a));
+    ui.screens = [{ profileId: 'intelio', name: 'intelio', host: 'google.com', screen: 1 }];
     const host = $('intelio-profile');
     if (host) host.textContent = 'VPS Hermes · sample';
     const pin = $('hermes-pin');
@@ -993,7 +1109,7 @@
 
   return {
     signatureOf, accentOf, switcherRows, seedAgents, remoteConfigured, chooseSidebar, sessionAt, sessionRows, SAMPLE,
-    sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => selectedAgent()?.name || '', selectedId: () => ui.selected || '',
+    sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => { const agent = selectedAgent(); return agent ? shownAgent(agent.id, agent.name) : ''; }, selectedId: () => ui.selected || '',
     presentBops, focusBops, stopBops, actBops, pushFrame, toggleCall, bopsEffect: () => ui.lastEffect,
   };
 });

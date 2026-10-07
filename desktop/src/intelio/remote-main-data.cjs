@@ -9,7 +9,7 @@ const { signatureOf } = require('./orb-signature.cjs');
 const { createRemoteHermesClient, normalizeRemoteConfig, selectFetch, PROFILE_RE } = require('./remote-hermes.cjs');
 
 const NAMED_AGENTS = [
-  { id: 'intelio', name: 'Intelio' },
+  { id: 'intelio', name: 'intelio' },
   { id: 'prc', name: 'PRC' },
   { id: 'alignment', name: 'Alignment' },
   { id: 'hhp', name: 'HHP' },
@@ -65,9 +65,28 @@ function canonicalName(id, provided) {
   return raw || titleCase(id);
 }
 
+const ORBS = new Set(['connecting', 'solving', 'searching', 'weaving', 'working', 'listening', 'breathing', 'shaping']);
+
+function excludedAgent(id) {
+  const slug = String(id || '').trim().toLowerCase();
+  const compact = slug.replace(/[\s_]+/g, '-');
+  if (!slug || slug === 'default') return true;
+  if (slug === 'kid-a' || slug === 'kida' || slug === 'kid a' || compact === 'kid-a' || compact.startsWith('kid-a-')) return true;
+  if (slug.includes('alignment-bot-vps') || compact.includes('alignment-bot-vps')) return true;
+  return false;
+}
+
 function decorate(agent) {
   const id = String(agent.id || '').trim().toLowerCase();
-  return { id, name: canonicalName(id, agent.name), orb: signatureOf(id), color: agent.color || '' };
+  const orb = ORBS.has(agent.orb) ? agent.orb : signatureOf(id);
+  return {
+    id,
+    name: canonicalName(id, agent.name),
+    orb,
+    color: agent.color || '',
+    needsSignIn: agent.needsSignIn === true,
+    gatewayNote: String(agent.gatewayNote || '').slice(0, 160),
+  };
 }
 
 function parseProfiles(json) {
@@ -76,18 +95,19 @@ function parseProfiles(json) {
   const agents = [];
   for (const item of list) {
     const id = String(typeof item === 'string' ? item : (item?.id || item?.name || '')).trim().toLowerCase();
-    if (!id || !PROFILE_RE.test(id)) continue;
+    if (!id || !PROFILE_RE.test(id) || excludedAgent(id)) continue;
     const name = typeof item === 'string' ? titleCase(id) : (item.name || titleCase(id));
-    agents.push(decorate({ id, name, color: item?.color }));
+    agents.push(decorate({ id, name, color: item?.color, orb: item?.orb, needsSignIn: item?.needsSignIn, gatewayNote: item?.gatewayNote }));
   }
   return agents.length ? agents : null;
 }
 
 function agentsFromKeys(names, profile = 'intelio') {
-  const stored = [...new Set((names || []).map((name) => String(name || '').trim().toLowerCase()).filter(Boolean))];
+  const stored = [...new Set((names || []).map((name) => String(name || '').trim().toLowerCase()).filter((name) => name && !excludedAgent(name)))];
   const named = NAMED_AGENTS.filter((agent) => stored.includes(agent.id)).map(decorate);
   if (named.length) return named;
   const fallback = String(profile || 'intelio').trim().toLowerCase() || 'intelio';
+  if (excludedAgent(fallback)) return [decorate(NAMED_AGENTS[0])];
   const row = NAMED_AGENTS.find((agent) => agent.id === fallback) || { id: fallback, name: titleCase(fallback) };
   return [decorate(row)];
 }
@@ -95,19 +115,17 @@ function agentsFromKeys(names, profile = 'intelio') {
 const HARNESS_IDS = new Set(NAMED_AGENTS.map((agent) => agent.id));
 
 /**
- * The Agents list is the VPS harness (intelio, prc, alignment, hhp).
- * A gateway catalog of other profiles — a laptop's local Alignment bots —
- * must not replace or sit beside those four.
+ * The Agents list is the VPS profile catalog.
+ * Kid A and Alignment-Bot-VPS stay off it. The four named agents lead when present.
  */
 function selectHarnessAgents(parsed, stored, profile = 'intelio') {
-  const allow = HARNESS_IDS;
-  const fromServer = (parsed || []).filter((agent) => allow.has(agent.id));
-  const byId = new Map(fromServer.map((agent) => [agent.id, agent]));
-  const storedSet = new Set((stored || []).map((name) => String(name || '').trim().toLowerCase()).filter((name) => allow.has(name)));
-  const ordered = NAMED_AGENTS.filter((agent) => byId.has(agent.id) || storedSet.has(agent.id)).map((agent) => byId.get(agent.id) || decorate(agent));
-  if (ordered.length) return ordered;
-  const foreign = (parsed || []).some((agent) => agent?.id && !allow.has(agent.id));
-  if (foreign) return NAMED_AGENTS.map(decorate);
+  const fromServer = (parsed || []).filter((agent) => agent?.id && !excludedAgent(agent.id));
+  if (fromServer.length) {
+    const byId = new Map(fromServer.map((agent) => [agent.id, agent]));
+    const named = NAMED_AGENTS.filter((agent) => byId.has(agent.id)).map((agent) => byId.get(agent.id));
+    const rest = fromServer.filter((agent) => !HARNESS_IDS.has(agent.id)).slice().sort((a, b) => a.id.localeCompare(b.id));
+    return [...named, ...rest];
+  }
   return agentsFromKeys(stored, profile);
 }
 
@@ -195,7 +213,8 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
     const requested = Array.isArray(profiles) && profiles.length ? profiles : stored;
     const ids = [...new Set(requested.map((name) => String(name || '').trim().toLowerCase()).filter((name) => name && name !== 'vnc'))];
     const named = NAMED_AGENTS.map((agent) => agent.id).filter((id) => ids.includes(id));
-    const targets = named.length ? named : ids;
+    const rest = ids.filter((id) => !named.includes(id) && !excludedAgent(id)).sort();
+    const targets = [...named, ...rest];
     const groups = await Promise.all(targets.map(async (profile) => {
       try { return await listSessions(profile, { limit: 100 }); } catch (error) {
         if (error?.code === 'CLOUD_ACCESS') throw error;

@@ -29,12 +29,12 @@ function resolveProfileDir({ argv = process.argv, prefs, repo = repoRoot } = {})
 function failure(message, extra = {}) {
   return {
     ok: false,
-    error: redact(message).slice(0, 300) || 'Intelio profile failed to load.',
+    error: redact(message).slice(0, 300) || 'intelio profile failed to load.',
     browsingOrigins: [],
     safety: safetyDefaults(null),
     public: {
       ok: false,
-      error: redact(message).slice(0, 300) || 'Intelio profile failed to load.',
+      error: redact(message).slice(0, 300) || 'intelio profile failed to load.',
       source: extra.source || '',
       profileDir: extra.profileDir || '',
       profileName: '',
@@ -56,13 +56,13 @@ function failure(message, extra = {}) {
 
 function displayTitle(raw) {
   const title = String(raw || '').trim();
-  if (!title || title.toLowerCase() === 'intelio') return 'Intelio';
+  if (!title || title.toLowerCase() === 'intelio') return 'intelio';
   return title;
 }
 
 function fallbackBrand() {
   const titlePath = path.join(repoRoot, 'intelio', 'vendor', 'intelio-harness', 'brand', 'window-title.txt');
-  let windowTitle = 'Intelio';
+  let windowTitle = 'intelio';
   try {
     const title = fs.readFileSync(titlePath, 'utf8').trim();
     if (title && title.length <= 40) windowTitle = displayTitle(title);
@@ -73,7 +73,7 @@ function fallbackBrand() {
 function toSession(report, source) {
   const safety = report.safety || {};
   if (safety.yolo === true || safety.consequential !== 'ask' || safety.vault_blind !== true) {
-    return failure('Intelio safety defaults were not intact.');
+    return failure('intelio safety defaults were not intact.');
   }
   const brand = report.brand || {};
   const hermes = report.hermes || {};
@@ -94,7 +94,7 @@ function toSession(report, source) {
     launchArgv: hermes.launch_argv || [],
     browsingOrigins: profile.browsing_origins || [],
     safety: enforced,
-    brand: { windowTitle: displayTitle(brand.window_title || 'Intelio'), tokens: brand.tokens || fallbackBrand().tokens, mark },
+    brand: { windowTitle: displayTitle(brand.window_title || 'intelio'), tokens: brand.tokens || fallbackBrand().tokens, mark },
     hermes: {
       present: hermes.present === true,
       commandOk: hermes.command_ok === true,
@@ -128,26 +128,26 @@ function loadIntelio({ argv = process.argv, prefs, profileDir, repo = repoRoot, 
       cwd: repo, env, encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024,
     });
   } catch (error) {
-    return failure(`Intelio loader could not start. ${error.message}`, resolved);
+    return failure(`intelio loader could not start. ${error.message}`, resolved);
   }
   if (!result || result.error) {
-    const reason = result?.error?.code === 'ETIMEDOUT' ? 'Intelio loader timed out.' : 'Intelio loader could not start.';
+    const reason = result?.error?.code === 'ETIMEDOUT' ? 'intelio loader timed out.' : 'intelio loader could not start.';
     return failure(reason, resolved);
   }
   if (result.status !== 0) {
     const stderr = redact(result.stderr || '').trim();
-    return failure(stderr || `Intelio loader exited ${result.status}.`, resolved);
+    return failure(stderr || `intelio loader exited ${result.status}.`, resolved);
   }
   let report;
-  try { report = JSON.parse(result.stdout); } catch { return failure('Intelio loader did not return a profile report.', resolved); }
-  if (!report || report.ok !== true) return failure('Intelio loader did not return a profile report.', resolved);
+  try { report = JSON.parse(result.stdout); } catch { return failure('intelio loader did not return a profile report.', resolved); }
+  if (!report || report.ok !== true) return failure('intelio loader did not return a profile report.', resolved);
   const session = toSession(report, resolved.source);
   if (!session.ok) return session;
   return session;
 }
 
 function publicIntelioState(session) {
-  return session?.public || failure('Intelio profile has not been loaded.').public;
+  return session?.public || failure('intelio profile has not been loaded.').public;
 }
 
 function pngIcon() {

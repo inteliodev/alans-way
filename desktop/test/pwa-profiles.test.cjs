@@ -38,10 +38,10 @@ test('profile names stay short slugs and skip default', async () => {
       readdirSync() { return dirs; },
       readFileSync() { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
     },
-    run: async () => ({ code: 0, stdout: 'default\nprc\n', stderr: '' }),
+    run: async () => ({ code: 0, stdout: 'default\nprc\nkid-a\nalignment-bot-vps\n', stderr: '' }),
   });
   assert.deepEqual(listed.map((item) => item.id), ['intelio', 'prc']);
-  assert.equal(displayName('intelio'), 'Intelio');
+  assert.equal(displayName('intelio'), 'intelio');
   assert.equal(displayName('prc'), 'PRC');
   assert.equal(displayName('alignment'), 'Alignment');
   assert.equal(displayName('hhp'), 'HHP');
@@ -76,11 +76,11 @@ test('creating an agent sets Codex config, writes a fresh key, and never calls a
   });
   const flat = calls.map((parts) => parts.join(' '));
   assert.equal(flat.some((line) => line.includes(' auth')), false);
+  assert.equal(flat.some((line) => line.includes('systemctl')), false);
   assert.equal(flat.some((line) => line.includes('--clone-all') || line.includes('--clone-channels')), false);
-  assert.equal(flat.includes('hermes profile create lumen --no-alias --description soft glow --clone-from prc'), true);
+  assert.equal(flat.includes('hermes profile create lumen --no-alias --description soft glow --clone-from intelio'), true);
   assert.equal(flat.includes('hermes profile describe lumen --text soft glow'), true);
-  assert.equal(flat.includes('hermes -p lumen config set model.provider openai-codex'), true);
-  assert.equal(flat.includes('hermes -p lumen config set model.default gpt-6-sol'), true);
+  assert.equal(flat.some((line) => line.includes('config set')), false);
   const envPath = Object.keys(files).find((name) => name.endsWith(`${path.sep}.env`));
   const secret = String(files[envPath] || '').split('\n').find((line) => line.startsWith('API_SERVER_KEY=')) || '';
   assert.equal(secret.length === 'API_SERVER_KEY='.length + 64, true);
@@ -89,6 +89,12 @@ test('creating an agent sets Codex config, writes a fresh key, and never calls a
   assert.equal(files[`${envPath}:chmod`], 0o600);
   assert.equal(JSON.stringify(created).includes('API_SERVER_KEY'), false);
   assert.equal(created.needsGatewayRestart, true);
+  assert.equal(created.gatewayNote, 'Ready after the next agent restart');
+  assert.equal(created.needsSignIn, true);
+  const config = Object.entries(files).find(([name]) => name.endsWith(`${path.sep}config.yaml`));
+  assert.equal(String(config && config[1]).includes('telegram'), false);
+  assert.equal(String(config && config[1]).includes('openai-codex'), true);
+  assert.equal(String(config && config[1]).includes('intelio'), true);
   const blank = [];
   await createProfile({
     name: 'nimbus',
@@ -96,13 +102,19 @@ test('creating an agent sets Codex config, writes a fresh key, and never calls a
     run: async (bin, args) => { blank.push(args.join(' ')); return { code: 0, stdout: '', stderr: '' }; },
     fsImpl,
   });
-  assert.equal(blank[0].includes('--clone-from'), false);
+  assert.equal(blank[0].includes('--clone-from intelio'), true);
   await assert.rejects(() => createProfile({
     name: 'quartz',
     home: path.join(os.tmpdir(), 'intelio-profiles'),
-    run: async (bin, args) => ({ code: args.includes('model.provider') ? 1 : 0, stdout: '', stderr: '' }),
+    run: async () => ({ code: 1, stdout: '', stderr: 'failed' }),
     fsImpl,
-  }), /Codex model/);
+  }), /Could not create/);
+  await assert.rejects(() => createProfile({
+    name: 'lumen',
+    home: path.join(os.tmpdir(), 'intelio-profiles'),
+    run: async () => { throw new Error('should not run'); },
+    fsImpl: { ...fsImpl, statSync() { return { isDirectory() { return true; } }; } },
+  }), /already exists/);
 });
 
 test('a fresh key replaces a cloned one and the gateway restart is explicit', () => {

@@ -108,3 +108,28 @@ body.remote-main #bot-list { flex: 0 1 auto; max-height: 46%; }
 .sidebar-threads { list-style: none; margin: 0; padding: 0 8px 8px; overflow: auto; flex: 1; min-height: 0; }
 body.remote-main .remote-split { grid-template-columns: minmax(0, 1fr); }
 body.remote-main .remote-sessions { display: none !important; }
+body.remote-main .side-title { display: none; }
+.lead-card { display: flex; flex-direction: column; align-items: center; gap: 4px; width: calc(100% - 16px); margin: 8px; padding: 14px 10px; border: 0; border-radius: 18px; background: #fff; color: #111113; box-shadow: 0 8px 22px rgba(28, 32, 48, 0.08); }
+.lead-card.hidden { display: none; }
+.lead-orb { position: relative; }
+.lead-badge { position: absolute; right: 2px; bottom: 2px; width: 12px; height: 12px; border-radius: 50%; background: #7a5cff; border: 2px solid #fff; }
+.lead-name { font-size: 16px; }
+.lead-status { color: #6e6e73; font-size: 12px; }
+.sidebar-watching-wrap { padding: 0 8px 8px; }
+.watch-row, .thread-line { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 13px; font-weight: 400; cursor: pointer; }
+.watch-row strong, .thread-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-title { flex: 1; min-width: 0; }
+.watch-row span, .watch-eye { color: #8e8e93; }
+.thread-line.active { background: #ececef; }
+.thread-dot { width: 8px; height: 8px; margin-left: auto; border-radius: 50%; background: #7a5cff; flex: none; }
+.sidebar-threads { list-style: none; }
+body.remote-main .chat-header { position: relative; justify-content: center; min-height: 84px; }
+body.remote-main .chat-pill { position: relative; flex-direction: column; align-items: center; margin-top: 18px; padding: 22px 18px 8px; border-radius: 16px; background: #fff; color: #111113; box-shadow: 0 8px 20px rgba(28, 32, 48, 0.08); }
+body.remote-main #chat-avatar { position: absolute; top: -18px; }
+body.remote-main .chat-role { display: block; color: #6e6e73; font-size: 12px; font-weight: 400; }
+body.remote-main #chat-call { position: absolute; right: 48px; top: 12px; width: 36px; height: 36px; border-radius: 50%; }
+.color-picker { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 16px; }
+.swatch { width: 28px; height: 28px; border-radius: 50%; border: 0; }
+.orb-hit { border: 0; background: transparent; padding: 0; cursor: pointer; }
+.profile-editor, .edit-field { display: flex; flex-direction: column; gap: 6px; }
+.edit-field input, .edit-field textarea, .hex-input { font: inherit; font-size: 14px; border: 1px solid #e4e4e8; border-radius: 10px; padding: 8px 10px; }

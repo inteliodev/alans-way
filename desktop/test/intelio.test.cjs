@@ -66,7 +66,7 @@ test('the example profile loads through the Python loader and does not echo .env
       assert.equal(session.public.hermes.match, 'unavailable');
       assert.notEqual(session.public.hermes.summary, 'installed commit matches the pin');
     }
-    assert.match(session.public.brand.windowTitle, /Intelio/);
+    assert.match(session.public.brand.windowTitle, /^intelio$/);
     assert.equal(JSON.stringify(session.public).includes('super-secret-vault-value'), false);
   } finally {
     fs.rmSync(envFile, { force: true });
@@ -94,12 +94,22 @@ test('window icon is a real PNG', () => {
   const png = pngIcon();
   assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
   assert.ok(png.length > 32);
-  assert.equal(displayTitle('intelio'), 'Intelio');
-  assert.equal(displayTitle(''), 'Intelio');
+  assert.equal(displayTitle('intelio'), 'intelio');
+  assert.equal(displayTitle('Intelio'), 'intelio');
+  assert.equal(displayTitle(''), 'intelio');
   assert.equal(displayTitle('Notes'), 'Notes');
   const main = fs.readFileSync(path.join(repo, 'desktop/src/main.cjs'), 'utf8');
-  assert.match(main, /function intelioTitle\(\) \{\n  return 'Intelio';\n\}/);
-  assert.match(main, /label: 'Intelio'/);
+  assert.match(main, /function intelioTitle\(\) \{\n  return 'intelio';\n\}/);
+  assert.match(main, /label: 'intelio'/);
+  const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'desktop/package.json'), 'utf8'));
+  assert.equal(pkg.productName, 'intelio');
+  assert.equal(pkg.build.productName, 'intelio');
+  assert.equal(pkg.build.executableName, 'intelio');
+  assert.equal(pkg.build.win.executableName, 'intelio');
+  assert.equal(pkg.build.win.signExecutable, false);
+  assert.equal(pkg.build.win.signAndEditExecutable, undefined);
+  assert.equal(pkg.build.nsis.shortcutName, 'intelio');
+  assert.equal(pkg.build.nsis.uninstallDisplayName, 'intelio');
 });
 
 test('the VPS sidecar uses strict defaults and refuses YOLO', () => {

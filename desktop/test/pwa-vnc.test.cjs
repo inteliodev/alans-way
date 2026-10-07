@@ -219,7 +219,7 @@ test('the VNC target follows the phone bind and refuses a public host', () => {
     vncPassword: '',
   }), /tailnet or loopback/);
   const named = agentsFromKeys(['prc', 'hhp', 'alignment', 'intelio']);
-  assert.deepEqual(named.map((agent) => agent.name), ['Intelio', 'PRC', 'Alignment', 'HHP']);
+  assert.deepEqual(named.map((agent) => agent.name), ['intelio', 'PRC', 'Alignment', 'HHP']);
 });
 
 test('a mode-600 vnc= file is read and a world-readable file is ignored', () => {

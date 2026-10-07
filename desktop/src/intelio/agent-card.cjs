@@ -9,7 +9,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const HARNESS = ['intelio', 'prc', 'alignment', 'hhp'];
-const NAMES = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+const NAMES = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 const KNOWN_PHONES = {
   intelio: '+16282679185',
   prc: '+16282647656',
@@ -28,9 +29,19 @@ const CHANNELS = [
 const SECRET_KEY = /(^|[._-])(key|token|secret|password|passwd|api_key|apikey|authorization|private|credential)($|[._-])/i;
 const SECRET_VALUE = /bearer\s+\S+|sk-[a-z0-9]{8,}|-----BEGIN |api[_-]?key\s*[:=]/i;
 
+function excludedAgent(id) {
+  const slug = String(id || '').trim().toLowerCase();
+  const compact = slug.replace(/[\s_]+/g, '-');
+  if (!slug || slug === 'default') return true;
+  if (slug === 'kid-a' || slug === 'kida' || slug === 'kid a' || compact === 'kid-a' || compact.startsWith('kid-a-')) return true;
+  if (slug.includes('alignment-bot-vps') || compact.includes('alignment-bot-vps')) return true;
+  return false;
+}
+
 function harnessId(id) {
   const value = String(id || '').trim().toLowerCase();
-  return HARNESS.includes(value) ? value : '';
+  if (!SLUG.test(value) || excludedAgent(value)) return '';
+  return value;
 }
 
 function unquote(value) {
@@ -190,20 +201,37 @@ function formatPhone(raw) {
   return String(raw || '');
 }
 
-function buildCard({ id, name, configText = '', userText = '', memoryText = '', jobs = null, computer = null, paused = false } = {}) {
+const PALETTE = ['#7a5cff', '#1d4ed8', '#059669', '#0f766e', '#7c3aed', '#db2777', '#0369a1', '#44403c'];
+
+function cleanColor(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!/^#[0-9a-f]{6}$/.test(raw)) return '';
+  const red = parseInt(raw.slice(1, 3), 16);
+  const green = parseInt(raw.slice(3, 5), 16);
+  const blue = parseInt(raw.slice(5, 7), 16);
+  if (red > 180 && green > 160 && blue < 80) return '';
+  if (green > 180 && red > 160 && blue < 80) return '';
+  return raw;
+}
+
+function buildCard({ id, name, configText = '', userText = '', memoryText = '', jobs = null, computer = null, paused = false, needsSignIn = false, gatewayNote = '', title = '', color = '', orb = '', soul = '', displayName = '', emailOverride = '', mobileOverride = '', emailSet = false, mobileSet = false } = {}) {
   const profile = harnessId(id);
   if (!profile) return null;
   const parsed = parseConfig(configText);
-  const phone = phoneFrom(parsed, profile);
-  const email = emailFrom(parsed);
-  const display = NAMES[profile];
+  const phone = mobileSet ? String(mobileOverride || '').slice(0, 24) : phoneFrom(parsed, profile);
+  const email = emailSet ? String(emailOverride || '').slice(0, 120) : emailFrom(parsed);
+  const fallback = profile.split('-').filter(Boolean).map((part) => part.slice(0, 1).toUpperCase() + part.slice(1)).join(' ');
+  const display = String(displayName || '').trim() || NAMES[profile] || String(name || '').trim() || fallback;
   const label = String(name || '').trim() || display;
   const status = computer?.status === 'running' ? 'running' : 'stopped';
   const contact = [label, formatPhone(phone), email].filter(Boolean).join('\n');
   return {
     id: profile,
     name: display,
-    title: titleFrom(parsed),
+    title: String(title || '').trim().slice(0, 80) || titleFrom(parsed),
+    color: cleanColor(color),
+    orb: String(orb || '').slice(0, 40),
+    soul: String(soul || '').slice(0, 20000),
     phone,
     phoneLabel: formatPhone(phone),
     email,
@@ -218,6 +246,8 @@ function buildCard({ id, name, configText = '', userText = '', memoryText = '', 
     phoneSoon: !channelState(parsed, ['twilio', 'voice']),
     memory: memoryFrom(userText, memoryText),
     paused: paused === true,
+    needsSignIn: needsSignIn === true,
+    gatewayNote: String(gatewayNote || '').slice(0, 160),
     contact,
   };
 }
@@ -255,6 +285,11 @@ function readProfileFiles(root, id, fsImpl = fs) {
   };
   let paused = false;
   try { paused = fsImpl.readFileSync(path.join(dir, 'intelio-paused'), 'utf8').trim() === '1'; } catch { paused = false; }
+  let marker = {};
+  try {
+    const parsed = JSON.parse(fsImpl.readFileSync(path.join(dir, 'intelio-card.json'), 'utf8'));
+    marker = parsed && typeof parsed === 'object' ? parsed : {};
+  } catch { marker = {}; }
   let computer = 'stopped';
   try {
     const cdp = fsImpl.readFileSync(path.join(dir, 'bot-desktop', 'cdp.url'), 'utf8').trim();
@@ -266,7 +301,80 @@ function readProfileFiles(root, id, fsImpl = fs) {
     memoryText: read('MEMORY.md'),
     paused,
     computer: { status: computer },
+    needsSignIn: marker.needsSignIn === true,
+    gatewayNote: String(marker.gatewayNote || '').slice(0, 160),
+    title: String(marker.title || '').slice(0, 80),
+    orb: String(marker.orb || '').slice(0, 40),
+    color: cleanColor(marker.color),
+    displayName: String(marker.displayName || '').slice(0, 40),
+    soul: read('SOUL.md').slice(0, 20000),
+    emailSet: Object.prototype.hasOwnProperty.call(marker, 'email'),
+    email: String(marker.email || '').slice(0, 120),
+    mobileSet: Object.prototype.hasOwnProperty.call(marker, 'mobile'),
+    mobile: String(marker.mobile || '').slice(0, 24),
   };
+}
+
+function backupFile(file, fsImpl) {
+  try {
+    const st = fsImpl.lstatSync(file);
+    if (!st.isFile() || st.isSymbolicLink()) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    fsImpl.copyFileSync(file, `${file}.bak-${stamp}`);
+  } catch { /* nothing to back up */ }
+}
+
+function writeProfile(root, id, patch, fsImpl = fs) {
+  const profile = harnessId(id);
+  if (!profile || excludedAgent(profile)) return { ok: false, error: 'That agent was not found.' };
+  const dir = path.join(root, profile);
+  const configFile = path.join(dir, 'config.yaml');
+  if (!fsImpl.existsSync(configFile)) return { ok: false, error: 'That agent was not found.' };
+  const cardFile = path.join(dir, 'intelio-card.json');
+  let marker = {};
+  try {
+    const parsed = JSON.parse(fsImpl.readFileSync(cardFile, 'utf8'));
+    marker = parsed && typeof parsed === 'object' ? parsed : {};
+  } catch { marker = {}; }
+  const next = { ...marker };
+  if (patch.title != null) next.title = String(patch.title).replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
+  if (patch.name != null) {
+    const label = String(patch.name).replace(/[\r\n]+/g, ' ').trim().slice(0, 40);
+    if (label) next.displayName = label;
+  }
+  if (patch.email != null) {
+    const email = String(patch.email).trim().slice(0, 120);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Enter a valid email.' };
+    next.email = email;
+  }
+  if (patch.mobile != null) {
+    const mobile = String(patch.mobile).trim().slice(0, 24);
+    if (mobile && !/^\+?[0-9 ()-]{7,24}$/.test(mobile)) return { ok: false, error: 'Enter a valid mobile number.' };
+    next.mobile = mobile;
+  }
+  if (patch.color != null) {
+    const color = cleanColor(patch.color);
+    if (!color) return { ok: false, error: 'Choose a palette color or another hex value.' };
+    next.color = color;
+  }
+  if (patch.orb != null) {
+    const orb = String(patch.orb || '').trim().toLowerCase().slice(0, 40);
+    if (orb && !/^[a-z0-9-]{1,40}$/.test(orb)) return { ok: false, error: 'Choose an orb style.' };
+    next.orb = orb;
+  }
+  backupFile(cardFile, fsImpl);
+  fsImpl.writeFileSync(cardFile, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  if (patch.soul != null) {
+    const soulFile = path.join(dir, 'SOUL.md');
+    try {
+      const linked = fsImpl.lstatSync(soulFile);
+      if (linked.isSymbolicLink()) return { ok: false, error: 'Could not save instructions.' };
+    } catch { /* new file */ }
+    const soul = String(patch.soul).replace(/\0/g, '').slice(0, 20000);
+    backupFile(soulFile, fsImpl);
+    fsImpl.writeFileSync(soulFile, soul.endsWith('\n') ? soul : `${soul}\n`, { mode: 0o600 });
+  }
+  return { ok: true };
 }
 
 function writePaused(root, id, paused, fsImpl = fs) {
@@ -299,13 +407,17 @@ module.exports = {
   NAMES,
   KNOWN_PHONES,
   EFFORTS,
+  excludedAgent,
   harnessId,
   parseConfig,
   buildCard,
   applyReasoning,
+  PALETTE,
+  cleanColor,
   readProfileFiles,
   writePaused,
   writeReasoning,
+  writeProfile,
   redactMemory,
   formatPhone,
 };

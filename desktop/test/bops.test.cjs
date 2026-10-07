@@ -163,7 +163,7 @@ test('pills render, a click focuses that preview, and sign-in stays write-only',
   api.focusBops('task-2');
   assert.equal(byId('preview-screen').dataset.taskId, 'task-2');
   assert.equal(byId('preview-live').textContent, 'recap');
-  assert.equal(byId('preview-badge').textContent, 'Intelio is browsing');
+  assert.equal(byId('preview-badge').textContent, 'intelio is browsing');
   assert.match(byId('preview-chrome').style.boxShadow, /#7a5cff/);
   assert.equal(byId('preview-chrome').dataset.highlight, '#7a5cff');
 

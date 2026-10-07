@@ -25,21 +25,32 @@ const { agentNavigationDecision } = require('./intelio/safety.cjs');
 const { loadIntelio, publicIntelioState, pngIcon } = require('./intelio/bridge.cjs');
 const { agents, agentsSetup } = require('./intelio/forks.cjs');
 const { setupRemoteHermes } = require('./intelio/remote-hermes-main.cjs');
-const { loadPreferences, initialDesktopTab } = require('./intelio/preferences.cjs');
+const { loadPreferences, initialDesktopTab, resolveUserDataDir } = require('./intelio/preferences.cjs');
 const { createVaultStore } = require('./intelio/vault.cjs');
 const { usesRemoteVault } = require('./intelio/remote-vault.cjs');
 const { buildFill, publicFill, fieldValue } = require('./intelio/login-fill.cjs');
-const { normalizeTheme } = require('./intelio/theme.cjs');
+const { normalizeTheme, themeVars } = require('./intelio/theme.cjs');
 const { hostLabels, hermesChecklist } = require('./intelio/host-labels.cjs');
 const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
 
 if (!applyLinuxDemo(app)) app.enableSandbox();
-app.setName('Intelio');
+app.setName('intelio');
 if (process.platform === 'win32') app.setAppUserModelId('co.intelio.alans-way');
-// Keep existing sessions and connector discovery stable when the product name changes.
-app.setPath('userData', process.env.HERMES_WORKSPACE_DATA
-  ? path.resolve(process.env.HERMES_WORKSPACE_DATA)
-  : path.join(app.getPath('appData'), 'Hermes Workspace'));
+// Keep existing sessions and the saved theme when the exe name or product name changes.
+// setName does not retarget userData; pin the historical folder and pin it again on ready.
+function pinUserData() {
+  const dir = resolveUserDataDir({
+    platform: process.platform,
+    env: process.env,
+    home: app.getPath('home'),
+    appData: app.getPath('appData'),
+  });
+  fs.mkdirSync(dir, { recursive: true });
+  app.setPath('userData', dir);
+  app.setPath('sessionData', dir);
+  return dir;
+}
+pinUserData();
 const ROOT = __dirname;
 const NEWTAB_URL = pathToFileURL(path.join(ROOT, 'newtab.html')).href;
 const TELEGRAM = 'https://web.telegram.org/a/';
@@ -83,9 +94,9 @@ let tailscaleFirstRun = false;
 
 function readPreferences() {
   const file = path.join(app.getPath('userData'), 'preferences.json');
-  let text = null;
-  try { text = fs.readFileSync(file, 'utf8'); } catch { text = null; }
-  const loaded = loadPreferences({ text, platform: process.platform, env: process.env });
+  let bytes = null;
+  try { bytes = fs.readFileSync(file); } catch { bytes = null; }
+  const loaded = loadPreferences({ bytes, platform: process.platform, env: process.env });
   if (loaded.missing && process.platform === 'win32') tailscaleFirstRun = true;
   if (loaded.corrupt) {
     // Keep the unreadable file: the next save would otherwise erase every bot,
@@ -140,7 +151,7 @@ function selectAgent(id) {
   applyLayout();
 }
 function assertIntelioAgentUrl(url) {
-  if (!intelioSession?.ok) throw Object.assign(new Error('Intelio profile is not loaded; agent browsing is paused.'), { status: 403 });
+  if (!intelioSession?.ok) throw Object.assign(new Error('intelio profile is not loaded; agent browsing is paused.'), { status: 403 });
   const decision = agentNavigationDecision(url, {
     origins: intelioSession.browsingOrigins,
     appPages: [NEWTAB_URL, 'about:blank', ''],
@@ -148,7 +159,7 @@ function assertIntelioAgentUrl(url) {
   if (!decision.ok) throw Object.assign(new Error(decision.error), { status: decision.status });
 }
 function intelioTitle() {
-  return 'Intelio';
+  return 'intelio';
 }
 function currentTheme() { return normalizeTheme(prefs?.theme); }
 let pushedTelegramTheme = '';
@@ -629,7 +640,7 @@ function registerIpc() {
         intelioSession = next;
         if (next.ok && requested) prefs.intelioProfile = requested;
         applyIntelioChrome();
-        if (!next.ok) { broadcast(); throw new Error(next.error || 'Intelio profile failed to load.'); }
+        if (!next.ok) { broadcast(); throw new Error(next.error || 'intelio profile failed to load.'); }
         break;
       }
       case 'fill-login': return rememberLogin(value);
@@ -692,7 +703,7 @@ function registerIpc() {
         const macSsh = (prefs.macSshHost || '').trim();
         const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
         clipboard.writeText([
-          "# Intelio setup — paste into a terminal on the host running your Hermes gateway",
+          "# intelio setup — paste into a terminal on the host running your Hermes gateway",
           `curl -fsSL ${agentsSetup} | bash -s -- --bot-id ${q(botId)}${bot ? ` --bot-name ${q(bot.name.replace(/'/g, ''))}` : ''}${macSsh ? ` --mac-ssh ${q(macSsh)}` : ''} --restart`,
           '# The bootstrap installs the plugin + hook, configures the browser connector,',
           '# offers to bind the primary route, restarts the gateway, and verifies itself.',
@@ -1182,6 +1193,17 @@ function createWindow() {
   });
   win.contentView.addChildView(remoteView);
   registerIpc();
+  const stampTheme = (contents) => {
+    if (!contents || contents.isDestroyed()) return;
+    const theme = currentTheme();
+    const vars = themeVars(theme);
+    const paint = vars
+      ? `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.colorScheme=${JSON.stringify(theme)};${Object.entries(vars).map(([key, value]) => `document.documentElement.style.setProperty(${JSON.stringify(key)},${JSON.stringify(value)})`).join(';')}`
+      : `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.colorScheme=${JSON.stringify(theme)}`;
+    contents.executeJavaScript(paint).catch(() => {});
+  };
+  win.webContents.on('did-finish-load', () => stampTheme(win.webContents));
+  remoteView.webContents.on('did-finish-load', () => stampTheme(remoteView.webContents));
   win.loadFile(path.join(ROOT, 'index.html'));
   remoteView.webContents.loadFile(path.join(ROOT, 'remote.html'));
   const remoteOn = Boolean(prefs?.remoteHermes?.enabled && prefs?.remoteHermes?.host);
@@ -1191,7 +1213,7 @@ function createWindow() {
   win.on('enter-full-screen', broadcast); win.on('leave-full-screen', broadcast);
   win.on('close', (event) => { if (!isQuitting) { event.preventDefault(); win.hide(); } });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'Intelio', submenu: [{ label: 'About Intelio', click: () => dialog.showMessageBox(win, { type: 'info', title: 'About Intelio', message: `Intelio ${app.getVersion()}`, detail: "Alan's Way by Alex Hansen (MIT). Hermes Agent by Nous Research." }) }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: 'intelio', submenu: [{ label: 'About intelio', click: () => dialog.showMessageBox(win, { type: 'info', title: 'About intelio', message: `intelio ${app.getVersion()}`, detail: "Alan's Way by Alex Hansen (MIT). Hermes Agent by Nous Research." }) }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { label: 'File', submenu: [{ label: 'New Browser Tab', accelerator: 'CmdOrCtrl+T', click: () => createTab({}) }, { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => extensionPopup?.browserWindow?.isFocused() ? extensionPopup.destroy() : closeTab(activeTabId) }] },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     { label: 'View', submenu: [{ label: 'Reload Page', accelerator: 'CmdOrCtrl+R', click: () => tabs.get(activeTabId)?.view.webContents.reload() }, { role: 'togglefullscreen' }, ...(app.isPackaged ? [] : [{ label: 'App Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => win.webContents.toggleDevTools() }])] },
@@ -1238,10 +1260,13 @@ if (process.argv.includes('--smoke-test')) {
 } else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.whenReady().then(async () => {
-    app.setAccessibilitySupportEnabled(true); prefs = readPreferences(); prefs.remoteControl = false;
+    app.setAccessibilitySupportEnabled(true);
+    pinUserData();
+    prefs = readPreferences();
+    prefs.remoteControl = false;
     if (process.env.INTELIO_E2E === '1') {
       process.stderr.write('intelio e2e: skip profile loader\n');
-      intelioSession = { ok: false, error: 'e2e', browsingOrigins: [], public: { ok: false, error: 'Profile skipped for the packaged check.', brand: { windowTitle: 'Intelio', tokens: {} }, hermes: {} } };
+      intelioSession = { ok: false, error: 'e2e', browsingOrigins: [], public: { ok: false, error: 'Profile skipped for the packaged check.', brand: { windowTitle: 'intelio', tokens: {} }, hermes: {} } };
     } else {
       intelioSession = loadIntelio({ argv: process.argv, prefs });
     }

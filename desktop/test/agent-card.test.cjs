@@ -110,7 +110,7 @@ test('the phone card route reads the profile files and refuses a cross-origin wr
     assert.equal(card.status, 200);
     const body = JSON.parse(card.body);
     assert.equal(body.id, 'intelio');
-    assert.equal(body.name, 'Intelio');
+    assert.equal(body.name, 'intelio');
     assert.equal(body.phone, '+19995550199');
     assert.equal(body.computer.status, 'running');
     assert.equal(body.thinkingWritable, true);
@@ -136,11 +136,30 @@ test('the phone card route reads the profile files and refuses a cross-origin wr
     assert.equal(fs.readFileSync(path.join(dir, 'intelio-paused'), 'utf8').trim(), '1');
     const sw = fs.readFileSync(path.join(__dirname, '../../mobile/pwa/public/sw.js'), 'utf8');
     const page = fs.readFileSync(path.join(__dirname, '../../mobile/pwa/public/app.js'), 'utf8');
-    assert.match(sw, /intelio-pwa-14/);
+    const edited = await request(address.port, 'POST', '/api/agent/profile', {
+      origin,
+      body: JSON.stringify({ profile: 'intelio', title: 'Chief of Staff', color: '#1d4ed8', soul: 'Be brief.\n' }),
+    });
+    assert.equal(edited.status, 200);
+    const editedBody = JSON.parse(edited.body);
+    assert.equal(editedBody.title, 'Chief of Staff');
+    assert.equal(editedBody.color, '#1d4ed8');
+    assert.match(editedBody.soul, /Be brief/);
+    assert.match(fs.readFileSync(path.join(dir, 'SOUL.md'), 'utf8'), /Be brief/);
+    assert.equal(edited.body.includes(SECRET), false);
+    const yellow = await request(address.port, 'POST', '/api/agent/profile', {
+      origin,
+      body: JSON.stringify({ profile: 'intelio', color: '#ffff00' }),
+    });
+    assert.equal(yellow.status, 400);
+    const screens = await request(address.port, 'GET', '/api/screens');
+    assert.equal(screens.status, 200);
+    assert.equal(JSON.parse(screens.body).data[0].host, 'google.com');
+    assert.match(sw, /intelio-pwa-16/);
     assert.match(sw, /skipWaiting/);
     assert.match(sw, /clients\.claim/);
     assert.match(sw, /cache\.put/);
-    assert.match(page, /intelio-pwa-12/);
+    assert.match(page, /intelio-pwa-14/);
     assert.match(page, /New version\. Tap to reload\./);
     assert.match(page, /Manage in Vault/);
   } finally {

@@ -215,7 +215,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     signInWindow = new BrowserWindow({
       width: 480,
       height: 720,
-      title: 'Sign in to Intelio',
+      title: 'Sign in to intelio',
       backgroundColor: background || '#0a0a0a',
       autoHideMenuBar: true,
       webPreferences: { session: ses, contextIsolation: true, nodeIntegration: false, sandbox: true },
@@ -408,7 +408,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
-  async function pullPwaCard(profile, key, pathname, body) {
+  async function pullPwaCard(profile, key, pathname, body, expectId = true) {
     if (!key) return null;
     let cfg;
     try { cfg = await config(); } catch { return null; }
@@ -434,9 +434,55 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
       });
       if (!response.ok) return null;
       const parsed = await response.json();
-      return parsed && parsed.id === profile ? parsed : null;
+      if (!parsed) return null;
+      if (expectId && parsed.id !== profile) return null;
+      return parsed;
     } catch {
       return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function createAgent(value = {}) {
+    let cfg;
+    try { cfg = await config(); } catch { cfg = null; }
+    if (!cfg?.host || cfg.origin || cfg.activeMode === 'cloud' || !isTailnetOrLoopbackHost(cfg.host)) {
+      throw new Error('Add the agent from the VPS connection. Cloud mode does not create profiles.');
+    }
+    const key = await getKey('intelio').catch(() => '') || await getKey(cfg.profile || 'intelio').catch(() => '');
+    if (!key) throw new Error('No profile key is saved for the VPS.');
+    const port = Number(process.env.INTELIO_PWA_PORT || 8643);
+    const host = cfg.host.includes(':') && !cfg.host.startsWith('[') ? `[${cfg.host}]` : cfg.host;
+    const scheme = cfg.host === '127.0.0.1' || cfg.host === 'localhost' || cfg.host === '::1' ? 'http' : 'https';
+    const origin = `${scheme}://${host}:${port}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const response = await fetch(`${origin}/api/profiles`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${key}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Origin: origin,
+          'x-intelio-profile': 'intelio',
+        },
+        body: JSON.stringify({
+          name: value.name,
+          title: value.title || '',
+          orb: value.orb || '',
+          soul: value.soul || '',
+        }),
+        signal: controller.signal,
+        redirect: 'error',
+      });
+      const text = await response.text();
+      let parsed = {};
+      try { parsed = JSON.parse(text); } catch { parsed = {}; }
+      if (!response.ok) throw new Error(parsed.error || 'Could not create that agent.');
+      if (text.includes('API_SERVER_KEY') || /sk-[a-z0-9]{8,}/i.test(text)) throw new Error('Could not create that agent.');
+      return parsed;
     } finally {
       clearTimeout(timer);
     }
@@ -467,6 +513,29 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return { ...card, readOnly: true };
   }
 
+  async function saveAgentProfile(value = {}) {
+    const id = harnessId(value.profile) || 'intelio';
+    const key = await getKey(id).catch(() => '');
+    const remote = key ? await pullPwaCard(id, key, '/api/agent/profile', {
+      profile: id,
+      name: value.name,
+      title: value.title,
+      email: value.email,
+      mobile: value.mobile,
+      soul: value.soul,
+      color: value.color,
+      orb: value.orb,
+    }) : null;
+    if (!remote) throw new Error('Could not save that profile.');
+    return remote;
+  }
+
+  async function listRemoteScreens() {
+    const key = await getKey('intelio').catch(() => '');
+    const parsed = key ? await pullPwaCard('intelio', key, '/api/screens', null, false) : null;
+    return Array.isArray(parsed?.data) ? parsed.data : [];
+  }
+
   async function agentPause(profile, paused) {
     const id = harnessId(profile) || 'intelio';
     const key = await getKey(id).catch(() => '');
@@ -481,7 +550,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
       trusted(event);
       if (!resolved) await refreshConnection();
       if (needsSignIn && name !== 'state') {
-        const error = new Error('Sign in to Intelio');
+        const error = new Error('Sign in to intelio');
         error.code = 'CLOUD_ACCESS';
         throw error;
       }
@@ -502,9 +571,12 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
           case 'messages': return await client.messages(String(value.id), { profile: value.profile });
           case 'create-session': return await client.createSession(value.title, { profile: value.profile });
           case 'skills': return await client.skills();
+          case 'create-agent': return await createAgent(value);
           case 'agent-card': return await agentCard(value.profile);
           case 'agent-thinking': return await agentThinking(value.profile, value.effort);
           case 'agent-pause': return await agentPause(value.profile, value.paused !== false);
+          case 'agent-profile': return await saveAgentProfile(value);
+          case 'screens': return { data: await listRemoteScreens() };
           case 'send': {
             const id = String(value.id);
             const controller = new AbortController();

@@ -17,19 +17,35 @@ function showEmpty(title, message, action = 'Reconnect') {
   $('remote-title').textContent = title; $('remote-message').textContent = message; $('configure').textContent = action; $('remote-empty').classList.remove('hidden');
 }
 function screenBg() { return document.documentElement.dataset.theme === 'light' ? '#f3f3f6' : '#070708'; }
+function containRemote(cw, ch, fw, fh) {
+  if (!(cw > 0 && ch > 0 && fw > 0 && fh > 0)) return { scale: 0, width: 0, height: 0, x: 0, y: 0 };
+  const scale = Math.min(cw / fw, ch / fh);
+  const width = fw * scale;
+  const height = fh * scale;
+  return { scale, width, height, x: (cw - width) / 2, y: (ch - height) / 2 };
+}
 function requestRemoteFit(client) {
   if (!client) return;
   const run = () => {
     if (client !== rfb) return;
-    const restore = client._viewOnly;
-    client._viewOnly = false;
-    try {
-      client.scaleViewport = true;
-      client.resizeSession = true;
-      if (typeof client._requestRemoteResize === 'function') client._requestRemoteResize();
-    } finally {
-      client._viewOnly = restore;
+    const screen = $('screen');
+    const host = document.body;
+    const head = document.querySelector('.remote-head');
+    const hint = $('remote-hint');
+    const cw = host ? host.clientWidth : 0;
+    const ch = Math.max(0, (host ? host.clientHeight : 0) - (head?.offsetHeight || 0) - (hint?.offsetHeight || 0));
+    if (screen && cw && ch) {
+      screen.style.width = '100%';
+      screen.style.maxWidth = '100%';
+      screen.style.overflow = 'hidden';
     }
+    client.scaleViewport = true;
+    client.resizeSession = false;
+    client.clipViewport = false;
+    const fw = client._fbWidth || client._display?.width || 0;
+    const fh = client._fbHeight || client._display?.height || 0;
+    const fit = containRemote(cw, ch, fw, fh);
+    if (fit.scale > 0 && client._display) client._display.scale = fit.scale;
   };
   run();
   clearTimeout(client._intelioFit);
@@ -43,7 +59,7 @@ function connect(value) {
   showEmpty('Connecting…', 'Opening your VPS desktop through its existing viewer.', 'Connection settings'); status('connecting');
   try {
     rfb = new RFB($('screen'), toSocket(value));
-    rfb.scaleViewport = true; rfb.resizeSession = true; rfb.clipViewport = false; rfb.focusOnClick = true; rfb.viewOnly = !state?.remoteControl; rfb.background = screenBg();
+    rfb.scaleViewport = true; rfb.resizeSession = false; rfb.clipViewport = false; rfb.focusOnClick = true; rfb.viewOnly = !state?.remoteControl; rfb.background = screenBg();
     if (!connect.fit) {
       connect.fit = new ResizeObserver(() => { if (rfb) requestRemoteFit(rfb); });
       connect.fit.observe($('screen'));

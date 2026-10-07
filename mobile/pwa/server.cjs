@@ -28,7 +28,7 @@ const { renderOrbPng } = require('./orbs.cjs');
 const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
 const { resolveVncUpstream, readVncPassword, bridgeVnc } = require('./vnc-proxy.cjs');
 const { resolveCdpUrl } = require('../../desktop/src/intelio/cdp-fill.cjs');
-const { harnessId, buildCard, readProfileFiles, writePaused, writeReasoning } = require('../../desktop/src/intelio/agent-card.cjs');
+const { harnessId, excludedAgent, buildCard, readProfileFiles, writePaused, writeReasoning, writeProfile, cleanColor } = require('../../desktop/src/intelio/agent-card.cjs');
 const { preview: previewTranscript } = require('../../desktop/src/intelio/transcript.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
@@ -47,7 +47,7 @@ const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
 const AUDIO_LIMIT = 8 * 1024 * 1024;
 
 const TILES = [
-  { id: 'intelio', name: 'Intelio', color: '#ff8a1f', status: 'online' },
+  { id: 'intelio', name: 'intelio', color: '#ff8a1f', status: 'online' },
   { id: 'prc', name: 'PRC', color: '#5b7cfa', status: 'online' },
   { id: 'alignment', name: 'Alignment', color: '#b388ff', status: 'online' },
   { id: 'hhp', name: 'HHP', color: '#2eb8a0', status: 'away' },
@@ -59,7 +59,7 @@ const SAMPLE_HOME = {
   label: 'SAMPLE DATA',
   profiles: TILES,
   conversations: [
-    { id: 'sample-intelio', profileId: 'intelio', group: 'work', title: 'Intelio', preview: 'Need your yes on the Friday all-hands deck.', time: '7:34 PM', inCall: true },
+    { id: 'sample-intelio', profileId: 'intelio', group: 'work', title: 'intelio', preview: 'Need your yes on the Friday all-hands deck.', time: '7:34 PM', inCall: true },
     { id: 'sample-outreach', profileId: 'prc', group: 'work', title: 'Outreach', preview: '8 intros drafted — sitting in the CRM till you review.', time: '11:16 AM' },
     { id: 'sample-launch', profileId: 'alignment', group: 'work', title: 'Website launch', preview: 'Checkout is clean on staging. Three bugs left.', time: '11:02 AM' },
     { id: 'sample-support', profileId: 'hhp', group: 'work', title: 'Support', preview: 'Acme is wobbling. Drafted a Thursday check-in.', time: '2:20 PM' },
@@ -662,7 +662,10 @@ function createPwaServer({
         : String(item.name || displayName(item.id) || 'Agent')).slice(0, 80),
       description: String(item.description || '').slice(0, 240),
       status: item.status || 'online',
-    })).filter((item) => item.id && item.id !== 'default');
+      orb: String(item.orb || '').slice(0, 40),
+      needsSignIn: item.needsSignIn === true,
+      gatewayNote: String(item.gatewayNote || '').slice(0, 160),
+    })).filter((item) => item.id && item.id !== 'default' && !excludedAgent(item.id));
     const conversations = [];
     for (const agent of profiles) conversations.push(...await sessionsFor(agent.id));
     return { sample: false, label: '', profiles, conversations, skills: [], jobs: [], skillsOk: false, jobsOk: false };
@@ -777,6 +780,65 @@ function createPwaServer({
     } catch {
       return '';
     }
+  }
+  async function browserHosts(profileId) {
+    if (sample) return [];
+    let origin = '';
+    try { origin = resolveCdpUrl({ profile: profileId, root: vaultRootPath }); } catch { return []; }
+    try {
+      const response = await Promise.race([
+        fetchImpl(`${origin}/json/list`, { redirect: 'error' }),
+        new Promise((_, reject) => { setTimeout(() => reject(new Error('cdp')), 3000); }),
+      ]);
+      if (!response || !response.ok) return [];
+      const rows = await response.json();
+      const hosts = [];
+      for (const row of (Array.isArray(rows) ? rows : [])) {
+        if (!row || row.type !== 'page' || !/^https?:/i.test(String(row.url || ''))) continue;
+        try {
+          const host = new URL(row.url).hostname.replace(/^www\./, '').slice(0, 253);
+          if (host && !hosts.includes(host)) hosts.push(host);
+        } catch { /* skip a bad tab url */ }
+      }
+      return hosts.slice(0, 4);
+    } catch {
+      return [];
+    }
+  }
+  async function listScreens() {
+    if (sample) return [{ profileId: 'intelio', name: 'intelio', host: 'google.com', screen: 1 }];
+    const profiles = await loadProfiles();
+    const rows = [];
+    for (const profile of profiles) {
+      if (excludedAgent(profile.id)) continue;
+      const hosts = await browserHosts(profile.id);
+      hosts.forEach((host, index) => {
+        rows.push({ profileId: profile.id, name: displayName(profile.id), host, screen: index + 1 });
+      });
+    }
+    return rows.slice(0, 12);
+  }
+  function cardFromFiles(id, files, jobs) {
+    return buildCard({
+      id,
+      configText: files.configText,
+      userText: files.userText,
+      memoryText: files.memoryText,
+      paused: files.paused,
+      computer: files.computer,
+      jobs: jobs.list,
+      needsSignIn: files.needsSignIn,
+      gatewayNote: files.gatewayNote,
+      title: files.title,
+      color: files.color,
+      orb: files.orb,
+      soul: files.soul,
+      displayName: files.displayName,
+      emailOverride: files.email,
+      mobileOverride: files.mobile,
+      emailSet: files.emailSet,
+      mobileSet: files.mobileSet,
+    });
   }
   const liveSockets = new Set();
   function watchSocket(socket) {
@@ -932,16 +994,41 @@ function createPwaServer({
         if (writing && url.pathname === '/api/agent/pause') writePaused(vaultRootPath, id, body.paused !== false);
         const files = readProfileFiles(vaultRootPath, id);
         const jobs = sample ? { list: [] } : await optionalList(id, '/api/jobs', normalizeJobs);
-        const card = buildCard({
-          id,
-          configText: files.configText,
-          userText: files.userText,
-          memoryText: files.memoryText,
-          paused: files.paused,
-          computer: files.computer,
-          jobs: jobs.list,
-        });
-        return send(res, 200, card);
+        return send(res, 200, cardFromFiles(id, files, jobs));
+      }
+      if (req.method === 'POST' && url.pathname === '/api/agent/profile') {
+        if (!presentedBearer(req).present && !mutationOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
+        const body = await readBody(req, 24000);
+        const id = harnessId(chosenProfile(req, body));
+        if (!id || excludedAgent(id)) return send(res, 404, { error: 'Unknown agent.' });
+        const hasProfile = fs.existsSync(path.join(vaultRootPath, id, 'config.yaml'));
+        if (!hasProfile) {
+          if (!sample) return send(res, 404, { error: 'That agent was not found.' });
+          const color = body.color == null ? '' : cleanColor(body.color);
+          if (body.color != null && !color) return send(res, 400, { error: 'Choose a palette color or another hex value.' });
+          return send(res, 200, buildCard({
+            id,
+            name: body.name || id,
+            title: body.title || '',
+            color,
+            orb: body.orb || '',
+            soul: body.soul || '',
+            displayName: body.name || '',
+            emailOverride: body.email || '',
+            mobileOverride: body.mobile || '',
+            emailSet: body.email != null,
+            mobileSet: body.mobile != null,
+            computer: { status: 'stopped' },
+          }));
+        }
+        const saved = writeProfile(vaultRootPath, id, body);
+        if (!saved.ok) return send(res, 400, { error: saved.error || 'Could not save that.' });
+        const files = readProfileFiles(vaultRootPath, id);
+        const jobs = sample ? { list: [] } : await optionalList(id, '/api/jobs', normalizeJobs);
+        return send(res, 200, cardFromFiles(id, files, jobs));
+      }
+      if (req.method === 'GET' && url.pathname === '/api/screens') {
+        return send(res, 200, { data: await listScreens() });
       }
       if (req.method === 'GET' && url.pathname === '/api/home') {
         if (sample) return send(res, 200, SAMPLE_HOME);
@@ -973,16 +1060,42 @@ function createPwaServer({
         const body = await readBody(req, 8192);
         if (sample) {
           const slug = assertSlug(body.name);
-          const summary = String(body.description || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 240);
-          return send(res, 200, { id: slug, name: displayName(slug), description: summary, needsGatewayRestart: true, sample: true, label: 'SAMPLE DATA' });
+          if (excludedAgent(slug)) return send(res, 400, { error: 'That name is reserved.' });
+          const summary = String(body.description || body.title || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 240);
+          return send(res, 200, {
+            id: slug,
+            name: displayName(slug),
+            description: summary,
+            title: String(body.title || '').slice(0, 80),
+            orb: String(body.orb || ''),
+            needsSignIn: false,
+            signInNote: '',
+            gatewayNote: 'Ready after the next agent restart',
+            needsGatewayRestart: true,
+            sample: true,
+            label: 'SAMPLE DATA',
+          });
         }
         const created = profileOps && profileOps.create
           ? await profileOps.create(body)
-          : await createProfile({ name: body.name, description: body.description, cloneFrom: body.cloneFrom, home: profileHome, run: profileRun });
+          : await createProfile({
+            name: body.name,
+            description: body.description || body.title || '',
+            title: body.title || body.role || '',
+            soul: body.soul || body.instructions || '',
+            orb: body.orb || '',
+            home: profileHome,
+            run: profileRun,
+          });
         return send(res, 200, {
           id: created.id,
           name: created.name,
           description: created.description || '',
+          title: created.title || '',
+          orb: created.orb || '',
+          needsSignIn: created.needsSignIn === true,
+          signInNote: created.signInNote || '',
+          gatewayNote: created.gatewayNote || 'Ready after the next agent restart',
           needsGatewayRestart: true,
         });
       }
@@ -1056,7 +1169,7 @@ function createPwaServer({
         const body = await readBody(req, 4096);
         if (sample) {
           if (!sessionFrom(req)) return send(res, 401, { error: 'Sign in again.' });
-          return send(res, 200, { id: 'sample-lamp', title: String(body.title || 'Intelio').slice(0, 200), profileId: body.profile || 'intelio', sample: true, label: 'SAMPLE DATA' });
+          return send(res, 200, { id: 'sample-lamp', title: String(body.title || 'intelio').slice(0, 200), profileId: body.profile || 'intelio', sample: true, label: 'SAMPLE DATA' });
         }
         return await forward(req, res, '/api/sessions', { method: 'POST', body: { title: String(body.title || '').slice(0, 200) }, profileId: chosenProfile(req, body) });
       }
@@ -1139,10 +1252,10 @@ if (require.main === module) {
   }
   const app = createPwaServer();
   app.listen().then((address) => {
-    process.stdout.write(`Intelio phone client listening on ${address.address}:${address.port}\n`);
+    process.stdout.write(`intelio phone client listening on ${address.address}:${address.port}\n`);
     if (app.local) {
       const local = app.local.address();
-      process.stdout.write(`Intelio Access listener on ${local.address}:${local.port}\n`);
+      process.stdout.write(`intelio Access listener on ${local.address}:${local.port}\n`);
     }
     if (process.env.INTELIO_VOICE_PYTHON) {
       app.warmVoice().catch((error) => {

@@ -115,7 +115,7 @@ function isAccessResponse(response, text) {
 }
 
 function accessError() {
-  const error = new Error('Sign in to Intelio');
+  const error = new Error('Sign in to intelio');
   error.code = 'CLOUD_ACCESS';
   return error;
 }

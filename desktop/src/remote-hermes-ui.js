@@ -5,7 +5,7 @@
   const state = { sessions: [], activeId: '', busy: false, streaming: null, streamRaw: '', liveTools: null, liveSteps: [], toolEvents: false, timer: null };
   function visibleName(raw) {
     const value = String(raw || '').trim();
-    const known = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+    const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
     return known[value.toLowerCase()] || value;
   }
 

@@ -4,28 +4,29 @@
   function text(id, value) { const node = $(id); if (node) node.textContent = value; }
   function visibleName(raw) {
     const value = String(raw || '').trim();
-    const known = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
-    return known[value.toLowerCase()] || (value.toLowerCase() === 'intelio' ? 'Intelio' : value);
+    const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+    return known[value.toLowerCase()] || (value.toLowerCase() === 'intelio' ? 'intelio' : value);
   }
 
   function apply(state) {
     const intelio = state?.intelio;
     if (!intelio) return;
-    const raw = String(intelio.brand?.windowTitle || '').trim();
-    const title = !raw || raw.toLowerCase() === 'intelio' ? 'Intelio' : raw;
-    document.title = 'Intelio';
-    text('product-title', title);
+    document.title = 'intelio';
+    text('product-title', 'intelio');
     const mark = $('intelio-mark');
     if (mark && intelio.brand?.mark) { mark.src = intelio.brand.mark; mark.hidden = false; }
     const tokens = intelio.brand?.tokens || {};
     const root = document.documentElement;
-    if (tokens.background) root.style.setProperty('--bg', tokens.background);
-    if (tokens.foreground) root.style.setProperty('--text', tokens.foreground);
-    if (tokens.surface) root.style.setProperty('--intelio-surface', tokens.surface);
-    if (tokens.line) root.style.setProperty('--line', tokens.line);
+    const light = String(state.theme || '').trim().toLowerCase() === 'light';
+    if (!light) {
+      if (tokens.background) root.style.setProperty('--bg', tokens.background);
+      if (tokens.foreground) root.style.setProperty('--text', tokens.foreground);
+      if (tokens.surface) root.style.setProperty('--intelio-surface', tokens.surface);
+      if (tokens.line) root.style.setProperty('--line', tokens.line);
+    }
     if (tokens.font) root.style.setProperty('--intelio-font', `"${tokens.font}", "Geist Sans", ui-sans-serif, system-ui, sans-serif`);
     const profileLabel = visibleName(intelio.profileName || intelio.profile || '');
-    text('intelio-profile', intelio.ok ? `Profile · ${profileLabel || 'Intelio'}` : `Profile · ${intelio.error || 'not loaded'}`);
+    text('intelio-profile', intelio.ok ? `Profile · ${profileLabel || 'intelio'}` : `Profile · ${intelio.error || 'not loaded'}`);
     const hermes = intelio.hermes || {};
     const pin = hermes.pinCommit ? hermes.pinCommit.slice(0, 12) : 'missing';
     const launch = (intelio.launchArgv || []).join(' ') || 'hermes';
@@ -65,8 +66,8 @@
       return;
     }
     const intelio = state?.intelio || {};
-    body.append(element('h3', '', 'Intelio profile'));
-    if (!intelio.ok) body.append(element('p', 'settings-note', intelio.error || 'The Intelio profile did not load.'));
+    body.append(element('h3', '', 'intelio profile'));
+    if (!intelio.ok) body.append(element('p', 'settings-note', intelio.error || 'The intelio profile did not load.'));
     const lines = [
       intelio.profileName ? `Profile name: ${visibleName(intelio.profileName)}` : '',
       intelio.profileDir ? `Directory: ${intelio.profileDir}` : '',
@@ -82,7 +83,7 @@
     ].filter(Boolean);
     for (const line of lines) body.append(element('p', 'settings-note', line));
     const field = element('div', 'field');
-    const label = element('label', '', 'Intelio profile directory');
+    const label = element('label', '', 'intelio profile directory');
     label.htmlFor = 'intelio-profile-dir';
     const input = element('input');
     input.id = 'intelio-profile-dir';
@@ -92,7 +93,7 @@
     const load = element('button', 'secondary-button', 'Load profile');
     load.onclick = async () => {
       const result = await command('reload-intelio', { profileDir: input.value.trim() });
-      if (result?.intelio?.ok) toast(`Loaded Intelio profile ${visibleName(result.intelio.profileName)}.`);
+      if (result?.intelio?.ok) toast(`Loaded intelio profile ${visibleName(result.intelio.profileName)}.`);
     };
     const recheck = element('button', 'secondary-button', 'Recheck Hermes pin');
     recheck.onclick = async () => {
@@ -112,13 +113,13 @@
       const host = remote.host ? `${remote.host}:${remote.port || 8642}` : '';
       body.append(element('p', 'settings-note', ['VPS Hermes', host, remote.versionLabel || '', mode].filter(Boolean).join(' · ')));
     }
-    body.append(element('p', 'settings-note', 'When Remote Hermes is on, the main window lists each profile and chats through that profile’s VPS sessions. Connection is Auto, Tailscale, or Intelio Cloud. Auto uses Tailscale when that host answers, and otherwise Intelio Cloud. Intelio Cloud asks you to sign in once; that sign-in covers agents and the desktop. The Tailscale host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The import file remote-hermes-key.import can hold several lines, one profile=key per line. A legacy API_SERVER_KEY= line, or a single raw key, is the Intelio key. A vnc= line is the VPS desktop password, stored the same way and sent when the desktop asks. It is not a profile, and it is not put in the viewer URL. Each profile only accepts its own key. Intelio encrypts them and deletes that file. You do not type the keys or the desktop password. A new machine can receive the same keys after Intelio Cloud sign-in.'));
+    body.append(element('p', 'settings-note', 'When Remote Hermes is on, the main window lists each profile and chats through that profile’s VPS sessions. Connection is Auto, Tailscale, or intelio Cloud. Auto uses Tailscale when that host answers, and otherwise intelio Cloud. intelio Cloud asks you to sign in once; that sign-in covers agents and the desktop. The Tailscale host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The import file remote-hermes-key.import can hold several lines, one profile=key per line. A legacy API_SERVER_KEY= line, or a single raw key, is the intelio key. A vnc= line is the VPS desktop password, stored the same way and sent when the desktop asks. It is not a profile, and it is not put in the viewer URL. Each profile only accepts its own key. intelio encrypts them and deletes that file. You do not type the keys or the desktop password. A new machine can receive the same keys after intelio Cloud sign-in.'));
     const modeField = element('div', 'field');
     const modeLabel = element('label', '', 'Connection');
     modeLabel.htmlFor = 'remote-hermes-connection';
     const mode = element('select');
     mode.id = 'remote-hermes-connection';
-    for (const [value, text] of [['auto', 'Auto'], ['tailscale', 'Tailscale'], ['cloud', 'Intelio Cloud']]) {
+    for (const [value, text] of [['auto', 'Auto'], ['tailscale', 'Tailscale'], ['cloud', 'intelio Cloud']]) {
       const option = element('option', '', text);
       option.value = value;
       mode.append(option);
@@ -136,7 +137,7 @@
     };
     const host = make('remote-hermes-host', 'VPS host (Tailscale)', '');
     const port = make('remote-hermes-port', 'Port', '8642');
-    const profile = make('remote-hermes-profile', 'Hermes profile', 'Intelio');
+    const profile = make('remote-hermes-profile', 'Hermes profile', 'intelio');
     const key = make('remote-hermes-key', 'API key for this profile (write-only)', '', 'password');
     key.placeholder = 'unchanged';
     const install = element('button', 'secondary-button', 'Install Tailscale');
@@ -156,7 +157,7 @@
     const save = element('button', 'secondary-button', 'Save');
     save.onclick = async () => {
       try {
-        const profileId = { Intelio: 'intelio', PRC: 'prc', Alignment: 'alignment', HHP: 'hhp' }[profile.value.trim()] || profile.value.trim().toLowerCase();
+        const profileId = { intelio: 'intelio', Intelio: 'intelio', PRC: 'prc', Alignment: 'alignment', HHP: 'hhp' }[profile.value.trim()] || profile.value.trim().toLowerCase();
         let s = await command('remote-hermes-config', { host: host.value.trim(), port: Number(port.value), profile: profileId, enabled: true, connection: mode.value });
         if (key.value) { s = await command('remote-hermes-key', { key: key.value, profile: s.profile }); key.value = ''; }
         show(s); toast('Remote Hermes settings saved.');

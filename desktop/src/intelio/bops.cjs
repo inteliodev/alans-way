@@ -21,10 +21,10 @@
   if (root) root.IntelioBops = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function intelioBopsFactory() {
   const PROFILES = ['intelio', 'prc', 'alignment', 'hhp'];
-  const NAMES = { intelio: 'Intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+  const NAMES = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
   const HIGHLIGHT = { intelio: '#7a5cff', prc: '#059669', alignment: '#1d4ed8', hhp: '#d97706' };
   const DISPLAY_STREAM = '/api/display/ws';
-  const HANDOFF_STUB = 'Hermes has no peer-delegation tool in this build. Intelio opens a session on the target profile and sends a redacted handoff note. Profile keys stay on the VPS and are not copied.';
+  const HANDOFF_STUB = 'Hermes has no peer-delegation tool in this build. intelio opens a session on the target profile and sends a redacted handoff note. Profile keys stay on the VPS and are not copied.';
 
   function redactSecrets(text) {
     return String(text || '')
@@ -78,7 +78,7 @@
     const tasks = splitTasks(text);
     return {
       profile: id,
-      agentName: agentName || NAMES[id] || 'Intelio',
+      agentName: (String(agentName || '').toLowerCase() === 'intelio' ? 'intelio' : agentName) || NAMES[id] || 'intelio',
       tasks,
       focusedId: tasks[0]?.id || '',
       handoff: planHandoff(text, id),
@@ -139,7 +139,7 @@
     const text = `${signal?.code || ''} ${signal?.error || ''} ${signal?.message || ''} ${signal?.tool || ''} ${signal?.title || ''}`.toLowerCase();
     if (!text.trim()) return null;
     if (/payment|invoice|checkout|billing|\bpay\b/.test(text)) {
-      return { kind: 'payment', statusLine: 'Payment paused. Intelio does not submit payments.', moneyMove: false };
+      return { kind: 'payment', statusLine: 'Payment paused. intelio does not submit payments.', moneyMove: false };
     }
     if (/login|sign in|signin|password|credential|otp/.test(text)) {
       return { kind: 'login', domain: domainFrom(signal), selectors: selectorsFrom(signal), moneyMove: false };
@@ -277,7 +277,8 @@
   function previewFor(run, caption) {
     const task = run?.tasks?.find((item) => item.id === run.focusedId) || run?.tasks?.[0];
     const profile = run?.profile || 'intelio';
-    const name = run?.agentName || NAMES[profile] || 'Intelio';
+    const rawName = run?.agentName || NAMES[profile] || 'intelio';
+    const name = String(rawName).toLowerCase() === 'intelio' ? 'intelio' : rawName;
     return {
       badge: `${name} is browsing`,
       profile,

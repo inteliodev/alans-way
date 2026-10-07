@@ -130,7 +130,7 @@ test('a sidecar allowlist and payment hosts are enforced for agents only', async
     assert.equal(allowed.status, 201, JSON.stringify(allowed.data));
     const outside = await host.api('/v1/tabs', 'POST', { url: 'https://example.com/' });
     assert.equal(outside.status, 403);
-    assert.match(outside.data.error, /outside the Intelio browsing zone/);
+    assert.match(outside.data.error, /outside the intelio browsing zone/);
     for (const url of ['https://checkout.stripe.com/pay', 'https://www.paypal.com/', 'https://shop.example/checkout/start', 'https://shop.example/delete-account']) {
       const blocked = await host.api('/v1/tabs', 'POST', { url, approved: true });
       assert.equal(blocked.status, 409, url);

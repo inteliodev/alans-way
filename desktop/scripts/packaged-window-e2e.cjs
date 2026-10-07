@@ -192,7 +192,7 @@ function listen(vncPassword) {
     };
     if (url.pathname === '/access/login') {
       res.setHeader('content-type', 'text/html');
-      res.end('<!doctype html><title>Sign in</title><p>Sign in to Intelio</p><button id="allow" type="button">Allow</button><script>document.getElementById("allow").onclick=function(){document.cookie="CF_Authorization=e2e-session; Path=/";location.href="/health";};</script>');
+      res.end('<!doctype html><title>Sign in</title><p>Sign in to intelio</p><button id="allow" type="button">Allow</button><script>document.getElementById("allow").onclick=function(){document.cookie="CF_Authorization=e2e-session; Path=/";location.href="/health";};</script>');
       return;
     }
     if (!hasSession(req)) {
@@ -221,7 +221,7 @@ function listen(vncPassword) {
         { name: 'buyers' },
         { name: 'critical-dates' },
         { name: 'deal-tracking' },
-        { id: 'intelio', name: 'Intelio' },
+        { id: 'intelio', name: 'intelio' },
         { id: 'prc', name: 'PRC' },
         { id: 'alignment', name: 'Alignment' },
         { id: 'hhp', name: 'HHP' },
@@ -257,7 +257,7 @@ function listen(vncPassword) {
 }
 
 async function main() {
-  const exe = path.resolve('dist/win-unpacked/Intelio.exe');
+  const exe = path.resolve('dist/win-unpacked/intelio.exe');
   if (!fs.existsSync(exe)) throw new Error(`packaged exe missing: ${exe}`);
   const agentsShot = path.resolve('dist/e2e-agents-tab.png');
   const sessionsShot = path.resolve('dist/e2e-sessions-tab.png');
@@ -446,7 +446,7 @@ async function main() {
     });
     const listedNames = String(names.result && names.result.value || '');
     if (/underwriting|intake|comps|buyers|deal-tracking/i.test(listedNames)) throw new Error('local catalog replaced the harness profiles');
-    if (!/Intelio/.test(listedNames) || !/\bPRC\b/.test(listedNames) || !/Alignment/.test(listedNames) || !/\bHHP\b/.test(listedNames)) throw new Error(`harness profiles missing from the agents list: ${listedNames}`);
+    if (!/intelio/.test(listedNames) || !/\bPRC\b/.test(listedNames) || !/Alignment/.test(listedNames) || !/\bHHP\b/.test(listedNames)) throw new Error(`harness profiles missing from the agents list: ${listedNames}`);
     if (view.agents !== 4) throw new Error(`expected 4 agents, saw ${view.agents}`);
     if (view.sessions < 1) throw new Error(`expected a session, saw ${view.sessions}`);
     if (bad.test(status)) throw new Error(`status line: ${status}`);
