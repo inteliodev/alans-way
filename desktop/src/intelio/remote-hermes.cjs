@@ -185,7 +185,7 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
     try {
       response = await doFetch(url, {
         method,
-        headers: { Authorization: `Bearer ${key}`, Accept: stream ? 'text/event-stream' : 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        headers: { Authorization: `Bearer ${key}`, Accept: stream ? 'text/event-stream' : 'application/json', 'x-intelio-profile': profileName, ...(body ? { 'Content-Type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
         redirect: cloud ? 'manual' : 'error',

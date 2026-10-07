@@ -141,14 +141,14 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
     return [...new Set((names || []).map((name) => String(name || '').trim().toLowerCase()).filter(Boolean))];
   }
 
-  async function probe(url, key, raw) {
+  async function probe(url, key, raw, profile) {
     const cloud = Boolean(raw?.origin || raw?.partition || raw?.activeMode === 'cloud');
     const doFetch = selectFetch(raw, { fetchImpl, sessionFor, net });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), probeTimeoutMs);
     try {
       const response = await doFetch(url, {
-        headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+        headers: { Authorization: `Bearer ${key}`, Accept: 'application/json', ...(profile ? { 'x-intelio-profile': profile } : {}) },
         redirect: cloud ? 'manual' : 'error',
         signal: controller.signal,
       });
@@ -186,15 +186,16 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
     const origin = String(raw?.origin || '').replace(/\/$/, '');
     if (origin || config.host) {
       let key = '';
+      let keyName = '';
       for (const name of order) {
         key = await getKey(name);
-        if (key) break;
+        if (key) { keyName = name; break; }
       }
       if (key) {
         const host = config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host;
         const root = origin || `http://${host}:${config.port}`;
         for (const path of ['/api/home', '/api/profiles']) {
-          const found = await probe(`${root}${path}`, key, raw);
+          const found = await probe(`${root}${path}`, key, raw, keyName);
           if (found) return { ...found, agents: selectHarnessAgents(found.agents, stored, config.profile || 'intelio') };
         }
       }

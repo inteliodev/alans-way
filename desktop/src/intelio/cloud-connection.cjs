@@ -102,16 +102,52 @@ function labelWithMode(label, mode) {
   return base;
 }
 
-/** Cloudflare Access challenge, or an HTML page where Hermes JSON was expected. */
+function headerValue(response, name) {
+  const headers = response?.headers;
+  if (!headers) return '';
+  if (typeof headers.get === 'function') return String(headers.get(name) || '');
+  const raw = headers[name] ?? headers[String(name || '').toLowerCase()];
+  return raw == null ? '' : String(raw);
+}
+
+/** Real Cloudflare Access login, including the packaged fake at /access/login. */
+function isAccessLocation(location) {
+  const value = String(location || '').trim();
+  if (!value) return false;
+  if (/cloudflareaccess\.com/i.test(value)) return true;
+  if (/\/cdn-cgi\/access(?:\/|$|\?|#)/i.test(value)) return true;
+  if (/(?:^|\/)access\/login(?:[/?#]|$)/i.test(value)) return true;
+  return false;
+}
+
+/**
+ * Sign-in is a Cloudflare Access challenge: a redirect to the Access host
+ * or /cdn-cgi/access, an opaque redirect, or an HTML page. JSON 401/403 is
+ * a profile error and must not reopen the sign-in window.
+ */
 function isAccessResponse(response, text) {
   if (!response) return false;
-  const status = Number(response.status || 0);
-  if (status === 301 || status === 302 || status === 303 || status === 307 || status === 308 || status === 401 || status === 403) return true;
   if (response.type === 'opaqueredirect') return true;
-  const headerType = String(response.headers?.get?.('content-type') || response.headers?.['content-type'] || '');
-  if (/text\/html/i.test(headerType)) return true;
-  if (typeof text === 'string' && /^\s*</.test(text)) return true;
+  const status = Number(response.status || 0);
+  const location = headerValue(response, 'location');
+  const headerType = headerValue(response, 'content-type');
+  if (/text\/html/i.test(headerType) || (typeof text === 'string' && /^\s*</.test(text))) return true;
+  const redirect = status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+  if (redirect) return !location || isAccessLocation(location);
   return false;
+}
+
+function mergeAccessCookies(existing, cookies) {
+  const parts = String(existing || '').split(';').map((part) => part.trim()).filter(Boolean);
+  const seen = new Set(parts.map((part) => part.split('=')[0].trim()));
+  for (const cookie of cookies || []) {
+    const name = String(cookie?.name || '');
+    if (name !== 'CF_Authorization' && name !== 'CF_AppSession') continue;
+    if (cookie.value == null || cookie.value === '' || seen.has(name)) continue;
+    parts.push(`${name}=${cookie.value}`);
+    seen.add(name);
+  }
+  return parts.join('; ');
 }
 
 function accessError() {
@@ -141,6 +177,7 @@ module.exports = {
   chooseConnection,
   labelWithMode,
   isAccessResponse,
+  mergeAccessCookies,
   accessError,
   allowedSignInUrl,
 };

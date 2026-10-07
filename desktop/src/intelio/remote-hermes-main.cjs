@@ -11,7 +11,7 @@ const { harnessId, buildCard } = require('./agent-card.cjs');
 const { vaultOrigin, postProfileVault } = require('./remote-vault.cjs');
 const { createRemoteMain } = require('./remote-main-data.cjs');
 const { checkTailscale, assertInstallUrl, installUrl } = require('./tailscale.cjs');
-const { normalizeConnectionMode, chooseConnection, labelWithMode, allowedSignInUrl, CLOUD_PARTITION } = require('./cloud-connection.cjs');
+const { normalizeConnectionMode, chooseConnection, labelWithMode, allowedSignInUrl, mergeAccessCookies, CLOUD_PARTITION } = require('./cloud-connection.cjs');
 
 function unquote(value) {
   return String(value || '').trim().replace(/^['"]|['"]$/g, '');
@@ -100,6 +100,35 @@ function secretsFromBootstrap(body) {
   return parsed;
 }
 
+function attachCloudSessionCookies(ses) {
+  if (!ses || ses.__intelioAccessCookie || !ses.webRequest || typeof ses.webRequest.onBeforeSendHeaders !== 'function') return;
+  ses.__intelioAccessCookie = true;
+  ses.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (details, callback) => {
+    const finish = (requestHeaders) => { try { callback({ requestHeaders }); } catch { /* the request already moved on */ } };
+    const headers = { ...(details?.requestHeaders || {}) };
+    let pageUrl = '';
+    try {
+      const parsed = new URL(details.url);
+      if (parsed.protocol === 'wss:') parsed.protocol = 'https:';
+      else if (parsed.protocol === 'ws:') parsed.protocol = 'http:';
+      pageUrl = parsed.origin;
+    } catch {
+      finish(headers);
+      return;
+    }
+    const read = ses.cookies && typeof ses.cookies.get === 'function' ? ses.cookies.get({ url: pageUrl }) : Promise.resolve([]);
+    Promise.resolve(read).then((cookies) => {
+      const current = headers.Cookie || headers.cookie || '';
+      const next = mergeAccessCookies(current, cookies);
+      if (next && next !== current) {
+        headers.Cookie = next;
+        delete headers.cookie;
+      }
+      finish(headers);
+    }).catch(() => finish(headers));
+  });
+}
+
 function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs, savePreferences, getMainWindow, root, rendererSandbox, icon, background, session, net }) {
   let chatWindow = null;
   const keyFile = () => path.join(app.getPath('userData'), 'remote-hermes-keys.json');
@@ -120,12 +149,14 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     try { return safeStorage.decryptString(Buffer.from(stored, 'base64')); } catch { return ''; }
   }
   const sessionFor = (partition) => (session && typeof session.fromPartition === 'function' ? session.fromPartition(partition) : null);
+  attachCloudSessionCookies(sessionFor(CLOUD_PARTITION));
   let resolved = null;
   let needsSignIn = false;
   let generation = 0;
   let notify = () => {};
   let signInWindow = null;
   let signInTimer = null;
+  let signInOpenedAt = 0;
   let finishingSignIn = false;
 
   function savedConnection() {
@@ -159,9 +190,9 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
-  async function maybeBootstrap() {
+  async function maybeBootstrap(force = false) {
     if (!resolved || resolved.mode !== 'cloud') return;
-    if (profileNames(readKeys()).length) return;
+    if (!force && profileNames(readKeys()).length) return;
     if (!(await hasCloudCookie(resolved.origin))) return;
     if (!safeStorage || !safeStorage.isEncryptionAvailable()) return;
     const ses = sessionFor(CLOUD_PARTITION);
@@ -203,13 +234,23 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
-  function openSignIn() {
+  async function openSignIn() {
     if (!BrowserWindow || !resolved || resolved.mode !== 'cloud') return;
+    const origin = resolved.origin;
+    if (await hasCloudCookie(origin)) {
+      needsSignIn = false;
+      await maybeBootstrap(true);
+      notify();
+      return;
+    }
     if (signInWindow && !signInWindow.isDestroyed()) {
       signInWindow.show();
       signInWindow.focus();
       return;
     }
+    const now = Date.now();
+    if (now - signInOpenedAt < 15000) return;
+    signInOpenedAt = now;
     const ses = sessionFor(CLOUD_PARTITION);
     if (!ses) return;
     signInWindow = new BrowserWindow({
@@ -228,7 +269,6 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
       return { action: 'deny' };
     });
     signInWindow.on('closed', () => { closeSignInPoll(); signInWindow = null; });
-    const origin = resolved.origin;
     signInWindow.loadURL(`${origin}/`).catch(() => {});
     closeSignInPoll();
     let claimed = false;
@@ -238,15 +278,6 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
       if (claimed) return;
       claimed = true;
       closeSignInPoll();
-      const desktop = resolved?.desktop;
-      if (desktop && allowedSignInUrl(desktop) && signInWindow && !signInWindow.isDestroyed()) {
-        try {
-          await Promise.race([
-            signInWindow.loadURL(desktop),
-            new Promise((resolve) => setTimeout(resolve, 8000)),
-          ]);
-        } catch { /* SSO warm-up is best-effort */ }
-      }
       if (signInWindow && !signInWindow.isDestroyed()) signInWindow.close();
       await finishSignIn();
     };

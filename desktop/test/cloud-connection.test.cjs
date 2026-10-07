@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { chooseConnection, cloudTargets, labelWithMode, isAccessResponse, normalizeConnectionMode, allowedSignInUrl, CLOUD_API, CLOUD_DESKTOP, PROBE_TIMEOUT_MS } = require('../src/intelio/cloud-connection.cjs');
+const { chooseConnection, cloudTargets, labelWithMode, isAccessResponse, mergeAccessCookies, normalizeConnectionMode, allowedSignInUrl, CLOUD_API, CLOUD_DESKTOP, PROBE_TIMEOUT_MS } = require('../src/intelio/cloud-connection.cjs');
 const { createRemoteHermesClient } = require('../src/intelio/remote-hermes.cjs');
 
 test('the Access cookie is read from the session and is not written into preferences', () => {
@@ -12,6 +12,16 @@ test('the Access cookie is read from the session and is not written into prefere
   const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
   const settings = fs.readFileSync(path.join(__dirname, '../src/intelio-ui.js'), 'utf8');
   assert.equal(main.split('CF_Authorization').length - 1, 1);
+  assert.match(main, /signInOpenedAt/);
+  assert.equal(main.includes('loadURL(desktop)'), false);
+  assert.match(main, /mergeAccessCookies/);
+  assert.match(main, /onBeforeSendHeaders/);
+  const shell = fs.readFileSync(path.join(__dirname, '../src/main.cjs'), 'utf8');
+  assert.match(shell, /activeMode === 'cloud'/);
+  const client = fs.readFileSync(path.join(__dirname, '../src/intelio/remote-hermes.cjs'), 'utf8');
+  assert.match(client, /'x-intelio-profile': profileName/);
+  const probe = fs.readFileSync(path.join(__dirname, '../src/intelio/remote-main-data.cjs'), 'utf8');
+  assert.match(probe, /'x-intelio-profile': profile/);
   assert.match(main, /cookies\.get\(\{ url: origin, name: 'CF_Authorization' \}\)/);
   assert.equal(prefs.includes('CF_Authorization'), false);
   assert.match(html, /Sign in again/);
@@ -82,13 +92,22 @@ test('status label names the active mode once', () => {
   assert.equal(labelWithMode('', 'cloud'), '');
 });
 
-test('access challenges are redirects, denials, and HTML', () => {
+test('access challenges are Cloudflare redirects or HTML, not a JSON profile error', () => {
+  const headers = (map) => ({ get: (name) => map[String(name || '').toLowerCase()] || '' });
   assert.equal(isAccessResponse({ status: 302, headers: { get: () => '' } }), true);
-  assert.equal(isAccessResponse({ status: 401, headers: { get: () => 'application/json' } }), true);
+  assert.equal(isAccessResponse({ status: 302, headers: headers({ location: 'https://intelio.cloudflareaccess.com/cdn-cgi/access/login' }) }), true);
+  assert.equal(isAccessResponse({ status: 302, headers: headers({ location: '/cdn-cgi/access/login' }) }), true);
+  assert.equal(isAccessResponse({ status: 302, headers: headers({ location: '/access/login' }) }), true);
+  assert.equal(isAccessResponse({ status: 302, headers: headers({ location: 'https://example.com/elsewhere' }) }), false);
+  assert.equal(isAccessResponse({ status: 401, headers: headers({ 'content-type': 'application/json' }) }, '{"error":"no"}'), false);
+  assert.equal(isAccessResponse({ status: 403, headers: headers({ 'content-type': 'application/json' }) }, '{"error":"no"}'), false);
   assert.equal(isAccessResponse({ status: 200, type: 'opaqueredirect', headers: { get: () => '' } }), true);
   assert.equal(isAccessResponse({ status: 200, headers: { get: () => 'text/html' } }), true);
+  assert.equal(isAccessResponse({ status: 401, headers: headers({ 'content-type': 'text/html' }) }, '<html>Sign in</html>'), true);
   assert.equal(isAccessResponse({ status: 200, headers: { get: () => 'application/json' } }, '<html>'), true);
   assert.equal(isAccessResponse({ status: 200, headers: { get: () => 'application/json' } }, '{"status":"ok"}'), false);
+  assert.equal(mergeAccessCookies('', [{ name: 'CF_Authorization', value: 'jwt' }, { name: 'other', value: 'no' }]), 'CF_Authorization=jwt');
+  assert.equal(mergeAccessCookies('CF_Authorization=jwt', [{ name: 'CF_Authorization', value: 'again' }]), 'CF_Authorization=jwt');
 });
 
 test('cloud health uses the origin and treats an Access redirect as sign-in', async () => {

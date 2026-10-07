@@ -1308,7 +1308,17 @@ else {
     broadcast();
     if (process.env.INTELIO_E2E === '1') process.stderr.write('intelio e2e: window ready\n');
     if (tailscaleFirstRun && process.env.INTELIO_E2E !== '1') {
-      checkTailscale().then(async (status) => {
+      const remoteReady = (async () => {
+        const start = Date.now();
+        while (Date.now() - start < 8000) {
+          const remote = remoteHermes?.publicState?.() || {};
+          if (remote.activeMode === 'cloud' || remote.activeMode === 'tailscale') return remote;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return remoteHermes?.publicState?.() || {};
+      })();
+      Promise.all([checkTailscale(), remoteReady]).then(async ([status, remote]) => {
+        if (remote?.activeMode === 'cloud' || remote?.connection === 'cloud') return;
         const prompt = firstRunMessage(status);
         if (!prompt || !win || win.isDestroyed()) return;
         const buttons = prompt.install ? ['Install Tailscale', 'Later'] : ['OK'];
