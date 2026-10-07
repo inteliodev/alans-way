@@ -55,6 +55,8 @@ function loadPreferences({ text = null, platform = 'darwin', env = {} } = {}) {
     overseerBots: String(env.HERMES_OVERSEER_BOTS || '').split(',').map((id) => id.trim()).filter((id) => id && id.length <= 100),
     sidebarTab: 'agents',
     theme: 'dark',
+    screenGrid: 1,
+    activeScreen: 0,
   };
   const desktop = (prefs, saved) => resolveDesktopUrl(prefs.remoteHermes, saved, env);
   if (text == null) {
@@ -78,7 +80,15 @@ function loadPreferences({ text = null, platform = 'darwin', env = {} } = {}) {
   prefs.remoteUrl = desktop(prefs, typeof parsed.remoteUrl === 'string' ? parsed.remoteUrl : undefined);
   prefs.sidebarTab = prefs.sidebarTab === 'sessions' ? 'sessions' : 'agents';
   prefs.theme = normalizeTheme(prefs.theme);
+  const grid = Number(prefs.screenGrid);
+  prefs.screenGrid = [2, 3, 4].includes(grid) ? grid : 1;
+  const screen = Number(prefs.activeScreen);
+  prefs.activeScreen = Number.isInteger(screen) && screen >= 0 && screen < 4 ? screen : 0;
   return { prefs, missing: false, corrupt: false };
+}
+
+function initialDesktopTab(remoteOn) {
+  return remoteOn ? 'vps' : 'home';
 }
 
 function freshWindowPlan({ platform = 'win32', preferencesText = null, keyNames = [], env = {} } = {}) {
@@ -100,4 +110,4 @@ function freshWindowPlan({ platform = 'win32', preferencesText = null, keyNames 
   };
 }
 
-module.exports = { mergeRemote, loadPreferences, freshWindowPlan, resolveDesktopUrl };
+module.exports = { mergeRemote, loadPreferences, freshWindowPlan, resolveDesktopUrl, initialDesktopTab };

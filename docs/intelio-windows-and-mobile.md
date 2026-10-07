@@ -35,7 +35,7 @@ The executable is unsigned. Windows shows Microsoft Defender SmartScreen (“Win
 
 ### GitHub Actions
 
-`.github/workflows/windows-installer.yml` runs on `windows-latest` for **Run workflow** (`workflow_dispatch`), for tags `v*`, and for pushes to `cursor/intelio-harness-layer-8db4`. It uploads `Intelio-Setup` as a workflow artifact. A tag push names the draft release after that tag. A branch push attaches `Intelio-Setup-<version>.exe` to the draft release `v0.3.8-intelio-windows`, creating it or replacing the asset if that draft already exists. After the installer is built, the workflow runs `Intelio.exe --smoke-test`, then launches that packaged app against a fake Hermes behind a fake Access login and checks that the sign-in screen appears, that Auto falls back to Cloud when the Tailscale host is unreachable, that bootstrap fills the profile keys, and that the main window then shows four agents with that agent's threads underneath, and keeps the remote Hermes version (`hermes-agent 0.21.5 · Cloud` from `/health`) with no “unavailable” or error text. The VPS host and version stay in Settings, not the sidebar. It checks that those threads are listed under the agents, and that the visible window text does not contain “Alan”. Screenshots are the `intelio-e2e-main-window` workflow artifact. The same workflow also builds an unsigned Apple Silicon zip, `Intelio-<version>-mac-arm64.zip`, and attaches it to that draft. A fresh macOS launch uses the four VPS harness profiles. It does not publish the release.
+`.github/workflows/windows-installer.yml` runs on `windows-latest` for **Run workflow** (`workflow_dispatch`), for tags `v*`, and for pushes to `cursor/intelio-harness-layer-8db4`. It uploads `Intelio-Setup` as a workflow artifact. A tag push names the draft release after that tag. A branch push attaches `Intelio-Setup-<version>.exe` to the draft release `v0.3.9-intelio-windows`, creating it or replacing the asset if that draft already exists. After the installer is built, the workflow runs `Intelio.exe --smoke-test`, then launches that packaged app against a fake Hermes behind a fake Access login and checks that the sign-in screen appears, that Auto falls back to Cloud when the Tailscale host is unreachable, that bootstrap fills the profile keys, and that the main window then shows four agents with that agent's threads underneath, and keeps the remote Hermes version (`hermes-agent 0.21.5 · Cloud` from `/health`) with no “unavailable” or error text. The VPS host and version stay in Settings, not the sidebar. It checks that those threads are listed under the agents, and that the visible window text does not contain “Alan”. Screenshots are the `intelio-e2e-main-window` workflow artifact. The same workflow also builds an unsigned Apple Silicon zip, `Intelio-<version>-mac-arm64.zip`, and attaches it to that draft. A fresh macOS launch uses the four VPS harness profiles. It does not publish the release.
 
 Dispatch it from the Actions tab on this branch: `windows-installer` → Run workflow. The run URL looks like `https://github.com/inteliodev/alans-way/actions/workflows/windows-installer.yml`.
 
@@ -129,15 +129,47 @@ Twilio's voice webhook is `https://2-24-110-12.sslip.io/twilio/voice` and the SM
 
 Open `http://intelio-vps.tail9c1007.ts.net:8643` (or `https://` after `tailscale cert`) from a phone that is on the tailnet as an allowed login. The page opens signed in. The gear in the top bar and the Settings row in the drawer open voice mode, the Tailscale sign-in, appearance, and the version. Appearance follows the phone until you tap Light or Dark; that choice is stored in `localStorage` as `intelio-theme` and updates the status bar. Each agent is a dotted thought-orb from `inteliodev/thinking-orbs` at `de85557ca220332586d070d8788c0e1d6e877a0d` (MIT, Jakub Antalik). Intelio is the connecting constellation, PRC is solving, Alignment is the searching globe, HHP is weaving, and Kid A is composing. Any other profile id picks one of the remaining types (working, listening, breathing, shaping) from a hash, and keeps a soft halo in its hue. Lists hold a still frame of that signature. The home hero, the chat, and the call play the live activity when the agent is working, searching, listening, or speaking, and otherwise drift gently in the signature type. The home-screen icon is a still Intelio constellation on the site’s dark background. Home and the drawer list the Hermes profiles on this machine. Chats and calls for a profile go to the shared gateway at `/p/<profile>/`. New agent asks for a lowercase name, an optional one-line description, and an optional profile to copy skills from. It does not copy credentials. The bottom bar is Chat and Sessions. Library appears when `GET /v1/skills` succeeds, and Goals when `GET /api/jobs` succeeds. There is no Ideas tab. Telegram, app, and CLI sessions are the same list the desktop uses. Screenshot layouts with several profiles are sample data, labeled SAMPLE DATA, and only run when the bind is loopback.
 
-## Bops-mode (0.3.8)
+## Bops-mode (0.3.9)
 
 Parallel tasks are split in the Intelio app, not by a Hermes tool. A message with several lines, or two long parts joined by “and”, becomes one status pill per part. The app opens a Hermes session per part and sends them together. Stop all marks the pills stopped and drops results that arrive later. The focused pill selects that task’s caption on the Bot Desktop preview (`/api/display/ws`, one screen per profile) and draws that profile’s color on the preview chrome. The badge reads “Intelio is browsing” (or the selected agent’s name).
 
-A login, payment, or `human_has_control` result becomes a Needs-you card. Not now pauses with the lease on the human. Open login focuses the preview. Approve on a payment card records the hold and does not submit the payment. Approve on any other card releases the lease back to the agent.
+A login wall shows an in-chat Secure Sign-in card: site mark, domain, username, masked password, masked one-time code, Save login, Submit, and Do it on screen. Submit sends those values write-only over the authenticated harness channel to the filler. They are not copied into the task, the model context, transcripts, or logs. Save login stores them in that profile’s encrypted vault (`~/.hermes/profiles/<profile>/vault`, AES-256-GCM, key in `vault.key` mode 0600, additional data is the profile id). PRC cannot read HHP. Settings lists site and username only, and can delete a row. `fill_saved_login(site)` returns domain and username. The secret stays in the filler payload.
+
+A payment, or any other pause, sets the task to paused and shows one line: “Payment paused. Intelio does not submit payments.” or “Paused.” There is no approval card.
+
+When Remote Hermes is on, the agent computer fills the right panel on launch. The screen control (1–4) splits that panel. The active screen keeps a yellow frame. Call starts an in-app microphone session and a duration pill. Ending it leaves “26s - Call ended”.
 
 Handoff is a stub. Hermes has no peer-delegation tool in this build. “Hand this to PRC” (also Alignment, HHP, Intelio) opens a session on that profile and sends a redacted note. The other tasks stay on the current profile. Profile keys are not copied.
 
-Four screens per agent, a dedicated email address, and a Twilio in-app waveform are follow-ups.
+Bot Desktop displays (:20 and up, Xfce) maximize Chromium with:
+
+```sh
+bash scripts/bot-desktop-maximize.sh :20
+bash scripts/bot-desktop-maximize.sh --all
+```
+
+Legacy display :99 has no window manager. Add `--window-position=0,0 --window-size=1920,1080` to the `browserArgs` default in alans-way-agents `setup.sh` (that repo is not this checkout).
+
+A dedicated email address and a Twilio in-app waveform are follow-ups.
+
+### Phone at app.intelio-ai.com
+
+Point the Cloudflare tunnel at loopback. No path prefix. Do not open UFW 8643. Cloudflare terminates TLS. The Access app is on the same team as `os.intelio-ai.com`.
+
+```yaml
+- hostname: app.intelio-ai.com
+  service: http://127.0.0.1:8643
+```
+
+On the VPS, as the desktop user, rebind the existing phone service and turn on Access cookies:
+
+```sh
+cd "$(systemctl --user show -p WorkingDirectory --value intelio-pwa.service)"
+git pull
+INTELIO_PWA_ACCESS=1 INTELIO_PWA_BIND=127.0.0.1 bash mobile/deploy/install-on-vps.sh --with-voice
+```
+
+`INTELIO_PWA_ACCESS=1` listens on `127.0.0.1:8643`, accepts `Cf-Access-Jwt-Assertion`, and does not add a firewall rule. `start_url` and `scope` stay `/`. Add to Home Screen uses the manifest, icons, and apple touch icon. This installer does not restart `hermes-gateway`.
 
 ## What you do
 

@@ -1,7 +1,7 @@
 {
   "name": "Intelio",
   "short_name": "Intelio",
-  "description": "Phone client for the Intelio Hermes on the tailnet.",
+  "description": "Intelio on your phone. Add to Home Screen from app.intelio-ai.com.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

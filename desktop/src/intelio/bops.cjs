@@ -8,8 +8,12 @@
  * Handoff is a stub. Hermes has no peer-delegation tool in this build.
  * Intelio opens a session on the target profile (intelio, prc, alignment, hhp)
  * and sends a redacted handoff note. Profile keys stay on the VPS and are not
- * copied. Four screens per agent, dedicated email, and Twilio in-app waveform
- * are follow-ups, not this module.
+ * copied. The app can show a 2–4 screen grid. Dedicated email and a Twilio
+ * in-app waveform are follow-ups, not this module.
+ *
+ * Login walls are a Secure Sign-in card. Field values stay on the write-only
+ * effect and are never copied onto the run, the plan, or a status line.
+ * Payments and other pauses are one status line. There is no approval card.
  */
 (function intelioBops(root, factory) {
   const api = factory();
@@ -106,17 +110,24 @@
     };
   }
 
+  function domainFrom(signal) {
+    const blob = `${signal?.url || ''} ${signal?.domain || ''} ${signal?.error || ''} ${signal?.message || ''} ${signal?.title || ''}`;
+    const match = blob.match(/https?:\/\/([a-z0-9.-]+)/i) || blob.match(/\b((?:[a-z0-9-]+\.)+[a-z]{2,})\b/i);
+    if (!match) return '';
+    return match[1].toLowerCase().replace(/^www\./, '').replace(/[.:]+$/, '');
+  }
+
   function classifyBlocker(signal) {
     const text = `${signal?.code || ''} ${signal?.error || ''} ${signal?.message || ''} ${signal?.tool || ''} ${signal?.title || ''}`.toLowerCase();
     if (!text.trim()) return null;
     if (/payment|invoice|checkout|billing|\bpay\b/.test(text)) {
-      return { kind: 'payment', title: cleanTitle(signal.title) || 'Payment needs you', moneyMove: false };
+      return { kind: 'payment', statusLine: 'Payment paused. Intelio does not submit payments.', moneyMove: false };
     }
     if (/login|sign in|signin|password|credential|otp/.test(text)) {
-      return { kind: 'login', title: cleanTitle(signal.title) || 'Login needs you', moneyMove: false };
+      return { kind: 'login', domain: domainFrom(signal), moneyMove: false };
     }
     if (/human_has_control|approval_required|missing credential|blocked/.test(text)) {
-      return { kind: 'control', title: cleanTitle(signal.title) || 'Needs you', moneyMove: false };
+      return { kind: 'pause', statusLine: 'Paused.', moneyMove: false };
     }
     return null;
   }
@@ -137,13 +148,23 @@
       tasks: run.tasks.map((task) => {
         if (task.id !== taskId) return task;
         if (task.status === 'stopped') return task;
-        if (result?.ok) return { ...task, status: 'done', blocker: null };
+        if (result?.ok) return { ...task, status: 'done', blocker: null, note: '' };
         const blocker = classifyBlocker({ ...result, title: result?.title || task.title });
+        if (blocker?.kind === 'login') {
+          return {
+            ...task,
+            status: 'blocked',
+            dismissed: false,
+            note: '',
+            blocker: { kind: 'login', domain: blocker.domain || '' },
+          };
+        }
         return {
           ...task,
-          status: 'blocked',
+          status: 'paused',
           dismissed: false,
-          blocker: blocker || { kind: 'control', title: 'Needs you', moneyMove: false },
+          blocker: null,
+          note: blocker?.statusLine || 'Paused.',
         };
       }),
     };
@@ -157,59 +178,80 @@
     };
   }
 
-  function cardFor(task) {
-    if (!task || task.status !== 'blocked' || !task.blocker || task.dismissed) return null;
-    const actions = task.blocker.kind === 'login'
-      ? [{ id: 'open-login', label: 'Open login' }, { id: 'not-now', label: 'Not now' }]
-      : [{ id: 'approve', label: 'Approve' }, { id: 'not-now', label: 'Not now' }];
+  function signInFor(task) {
+    if (!task || task.status !== 'blocked' || task.blocker?.kind !== 'login' || task.dismissed) return null;
+    const domain = task.blocker.domain || '';
     return {
-      title: task.blocker.title,
-      kind: task.blocker.kind,
+      kind: 'signin',
       taskId: task.id,
-      actions,
-      executesPayment: false,
+      domain,
+      title: domain || 'Secure sign-in',
+      fields: [
+        { id: 'username', label: 'Username', type: 'text', autocomplete: 'username' },
+        { id: 'password', label: 'Password', type: 'password', autocomplete: 'current-password' },
+        { id: 'otp', label: 'One-time code', type: 'password', autocomplete: 'one-time-code' },
+      ],
+      saveLabel: 'Save login',
+      actions: [
+        { id: 'submit', label: 'Submit' },
+        { id: 'on-screen', label: 'Do it on screen' },
+      ],
     };
   }
 
-  function actOnCard(run, taskId, action) {
+  function visibleSignIn(run) {
+    const tasks = run?.tasks || [];
+    const focused = tasks.find((task) => task.id === run.focusedId);
+    return signInFor(focused) || signInFor(tasks.find((task) => task.status === 'blocked' && task.blocker?.kind === 'login'));
+  }
+
+  function submitSignIn(run, taskId, values = {}) {
     const task = run?.tasks?.find((item) => item.id === taskId);
-    if (!task?.blocker) return { run, effect: { type: 'noop', moneyMove: false } };
-    if (action === 'not-now') {
-      return {
-        run: {
-          ...run,
-          tasks: run.tasks.map((item) => (item.id === taskId ? { ...item, dismissed: true } : item)),
-        },
-        effect: { type: 'pause', lease: 'human', taskId, moneyMove: false },
-      };
+    if (!task?.blocker || task.blocker.kind !== 'login') {
+      return { run, effect: { type: 'noop', writeOnly: true, moneyMove: false } };
     }
-    if (action === 'open-login') {
-      return {
-        run: focusTask(run, taskId),
-        effect: { type: 'open-login', lease: 'human', taskId, moneyMove: false },
-      };
-    }
-    if (action === 'approve' && task.blocker.kind === 'payment') {
-      return {
-        run: {
-          ...run,
-          tasks: run.tasks.map((item) => (item.id === taskId
-            ? { ...item, status: 'blocked', note: 'Waiting. Intelio does not submit the payment.' }
-            : item)),
-        },
-        effect: { type: 'hold-payment', lease: 'human', taskId, moneyMove: false },
-      };
-    }
-    if (action === 'approve') {
-      return {
-        run: {
-          ...run,
-          tasks: run.tasks.map((item) => (item.id === taskId ? { ...item, status: 'running', blocker: null } : item)),
-        },
-        effect: { type: 'release-lease', lease: 'agent', taskId, moneyMove: false },
-      };
-    }
-    return { run, effect: { type: 'noop', moneyMove: false } };
+    const next = {
+      ...run,
+      tasks: run.tasks.map((item) => (item.id === taskId ? { ...item, status: 'running', blocker: null, note: '' } : item)),
+    };
+    return {
+      run: next,
+      effect: {
+        type: 'secure-signin',
+        writeOnly: true,
+        taskId,
+        domain: task.blocker.domain || '',
+        username: String(values.username || '').slice(0, 200),
+        password: String(values.password || ''),
+        otp: String(values.otp || ''),
+        save: values.save === true,
+        moneyMove: false,
+      },
+    };
+  }
+
+  function doOnScreen(run, taskId) {
+    return {
+      run: focusTask(run, taskId),
+      effect: { type: 'on-screen', writeOnly: true, lease: 'human', taskId, moneyMove: false },
+    };
+  }
+
+  function publicEffect(effect) {
+    if (!effect) return null;
+    return {
+      type: effect.type || 'noop',
+      taskId: effect.taskId || '',
+      domain: effect.domain || '',
+      save: effect.save === true,
+      writeOnly: true,
+      moneyMove: false,
+      lease: effect.lease || '',
+    };
+  }
+
+  function statusLines(run) {
+    return (run?.tasks || []).filter((task) => task.note).map((task) => ({ taskId: task.id, text: task.note }));
   }
 
   function previewFor(run, caption) {
@@ -226,13 +268,6 @@
     };
   }
 
-  function visibleCard(run) {
-    const tasks = run?.tasks || [];
-    const focused = tasks.find((task) => task.id === run.focusedId && task.status === 'blocked' && task.blocker && !task.dismissed);
-    const fallback = tasks.find((task) => task.status === 'blocked' && task.blocker && !task.dismissed);
-    return cardFor(focused || fallback);
-  }
-
   function viewModel(run, caption) {
     const tasks = run?.tasks || [];
     return {
@@ -244,7 +279,8 @@
         status: task.status,
         focused: task.id === run.focusedId,
       })),
-      card: visibleCard(run),
+      signIn: visibleSignIn(run),
+      statusLines: statusLines(run),
       handoff: run?.handoff ? { label: run.handoff.label, stub: true, target: run.handoff.target } : null,
       preview: previewFor(run, caption),
       orchestration: run?.orchestration || 'single-session',
@@ -287,8 +323,10 @@
     signalFromEvent,
     applyTaskResult,
     rememberSession,
-    cardFor,
-    actOnCard,
+    signInFor,
+    submitSignIn,
+    doOnScreen,
+    publicEffect,
     previewFor,
     viewModel,
     executionPlan,

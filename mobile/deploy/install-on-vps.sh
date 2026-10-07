@@ -97,6 +97,10 @@ PIPER_MODEL="${INTELIO_VOICE_PIPER_MODEL:-$(env_get INTELIO_VOICE_PIPER_MODEL)}"
 VOICE_THREADS="${INTELIO_VOICE_THREADS:-$(env_get INTELIO_VOICE_THREADS)}"
 VOICE_THREADS="${VOICE_THREADS:-2}"
 
+ACCESS="${INTELIO_PWA_ACCESS:-$(env_get INTELIO_PWA_ACCESS)}"
+if [[ "$ACCESS" == "1" && -z "$BIND" ]]; then
+  BIND="127.0.0.1"
+fi
 if [[ -z "$BIND" ]]; then
   echo "Set INTELIO_PWA_BIND to the Tailscale name or tailnet address." >&2
   exit 1
@@ -111,8 +115,14 @@ node -e 'const {isTailnetOrLoopbackHost}=require(process.argv[1]); if(!isTailnet
 echo "Phone client root: $ROOT"
 echo "Bind: $BIND port $PORT"
 echo "Hermes upstream: $HERMES_URL profile $PROFILE"
-echo "ufw: allow in on tailscale0 to port $PORT proto tcp"
-if [[ -z "$LOGINS" ]]; then
+if [[ "$ACCESS" == "1" ]]; then
+  echo "Access hostname app.intelio-ai.com → http://127.0.0.1:${PORT}/"
+  echo "Tunnel ingress service: http://127.0.0.1:${PORT}"
+  echo "No path prefix. start_url and scope are /. Do not open UFW 8643."
+else
+  echo "ufw: allow in on tailscale0 to port $PORT proto tcp"
+fi
+if [[ "$ACCESS" != "1" && -z "$LOGINS" ]]; then
   if [[ "$DRY" == 1 ]]; then
     echo "Allowlist: read from tailscale status --json (Self user LoginName). Not hardcoded."
   else
@@ -168,6 +178,7 @@ umask 077
 {
   printf 'INTELIO_PWA_BIND=%s\n' "$BIND"
   printf 'INTELIO_PWA_PORT=%s\n' "$PORT"
+  if [[ "$ACCESS" == "1" ]]; then printf 'INTELIO_PWA_ACCESS=1\n'; fi
   printf 'INTELIO_HERMES_URL=%s\n' "$HERMES_URL"
   printf 'INTELIO_HERMES_PROFILE=%s\n' "$PROFILE"
   if [[ -n "$LOGINS" ]]; then printf 'INTELIO_PWA_ALLOWED_LOGINS=%s\n' "$LOGINS"; fi
@@ -209,7 +220,9 @@ else
   systemctl --user enable --now intelio-pwa.service
 fi
 
-if sudo ufw status | grep -F "Intelio phone client" | grep -q "$PORT"; then
+if [[ "$ACCESS" == "1" ]]; then
+  echo "Cloudflare tunnel reaches 127.0.0.1:${PORT}. No UFW rule was added."
+elif sudo ufw status | grep -F "Intelio phone client" | grep -q "$PORT"; then
   echo "ufw tailnet rule already present for port $PORT"
 else
   sudo ufw allow in on tailscale0 to any port "$PORT" proto tcp comment 'Intelio phone client, tailnet only'

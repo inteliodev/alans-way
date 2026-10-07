@@ -13,6 +13,7 @@ function element(tag) {
     children: [],
     disabled: false,
     value: '',
+    checked: false,
     classList: {
       hidden: false,
       contains(name) { return name === 'hidden' && this.hidden; },
@@ -30,6 +31,13 @@ function element(tag) {
     },
     querySelector() { return { textContent: '' }; },
   };
+}
+
+function walk(node, acc = []) {
+  if (!node) return acc;
+  acc.push(node);
+  for (const child of node.children || []) walk(child, acc);
+  return acc;
 }
 
 function installDom(handler) {
@@ -70,36 +78,45 @@ test('task titles redact secrets', () => {
   assert.match(run.tasks[0].title, /\[redacted\]/);
 });
 
-test('payment Approve does not move money', () => {
+test('a payment pauses inline and does not move money', () => {
   let run = bops.startRun({ text: "Pay Acme's invoice\nFile the receipt", profile: 'prc', agentName: 'PRC' });
   run = bops.applyTaskResult(run, 'task-1', { ok: false, error: 'Pay Acme invoice', code: 'approval_required' });
   const view = bops.viewModel(run);
-  assert.equal(view.card.kind, 'payment');
-  assert.equal(view.card.executesPayment, false);
-  assert.deepEqual(view.card.actions.map((action) => action.label), ['Approve', 'Not now']);
-  const acted = bops.actOnCard(view.card.taskId ? run : run, 'task-1', 'approve');
-  assert.equal(acted.effect.type, 'hold-payment');
-  assert.equal(acted.effect.moneyMove, false);
-  assert.equal(acted.effect.lease, 'human');
-  const released = bops.actOnCard(
-    bops.applyTaskResult(bops.startRun({ text: 'Confirm the guest list' }), 'task-1', { ok: false, error: 'human_has_control' }),
-    'task-1',
-    'approve',
-  );
-  assert.equal(released.effect.type, 'release-lease');
-  assert.equal(released.effect.lease, 'agent');
-  assert.equal(released.effect.moneyMove, false);
+  assert.equal(view.signIn, null);
+  assert.equal(view.card, undefined);
+  assert.equal(view.pills[0].status, 'paused');
+  assert.match(view.statusLines[0].text, /Payment paused/);
+  assert.equal(JSON.stringify(view).includes('Approve'), false);
+  assert.equal(JSON.stringify(view).includes('Not now'), false);
+  assert.equal(JSON.stringify(view).includes('Needs you'), false);
+  const paused = bops.applyTaskResult(bops.startRun({ text: 'Confirm the guest list' }), 'task-1', { ok: false, error: 'human_has_control' });
+  const held = bops.viewModel(paused);
+  assert.equal(held.signIn, null);
+  assert.match(held.statusLines[0].text, /^Paused\.$/);
+  assert.equal(JSON.stringify(held).includes('Needs you'), false);
 });
 
-test('login card Not now pauses computer use', () => {
+test('login is a write-only secure sign-in', () => {
   let run = bops.startRun({ text: 'Sign in to the portal' });
-  run = bops.applyTaskResult(run, 'task-1', { ok: false, error: 'login wall' });
-  assert.deepEqual(bops.viewModel(run).card.actions.map((action) => action.id), ['open-login', 'not-now']);
-  const paused = bops.actOnCard(run, 'task-1', 'not-now');
-  assert.equal(paused.effect.type, 'pause');
-  assert.equal(paused.effect.lease, 'human');
-  assert.equal(paused.effect.moneyMove, false);
-  assert.equal(bops.viewModel(paused.run).card, null);
+  run = bops.applyTaskResult(run, 'task-1', { ok: false, error: 'login wall https://portal.example.com/login' });
+  const view = bops.viewModel(run);
+  assert.equal(view.signIn.domain, 'portal.example.com');
+  assert.deepEqual(view.signIn.actions.map((action) => action.label), ['Submit', 'Do it on screen']);
+  assert.ok(view.signIn.fields.filter((field) => field.id !== 'username').every((field) => field.type === 'password'));
+  const secret = 'hunter2-secret-value';
+  const submitted = bops.submitSignIn(run, 'task-1', { username: 'ada', password: secret, otp: '123456', save: true });
+  assert.equal(submitted.effect.type, 'secure-signin');
+  assert.equal(submitted.effect.writeOnly, true);
+  assert.equal(submitted.effect.moneyMove, false);
+  assert.equal(submitted.effect.password, secret);
+  assert.equal(JSON.stringify(submitted.run).includes(secret), false);
+  assert.equal(JSON.stringify(bops.executionPlan(submitted.run)).includes(secret), false);
+  assert.equal(JSON.stringify(bops.viewModel(submitted.run)).includes(secret), false);
+  assert.equal(JSON.stringify(bops.publicEffect(submitted.effect)).includes(secret), false);
+  assert.equal(JSON.stringify(bops.publicEffect(submitted.effect)).includes('123456'), false);
+  const screen = bops.doOnScreen(run, 'task-1');
+  assert.equal(screen.effect.type, 'on-screen');
+  assert.equal(screen.effect.moneyMove, false);
   assert.equal(bops.signalFromEvent('tool.failed', { error: 'human_has_control' }).ok, false);
 });
 
@@ -118,7 +135,7 @@ test('handoff is a profile-isolated stub and copies no key', () => {
   assert.equal(bops.startRun({ text: 'Hand this to HHP', profile: 'hhp' }).handoff, null);
 });
 
-test('pills render, a click focuses that preview, and card actions stay local', async () => {
+test('pills render, a click focuses that preview, and sign-in stays write-only', async () => {
   delete require.cache[require.resolve('../src/remote-main.js')];
   const { byId } = installDom(async () => { throw new Error('unused'); });
   const api = require('../src/remote-main.js');
@@ -143,16 +160,28 @@ test('pills render, a click focuses that preview, and card actions stay local', 
   assert.ok(byId('bops-pills').children.every((pill) => pill.dataset.status === 'stopped'));
   assert.equal(byId('bops-header').textContent, '2 things');
 
-  run = bops.applyTaskResult(bops.startRun({ text: 'Sign in to the portal\nDraft the recap', profile: 'intelio', agentName: 'Intelio' }), 'task-1', { ok: false, error: 'login wall' });
+  run = bops.applyTaskResult(bops.startRun({ text: 'Sign in to the portal\nDraft the recap', profile: 'intelio', agentName: 'Intelio' }), 'task-1', { ok: false, error: 'login wall https://portal.example.com/login' });
+  const seen = [];
+  globalThis.workspace = { command: async (name, value) => { seen.push({ name, domain: value.domain, password: value.password }); return { ok: true }; } };
   api.presentBops(run);
   api.focusBops('task-1');
-  assert.equal(byId('bops-card').classList.hidden, false);
-  assert.match(byId('bops-card').children[0].textContent, /Login needs you|Sign in to the portal/);
-  const actions = byId('bops-card').children.find((node) => node.className === 'bops-actions');
-  actions.children.find((node) => node.dataset.action === 'not-now').onclick();
-  assert.equal(byId('bops-card').classList.hidden, true);
-  assert.equal(api.bopsEffect().type, 'pause');
+  assert.equal(byId('bops-signin').classList.hidden, false);
+  assert.match(walk(byId('bops-signin')).map((node) => node.textContent).join(' '), /portal\.example\.com/);
+  const form = walk(byId('bops-signin')).find((node) => node.className === 'signin-form');
+  const inputs = walk(form).filter((node) => node.dataset.field);
+  assert.equal(inputs.find((node) => node.dataset.field === 'password').type, 'password');
+  inputs.find((node) => node.dataset.field === 'username').value = 'ada';
+  inputs.find((node) => node.dataset.field === 'password').value = 's3cret-password-value';
+  inputs.find((node) => node.dataset.field === 'save').checked = true;
+  await form.dispatch('submit', { preventDefault() {} });
+  assert.equal(byId('bops-signin').classList.hidden, true);
+  assert.equal(seen[0].name, 'fill-login');
+  assert.equal(seen[0].password, 's3cret-password-value');
+  assert.equal(JSON.stringify(api.bopsEffect()).includes('s3cret'), false);
   assert.equal(api.bopsEffect().moneyMove, false);
+  const painted = walk(byId('bops-bar')).map((node) => node.textContent).join(' ');
+  assert.equal(painted.includes('Approve'), false);
+  assert.equal(painted.includes('Needs you'), false);
 
   const payment = bops.applyTaskResult(
     bops.startRun({ text: "Pay Acme's invoice\nFile the receipt", profile: 'intelio', agentName: 'Intelio' }),
@@ -160,11 +189,9 @@ test('pills render, a click focuses that preview, and card actions stay local', 
     { ok: false, error: 'Pay Acme invoice' },
   );
   api.presentBops(payment);
-  const payActions = byId('bops-card').children.find((node) => node.className === 'bops-actions');
-  payActions.children.find((node) => node.dataset.action === 'approve').onclick();
-  assert.equal(api.bopsEffect().type, 'hold-payment');
-  assert.equal(api.bopsEffect().moneyMove, false);
-  assert.equal(api.bopsEffect().lease, 'human');
+  assert.equal(byId('bops-signin').classList.hidden, true);
+  assert.match(byId('bops-status').children[0].textContent, /Payment paused/);
+  assert.equal(byId('bops-status').textContent.includes('Approve'), false);
 });
 
 test('a multi-task send creates one Hermes session per task', async () => {
@@ -206,6 +233,8 @@ test('a multi-task send creates one Hermes session per task', async () => {
   assert.equal(JSON.stringify(sent).includes('sk-live'), false);
   assert.ok(byId('remote-messages').children.some((node) => String(node.textContent).includes('Working on 2 things')));
   assert.equal(byId('bops-header').textContent, '2 things');
-  assert.equal(byId('bops-card').classList.hidden, false);
-  assert.equal(byId('bops-card').children[0].textContent.includes('invoice') || byId('bops-card').textContent.includes('Pay'), true);
+  assert.equal(byId('bops-signin').classList.hidden, true);
+  assert.match(byId('bops-status').children[0].textContent, /Payment paused/);
+  assert.equal(byId('bops-status').textContent.includes('Approve'), false);
+  assert.equal(byId('bops-status').textContent.includes('Needs you'), false);
 });

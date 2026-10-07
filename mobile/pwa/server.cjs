@@ -6,6 +6,7 @@
  * Voice audio is transcribed and spoken here (or by Hermes, if that profile
  * advertises audio). The page never sees the key.
  */
+const os = require('node:os');
 const fs = require('node:fs');
 const http = require('node:http');
 const https = require('node:https');
@@ -15,6 +16,7 @@ const { isTailnetOrLoopbackHost, normalizeRemoteConfig, DEFAULT_PORT } = require
 const { resolveRepoRoot } = require('../../desktop/src/intelio/paths.cjs');
 const { readBrandPng, scalePng } = require('../../desktop/src/intelio/png-icon.cjs');
 const { createVoiceRuntime } = require('./voice.cjs');
+const { createVaultStore } = require('../../desktop/src/intelio/vault.cjs');
 const { normalizeIp, parseAllowlist, profileKeyPath, readProfileKey, createIdentity } = require('./identity.cjs');
 const { renderOrbPng } = require('./orbs.cjs');
 const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
@@ -171,6 +173,9 @@ function createPwaServer({
   profileHome = process.env.HOME || undefined,
   profileRun = undefined,
   profileOps = null,
+  accessVerify = null,
+  accessMode = process.env.INTELIO_PWA_ACCESS === '1',
+  vaultRoot = process.env.INTELIO_VAULT_ROOT || '',
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
@@ -178,6 +183,7 @@ function createPwaServer({
   const normalized = normalizeRemoteConfig({ host: '127.0.0.1', port: 8642, profile });
   const profileName = normalized.profile;
   const sessions = new Map();
+  const vault = createVaultStore({ root: vaultRoot || path.join(profileHome || os.homedir(), '.hermes', 'profiles') });
   const authFor = new WeakMap();
   const pendingCookies = new WeakMap();
   const iconBytes = icons();
@@ -247,7 +253,38 @@ function createPwaServer({
   function cookieHeaders(res) {
     return pendingCookies.has(res) ? { 'set-cookie': pendingCookies.get(res) } : {};
   }
+  async function verifyCloudflare(token) {
+    const { verifyAccessJwt, CERTS_URL, EMAIL } = require('../bootstrap/jwt.cjs');
+    const response = await fetchImpl(CERTS_URL);
+    const keys = await response.json();
+    verifyAccessJwt(token, keys);
+    return { ok: true, login: EMAIL };
+  }
   async function authorize(req, res) {
+    const existing = sessionFrom(req);
+    if (existing?.access) {
+      authFor.set(req, existing);
+      return existing;
+    }
+    const assertion = String(req.headers['cf-access-jwt-assertion'] || '');
+    if (assertion && (accessVerify || accessMode)) {
+      let ident = null;
+      try { ident = accessVerify ? await accessVerify(assertion) : await verifyCloudflare(assertion); } catch { ident = null; }
+      if (!ident?.ok) {
+        log('intelio-pwa denied access-jwt');
+        return null;
+      }
+      const login = String(ident.login || 'access').slice(0, 200);
+      let session = sessionFrom(req);
+      if (!session || session.login !== login) {
+        const token = crypto.randomBytes(32).toString('base64url');
+        session = { login, exp: now() + SESSION_MS, access: true };
+        sessions.set(token, session);
+        queueCookie(req, res, token);
+      }
+      authFor.set(req, session);
+      return session;
+    }
     if (sample) {
       let session = sessionFrom(req);
       if (!session) {
@@ -479,6 +516,26 @@ function createPwaServer({
       }
       const session = await authorize(req, res);
       if (!session) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+      if (req.method === 'POST' && url.pathname === '/api/vault/login') {
+        const body = await readBody(req, 8192);
+        try {
+          if (body.save === true) vault.saveLogin(chosenProfile(req, body), { domain: body.domain, username: body.username, password: body.password, otp: body.otp });
+          return send(res, 200, { ok: true, saved: body.save === true });
+        } catch {
+          return send(res, 400, { ok: false, error: 'Could not save that login.' });
+        }
+      }
+      if (req.method === 'GET' && url.pathname === '/api/vault/logins') {
+        return send(res, 200, { logins: vault.list(chosenProfile(req, {})) });
+      }
+      if (req.method === 'DELETE' && url.pathname === '/api/vault/logins') {
+        const body = await readBody(req, 4096);
+        return send(res, 200, { logins: vault.remove(chosenProfile(req, body), body.domain) });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/vault/fill') {
+        const body = await readBody(req, 4096);
+        return send(res, 200, vault.toolResult(chosenProfile(req, body), body.site));
+      }
       if (req.method === 'GET' && (url.pathname === '/session' || url.pathname === '/session/')) {
         return send(res, 200, { ok: true, login: session.login || '' });
       }

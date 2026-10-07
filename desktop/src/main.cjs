@@ -25,7 +25,9 @@ const { agentNavigationDecision } = require('./intelio/safety.cjs');
 const { loadIntelio, publicIntelioState, pngIcon } = require('./intelio/bridge.cjs');
 const { agents, agentsSetup } = require('./intelio/forks.cjs');
 const { setupRemoteHermes } = require('./intelio/remote-hermes-main.cjs');
-const { loadPreferences } = require('./intelio/preferences.cjs');
+const { loadPreferences, initialDesktopTab } = require('./intelio/preferences.cjs');
+const { createVaultStore } = require('./intelio/vault.cjs');
+const { buildFill, publicFill, fieldValue } = require('./intelio/login-fill.cjs');
 const { normalizeTheme } = require('./intelio/theme.cjs');
 const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
 
@@ -179,6 +181,8 @@ function getState() {
     remoteHermesNotice: remoteHermes?.startupNotice?.() || '',
     remoteHermes: remoteHermes?.publicState?.() || null,
     sidebarTab: prefs.sidebarTab === 'sessions' ? 'sessions' : 'agents',
+    screenGrid: prefs.screenGrid || 1,
+    activeScreen: prefs.activeScreen || 0,
     theme: currentTheme() };
 }
 let lastBotWorkSignature = '';
@@ -446,6 +450,31 @@ async function openBot(id) {
     telegramView.webContents.reload();
   }
 }
+let loginVault = null;
+function loginVaultStore() {
+  if (!loginVault) loginVault = createVaultStore({ root: process.env.INTELIO_VAULT_ROOT || path.join(app.getPath('home'), '.hermes', 'profiles') });
+  return loginVault;
+}
+function rememberLogin(value) {
+  try {
+    const instruction = buildFill(value || {});
+    let saved = false;
+    if (value?.save === true && fieldValue(instruction, 'password') && instruction.domain) {
+      loginVaultStore().saveLogin(value.profile || prefs.remoteHermes?.profile || 'intelio', {
+        domain: instruction.domain,
+        username: fieldValue(instruction, 'username'),
+        password: fieldValue(instruction, 'password'),
+        otp: fieldValue(instruction, 'otp'),
+      });
+      saved = true;
+    }
+    return { ok: true, saved, ...publicFill(instruction) };
+  } catch (error) {
+    const message = String(error?.message || '');
+    if (/password|otp|secret/i.test(message)) return { ok: false, filled: false };
+    return { ok: false, filled: false, error: message.slice(0, 120) };
+  }
+}
 function registerIpc() {
   remoteHermes.register();
   ipcMain.on('workspace:theme-sync', (event) => { event.returnValue = currentTheme(); });
@@ -588,6 +617,10 @@ function registerIpc() {
         if (!next.ok) { broadcast(); throw new Error(next.error || 'Intelio profile failed to load.'); }
         break;
       }
+      case 'fill-login': return rememberLogin(value);
+      case 'vault-list': return { logins: loginVaultStore().list(value.profile || prefs.remoteHermes?.profile || 'intelio') };
+      case 'vault-delete': return { logins: loginVaultStore().remove(value.profile || prefs.remoteHermes?.profile || 'intelio', value.domain) };
+      case 'fill-saved-login': return loginVaultStore().toolResult(value.profile || prefs.remoteHermes?.profile || 'intelio', value.site);
       case 'settings':
         if (typeof value.macSshHost === 'string' && value.macSshHost.trim() && !isSshTarget(value.macSshHost.trim())) throw new Error('Enter the Mac SSH address as user@host or host, with no spaces or symbols.');
         if (value.vpsBrowser && typeof value.vpsBrowser === 'object') { prefs.vpsBrowser={sshHost:String(value.vpsBrowser.sshHost || '').trim(),scriptPath:String(value.vpsBrowser.scriptPath || '').trim(),sudo:value.vpsBrowser.sudo===true}; vpsBrowserStatus='connecting'; refreshVpsTabs(); }
@@ -603,6 +636,8 @@ function registerIpc() {
         if (['ask', 'block', 'approximate'].includes(value.locationDefault)) prefs.locationDefault = value.locationDefault;
         if (value.sidebarTab === 'agents' || value.sidebarTab === 'sessions') prefs.sidebarTab = value.sidebarTab;
         if (value.theme === 'light' || value.theme === 'dark') prefs.theme = value.theme;
+        if ([1, 2, 3, 4].includes(Number(value.screenGrid))) prefs.screenGrid = Number(value.screenGrid);
+        if (Number.isInteger(Number(value.activeScreen)) && Number(value.activeScreen) >= 0 && Number(value.activeScreen) < 4) prefs.activeScreen = Number(value.activeScreen);
         if (Number.isFinite(value.chatWidth)) prefs.chatWidth = Math.max(320, Math.min(680, value.chatWidth));
         savePreferences(); applyThemeChrome(); applyLayout(); break;
       case 'preview-move': {
@@ -1125,7 +1160,7 @@ function createWindow() {
   const remoteOn = Boolean(prefs?.remoteHermes?.enabled && prefs?.remoteHermes?.host);
   if (!remoteOn) telegramView.webContents.loadURL(prefs.selectedBotId ? `${TELEGRAM}#${prefs.selectedBotId}` : TELEGRAM).catch(() => {});
   for (const item of prefs.savedTabs.slice(0, 12)) { try { createTab({ url: item.url, botId: item.botId, activate: false }); } catch {} }
-  activeTabId = 'home';
+  activeTabId = initialDesktopTab(remoteOn);
   win.on('enter-full-screen', broadcast); win.on('leave-full-screen', broadcast);
   win.on('close', (event) => { if (!isQuitting) { event.preventDefault(); win.hide(); } });
   Menu.setApplicationMenu(Menu.buildFromTemplate([

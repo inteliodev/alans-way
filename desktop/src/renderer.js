@@ -242,7 +242,7 @@ function render(next) {
   }
   const tab = state.tabs.find((item) => item.id === state.activeTabId);
   const remote = state.activeTabId==='vps';
-  $('vm-toggle').title = remote ? 'Return to browser' : 'Expand virtual desktop';
+  $('vm-toggle').title = remote ? 'Local browser' : 'Agent computer';
   $('vm-toggle').setAttribute('aria-label', $('vm-toggle').title);
   $('vm-toggle').setAttribute('aria-pressed', String(remote));
   $('shell').classList.toggle('browser-hidden', state.showBrowser === false);
@@ -268,6 +268,10 @@ function render(next) {
   $('connection-status').textContent = state.api.ready ? 'Browser connector ready' : state.api.error ? 'Browser connector unavailable' : 'Browser connector starting…';
   const notes = { login: 'Sign in with your Telegram account. Your bots appear on the left.', connected: 'Your Telegram account · bot chats only', locked: 'Unlock Telegram to load your bot chats.', offline: 'Telegram is offline. Check your connection, then sync in Settings.', loading: 'Connecting to Telegram…' };
   if (!nowRemote) $('telegram-note').textContent = notes[state.telegramStatus] || notes.loading;
+  for (const button of document.querySelectorAll('#screen-count button')) {
+    button.setAttribute('aria-pressed', String(Number(button.dataset.screens) === (state.screenGrid || 1)));
+  }
+  paintScreenGrid();
   scheduleLayout();
 }
 function rect(id) {
@@ -275,9 +279,38 @@ function rect(id) {
   const box = el.getBoundingClientRect(); if (!box.width || !box.height) return null;
   return { x: box.x + 1, y: box.y + 1, width: box.width - 2, height: box.height - 2 };
 }
+function browserRect() {
+  if (state?.activeTabId === 'vps' && (state.screenGrid || 1) > 1) {
+    const cell = document.querySelector('.screen-cell.active');
+    if (cell) {
+      const box = cell.getBoundingClientRect();
+      if (box.width && box.height) return { x: box.x + 3, y: box.y + 3, width: Math.max(0, box.width - 6), height: Math.max(0, box.height - 6) };
+    }
+  }
+  return rect('browser-slot');
+}
+function paintScreenGrid() {
+  const grid = $('screen-grid');
+  if (!grid) return;
+  const count = [2, 3, 4].includes(state?.screenGrid) ? state.screenGrid : 1;
+  const show = state?.activeTabId === 'vps' && count > 1;
+  grid.classList.toggle('hidden', !show);
+  grid.dataset.count = String(count);
+  grid.replaceChildren();
+  if (!show) return;
+  const labels = ["Agent's computer", 'Your Mac', 'Screen 3', 'Screen 4'];
+  const active = Number.isInteger(state.activeScreen) ? state.activeScreen : 0;
+  for (let i = 0; i < count; i += 1) {
+    const cell = element('button', `screen-cell${i === active ? ' active' : ''}`, labels[i]);
+    cell.type = 'button';
+    cell.dataset.screen = String(i);
+    cell.onclick = () => command('settings', { activeScreen: i });
+    grid.append(cell);
+  }
+}
 function scheduleLayout() {
   cancelAnimationFrame(resizeFrame);
-  resizeFrame = requestAnimationFrame(() => api.layout({ telegram: focusMode ? null : rect('telegram-slot'), browser: rect('browser-slot'), preview: rect('preview-screen'), obscured: modalOpen }));
+  resizeFrame = requestAnimationFrame(() => api.layout({ telegram: focusMode ? null : rect('telegram-slot'), browser: browserRect(), preview: rect('preview-screen'), obscured: modalOpen }));
 }
 // The mini VM window is anchored bottom-right until dragged; its saved offset
 // is relative to the workspace pane and clamped so it can never get lost.
@@ -421,9 +454,26 @@ function showSettings() {
   const themeRow = element('div', 'setting-row');
   themeRow.append(element('span', '', 'Appearance'));
   const themeButton = element('button', 'secondary-button', state.theme === 'light' ? 'Light' : 'Dark');
-  themeButton.onclick = () => command('settings', { theme: state.theme === 'light' ? 'dark' : 'light' });
+  themeButton.onclick = () => { const next = state.theme === 'light' ? 'dark' : 'light'; applyTheme(next); command('settings', { theme: next }); };
   themeRow.append(themeButton);
   body.append(themeRow, element('hr', 'section-divider'));
+  const vaultHead = element('h3', '', 'Saved logins');
+  const vaultNote = element('p', 'settings-note', 'Site and username only. Passwords stay in this profile’s encrypted vault.');
+  const vaultList = element('div', 'settings-bots');
+  body.append(vaultHead, vaultNote, vaultList);
+  const vaultProfile = state.remoteHermes?.profile || 'intelio';
+  command('vault-list', { profile: vaultProfile }).then((result) => {
+    const rows = result?.logins || [];
+    if (!rows.length) { vaultList.append(element('p', 'settings-note', 'No saved logins.')); return; }
+    for (const row of rows) {
+      const line = element('div', 'setting-row');
+      line.append(element('span', '', `${row.domain} · ${row.username || ''}`));
+      const del = element('button', 'text-button', 'Delete');
+      del.onclick = () => command('vault-delete', { profile: vaultProfile, domain: row.domain }).then(() => showSettings());
+      line.append(del);
+      vaultList.append(line);
+    }
+  });
   window.IntelioUI?.appendSettings(body, { element, command, state, toast });
   const extensions = element('button', 'secondary-button', 'Manage browser extensions'); extensions.onclick = showExtensions;
   body.append(extensions, element('hr', 'section-divider'));
@@ -510,7 +560,18 @@ $('bot-search').oninput = () => { if (remoteActive()) window.IntelioRemote?.filt
 $('add-bot').onclick = showAddBot;
 $('settings-button').onclick = showSettings;
 $('settings-fallback').onclick = showSettings;
-$('theme-toggle').onclick = () => command('settings', { theme: document.documentElement.dataset.theme === 'light' ? 'dark' : 'light' });
+let themeStamp = 0;
+function onThemeToggle() {
+  const now = Date.now();
+  if (now - themeStamp < 400) return;
+  themeStamp = now;
+  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  applyTheme(next);
+  command('settings', { theme: next });
+}
+const themeToggle = $('theme-toggle');
+themeToggle.addEventListener('pointerup', onThemeToggle);
+themeToggle.addEventListener('click', onThemeToggle);
 $('browser-collapse').onclick = () => { if (focusMode) { focusMode = false; $('shell').classList.remove('focus-workspace'); } command('settings', { showBrowser: state?.showBrowser === false }); };
 $('bots-toggle').onclick = () => command('settings', { showBots: state.showBots === false });
 $('sort-bots').onclick = (event) => {
@@ -536,6 +597,9 @@ document.addEventListener('click', (event) => {
 $('presence-avatar').onclick = () => showAvatarEditor();
 $('chat-avatar').onclick = () => showAvatarEditor();
 $('chat-avatar').onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showAvatarEditor(); } };
+for (const button of document.querySelectorAll('#screen-count button')) {
+  button.onclick = () => command('settings', { screenGrid: Number(button.dataset.screens) });
+}
 $('vm-toggle').onclick = () => { if (state?.showBrowser === false) command('settings', { showBrowser: true }); command('toggle-vps-view'); };
 $('preview-expand').onclick = () => command('toggle-vps-view');
 $('preview-hide').onclick = () => command('settings', { preview: false });

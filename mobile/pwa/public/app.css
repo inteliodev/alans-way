@@ -633,6 +633,9 @@ html[data-theme="dark"] .drawer { background: rgba(12, 12, 14, 0.94); color: #f5
 .bops-stop, .bops-pill, .bops-action { border: 1px solid var(--line, #3a3a44); background: transparent; color: inherit; border-radius: 999px; padding: 4px 10px; }
 .bops-pills, .bops-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .bops-pill.focused { box-shadow: inset 0 0 0 1px #f5c451; }
-.bops-card { border: 1px solid #6b5420; border-radius: 14px; padding: 10px 12px; }
+.bops-signin { border: 1px solid #3a3a44; border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.signin-form, .bops-signin input[type="text"], .bops-signin input[type="password"] { background: #111114; color: inherit; border: 1px solid #303038; border-radius: 8px; padding: 8px; }
+.bops-status-line, .call-pill { color: #f3d48a; font-size: 12px; margin: 6px 0; }
+.signin-head { display: flex; align-items: center; gap: 8px; }
 .bops-preview { border-radius: 14px; padding: 8px 10px; border: 2px solid var(--bops-highlight, #f5c451); font-size: 12px; }
 .bops-handoff { margin: 0; font-size: 12px; }

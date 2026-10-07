@@ -475,7 +475,8 @@
       const seconds = state.call.active && state.call.sessionId === row.id ? callElapsed() : (row.inCall ? 33 : 0);
       pill.append(el('i'), document.createTextNode(`in call ${clock(seconds, 'pill')}`));
       button.append(pill);
-    } else button.append(el('span', 'when', row.time || ''));
+    } else if (state.call.endedLabel && state.call.sessionId === row.id) button.append(el('span', 'pill', state.call.endedLabel));
+    else button.append(el('span', 'when', row.time || ''));
     button.addEventListener('click', () => openChat(row));
     return button;
   }
@@ -667,6 +668,8 @@
     }
     const block = bopsBlock();
     if (block) thread.prepend(block);
+    if (state.call?.active) thread.prepend(el('div', 'call-pill', `in call ${clock(callElapsed(), 'pill')}`));
+    else if (state.call?.endedLabel) thread.prepend(el('div', 'call-pill', state.call.endedLabel));
     queueMicrotask(() => {
       const jump = document.getElementById('jump');
       if (!jump) return;
@@ -1279,12 +1282,67 @@
     return json.text || '';
   }
 
+  function phoneSignIn(api, signIn) {
+    const card = el('form', 'bops-signin');
+    const head = el('div', 'signin-head');
+    head.append(el('span', 'signin-mark', (signIn.domain || 'S').slice(0, 1).toUpperCase()), el('strong', '', signIn.title));
+    card.append(head);
+    for (const field of signIn.fields) {
+      const label = el('label', 'signin-label', field.label);
+      const input = el('input');
+      input.type = field.type;
+      input.autocomplete = field.autocomplete || 'off';
+      input.dataset.field = field.id;
+      label.append(input);
+      card.append(label);
+    }
+    const save = el('label', 'signin-save', 'Save login');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.dataset.field = 'save';
+    save.append(box);
+    card.append(save);
+    const actions = el('div', 'bops-actions');
+    const submit = el('button', 'bops-action', 'Submit');
+    submit.type = 'submit';
+    const screen = el('button', 'bops-action', 'Do it on screen');
+    screen.type = 'button';
+    screen.addEventListener('click', () => {
+      const result = api.doOnScreen(state.bops, signIn.taskId);
+      state.bops = result.run;
+      paintThread();
+    });
+    actions.append(submit, screen);
+    card.append(actions);
+    card.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const values = {};
+      card.querySelectorAll('input').forEach((input) => {
+        if (input.dataset.field === 'save') values.save = input.checked;
+        else values[input.dataset.field] = input.value;
+        if (input.type === 'password') input.value = '';
+      });
+      const result = api.submitSignIn(state.bops, signIn.taskId, values);
+      state.bops = result.run;
+      const effect = result.effect;
+      if (effect?.type === 'secure-signin') {
+        await fetch('/api/vault/login', {
+          method: 'POST',
+          headers: profileHeaders(state.bops?.profile, { 'content-type': 'application/json' }),
+          body: JSON.stringify({ profile: state.bops?.profile, domain: effect.domain, username: effect.username, password: effect.password, otp: effect.otp, save: effect.save === true }),
+        }).catch(() => {});
+      }
+      paintThread();
+    });
+    return card;
+  }
+
   function bopsBlock() {
     const api = window.IntelioBops;
     if (!api || !state.bops) return null;
     const caption = state.frames.filter((frame) => frame.taskId === state.bops.focusedId).slice(-1)[0]?.caption || '';
     const view = api.viewModel(state.bops, caption);
-    if (!view.header && !view.handoff && !view.card && view.pills.length < 2) return null;
+    if (!view.header && !view.handoff && !view.signIn && !(view.statusLines || []).length && view.pills.length < 2) return null;
     const bar = el('div', 'bops-bar');
     const head = el('div', 'bops-head');
     head.append(el('span', '', view.header || view.preview.badge));
@@ -1311,23 +1369,8 @@
     }
     bar.append(pills);
     if (view.handoff) bar.append(el('p', 'bops-handoff', view.handoff.label));
-    if (view.card) {
-      const card = el('div', 'bops-card');
-      card.append(el('h3', '', view.card.title));
-      const actions = el('div', 'bops-actions');
-      for (const action of view.card.actions) {
-        const button = el('button', 'bops-action', action.label);
-        button.type = 'button';
-        button.addEventListener('click', () => {
-          const result = api.actOnCard(state.bops, view.card.taskId, action.id);
-          state.bops = result.run;
-          paintThread();
-        });
-        actions.append(button);
-      }
-      card.append(actions);
-      bar.append(card);
-    }
+    for (const line of view.statusLines || []) bar.append(el('p', 'bops-status-line', line.text));
+    if (view.signIn) bar.append(phoneSignIn(api, view.signIn));
     const preview = el('div', 'bops-preview');
     preview.style.setProperty('--bops-highlight', view.preview.highlight);
     preview.append(el('div', '', view.preview.badge));
@@ -1650,6 +1693,10 @@
   }
 
   async function endCall() {
+    const seconds = state.call.frozenSeconds != null
+      ? Math.round(state.call.frozenSeconds)
+      : Math.max(0, Math.round((Date.now() - (state.call.startedAt || Date.now())) / 1000));
+    state.call.endedLabel = `${seconds}s - Call ended`;
     state.call.active = false;
     state.call.paused = false;
     state.listening = false;

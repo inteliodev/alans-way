@@ -107,6 +107,9 @@
     bopsToken: 0,
     frames: [],
     lastEffect: null,
+    call: null,
+    callTimer: null,
+    mic: null,
   };
 
   function bopsApi() {
@@ -295,7 +298,7 @@
     const bar = $('bops-bar');
     if (!api || !bar) return;
     const view = ui.bops ? api.viewModel(ui.bops, focusedCaption()) : null;
-    const show = Boolean(view && (view.header || view.handoff || view.card || view.pills.length > 1));
+    const show = Boolean(view && (view.header || view.handoff || view.signIn || (view.statusLines || []).length || view.pills.length > 1));
     bar.classList.toggle('hidden', !show);
     const header = $('bops-header');
     if (header) header.textContent = view?.header || '';
@@ -321,22 +324,16 @@
       handoff.classList.toggle('hidden', !view?.handoff);
       handoff.textContent = view?.handoff?.label || '';
     }
-    const card = $('bops-card');
+    const lines = $('bops-status');
+    if (lines) {
+      lines.replaceChildren();
+      for (const line of view?.statusLines || []) lines.append(el('p', 'bops-status-line', line.text));
+    }
+    const card = $('bops-signin');
     if (card) {
       card.replaceChildren();
-      card.classList.toggle('hidden', !view?.card);
-      if (view?.card) {
-        card.append(el('h3', 'bops-card-title', view.card.title));
-        const actions = el('div', 'bops-actions');
-        for (const action of view.card.actions) {
-          const button = el('button', 'bops-action', action.label);
-          button.type = 'button';
-          button.dataset.action = action.id;
-          button.onclick = () => actBops(action.id, view.card.taskId);
-          actions.append(button);
-        }
-        card.append(actions);
-      }
+      card.classList.toggle('hidden', !view?.signIn);
+      if (view?.signIn) paintSignIn(card, view.signIn);
     }
     const preview = view?.preview;
     const badge = $('preview-badge');
@@ -370,15 +367,142 @@
     paintBops();
   }
 
-  function actBops(action, taskId) {
+  function fieldValues(node, into = {}) {
+    if (node?.dataset?.field) {
+      if (node.dataset.field === 'save') into.save = node.checked === true;
+      else into[node.dataset.field] = node.value || '';
+      if (node.type === 'password') node.value = '';
+    }
+    for (const child of node?.children || []) fieldValues(child, into);
+    return into;
+  }
+
+  function paintSignIn(card, signIn) {
+    const head = el('div', 'signin-head');
+    head.append(el('span', 'signin-mark', (signIn.domain || 'S').slice(0, 1).toUpperCase()));
+    head.append(el('strong', 'signin-domain', signIn.title));
+    card.append(head);
+    const form = el('form', 'signin-form');
+    for (const field of signIn.fields) {
+      const label = el('label', 'signin-label', field.label);
+      const input = el('input');
+      input.type = field.type;
+      input.autocomplete = field.autocomplete || 'off';
+      input.dataset.field = field.id;
+      input.setAttribute('aria-label', field.label);
+      label.append(input);
+      form.append(label);
+    }
+    const save = el('label', 'signin-save', signIn.saveLabel);
+    const box = el('input');
+    box.type = 'checkbox';
+    box.dataset.field = 'save';
+    save.append(box);
+    form.append(save);
+    const actions = el('div', 'bops-actions');
+    for (const action of signIn.actions) {
+      const button = el('button', 'bops-action', action.label);
+      button.type = action.id === 'submit' ? 'submit' : 'button';
+      button.dataset.action = action.id;
+      if (action.id === 'on-screen') button.onclick = (event) => { event?.preventDefault?.(); onScreen(signIn.taskId); };
+      actions.append(button);
+    }
+    form.append(actions);
+    form.addEventListener('submit', (event) => {
+      event?.preventDefault?.();
+      const values = fieldValues(form);
+      submitSignIn(signIn.taskId, values);
+    });
+    card.append(form);
+  }
+
+  function deliverFill(effect) {
+    const payload = {
+      profile: ui.bops?.profile || '',
+      domain: effect.domain || '',
+      username: effect.username || '',
+      password: effect.password || '',
+      otp: effect.otp || '',
+      save: effect.save === true,
+      taskId: effect.taskId || '',
+    };
+    const send = root.workspace?.command
+      ? root.workspace.command('fill-login', payload)
+      : root.remoteHermes?.request?.('fill-login', payload);
+    return Promise.resolve(send).catch(() => {});
+  }
+
+  function submitSignIn(taskId, values) {
     const api = bopsApi();
     if (!api || !ui.bops) return null;
-    const result = api.actOnCard(ui.bops, taskId, action);
+    const result = api.submitSignIn(ui.bops, taskId, values);
     ui.bops = result.run;
-    ui.lastEffect = result.effect;
-    if (result.effect?.type === 'open-login') focusBops(taskId);
-    else paintBops();
-    return result.effect;
+    ui.lastEffect = api.publicEffect(result.effect);
+    if (result.effect?.type === 'secure-signin') deliverFill(result.effect);
+    paintBops();
+    return ui.lastEffect;
+  }
+
+  function onScreen(taskId) {
+    const api = bopsApi();
+    if (!api || !ui.bops) return null;
+    const result = api.doOnScreen(ui.bops, taskId);
+    ui.bops = result.run;
+    ui.lastEffect = api.publicEffect(result.effect);
+    paintBops();
+    return ui.lastEffect;
+  }
+
+  function actBops(action, taskId, values) {
+    if (action === 'submit') return submitSignIn(taskId, values || {});
+    if (action === 'on-screen') return onScreen(taskId);
+    return null;
+  }
+
+  function callsApi() {
+    if (root.IntelioCalls) return root.IntelioCalls;
+    if (typeof require === 'function') {
+      root.IntelioCalls = require('./intelio/calls.cjs');
+      return root.IntelioCalls;
+    }
+    return null;
+  }
+
+  function paintCall() {
+    const api = callsApi();
+    const pill = $('call-pill');
+    const button = $('remote-call');
+    if (!api || !pill) return;
+    const text = api.callPill(ui.call);
+    pill.classList.toggle('hidden', !text);
+    pill.textContent = text;
+    if (button) button.textContent = ui.call?.active ? 'End' : 'Call';
+  }
+
+  function stopMic() {
+    for (const track of ui.mic?.getTracks?.() || []) track.stop();
+    ui.mic = null;
+    if (ui.callTimer) clearInterval(ui.callTimer);
+    ui.callTimer = null;
+  }
+
+  function toggleCall() {
+    const api = callsApi();
+    if (!api) return;
+    if (ui.call?.active) {
+      ui.call = api.endCall(ui.call, Date.now());
+      stopMic();
+    } else {
+      ui.call = api.startCall(Date.now());
+      const media = root.navigator?.mediaDevices;
+      if (media?.getUserMedia) media.getUserMedia({ audio: true }).then((stream) => { ui.mic = stream; }).catch(() => {});
+      ui.callTimer = setInterval(() => {
+        if (!ui.call?.active) return;
+        ui.call = api.tickCall(ui.call, Date.now());
+        paintCall();
+      }, 500);
+    }
+    paintCall();
   }
 
   function pushFrame(frame) {
@@ -577,6 +701,8 @@
     ui.wired = true;
     const form = $('remote-composer');
     form?.addEventListener('submit', send);
+    const call = $('remote-call');
+    if (call) call.onclick = () => toggleCall();
     $('tab-agents')?.addEventListener('click', () => setSidebar('agents'));
     $('tab-sessions')?.addEventListener('click', () => setSidebar('sessions'));
     $('session-search')?.addEventListener('input', (event) => { ui.sessionQuery = event.target.value || ''; paintAllSessions(); });
@@ -745,6 +871,6 @@
   return {
     signatureOf, accentOf, switcherRows, seedAgents, remoteConfigured, chooseSidebar, sessionAt, sessionRows, SAMPLE,
     sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => selectedAgent()?.name || '',
-    presentBops, focusBops, stopBops, actBops, pushFrame, bopsEffect: () => ui.lastEffect,
+    presentBops, focusBops, stopBops, actBops, pushFrame, toggleCall, bopsEffect: () => ui.lastEffect,
   };
 });

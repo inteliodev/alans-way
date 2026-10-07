@@ -85,7 +85,12 @@ html[data-theme="light"] h2 { color: #1c1c21; }
 html[data-theme="light"] .bops-stop,
 html[data-theme="light"] .bops-pill,
 html[data-theme="light"] .bops-action { background: #ffffff; color: #1c1c21; border-color: #d5d5dc; }
-html[data-theme="light"] .bops-card { background: #fff8e8; border-color: #e4d2a2; color: #1c1c21; }
+html[data-theme="light"] .bops-signin { background: #ffffff; border-color: #d5d5dc; color: #1c1c21; }
+html[data-theme="light"] .signin-form input[type="text"],
+html[data-theme="light"] .signin-form input[type="password"] { background: #ffffff; color: #1c1c21; border-color: #d5d5dc; }
+html[data-theme="light"] .screen-count button { background: #ffffff; color: #1c1c21; }
+html[data-theme="light"] .screen-cell { background: #ffffff; color: #1c1c21; border-color: #d5d5dc; }
+html[data-theme="light"] .screen-cell.active { border-color: #c9a227; }
 html[data-theme="light"] .bops-handoff,
 html[data-theme="light"] .preview-badge { color: #8a5a12; }
 html[data-theme="light"] .preview-live { color: #5e5e68; }

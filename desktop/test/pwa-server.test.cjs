@@ -48,6 +48,51 @@ function request(port, method, pathname, { cookie = '', body, origin, headers = 
   });
 }
 
+test('Cloudflare Access signs the phone in without Tailscale whois', async () => {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vaultRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-pwa-vault-'));
+  const app = createPwaServer({
+    bind: '127.0.0.1', port: 0, upstream: 'http://127.0.0.1:9', fetchImpl: globalThis.fetch,
+    profileKey: KEY, vaultRoot,
+    identify: async () => { throw new Error('whois should not run'); },
+    accessVerify: async (token) => (token === 'good-assertion' ? { ok: true, login: 'hayden@intelio.co' } : { ok: false }),
+  });
+  const address = await app.listen();
+  try {
+    const denied = await request(address.port, 'GET', '/session', { headers: { 'cf-access-jwt-assertion': 'bad-assertion' } });
+    assert.equal(denied.status, 401);
+    assert.equal(denied.body.includes('bad-assertion'), false);
+    const allowed = await request(address.port, 'GET', '/session', { headers: { 'cf-access-jwt-assertion': 'good-assertion' } });
+    assert.equal(allowed.status, 200);
+    assert.match(allowed.body, /hayden@intelio\.co/);
+    const cookie = allowed.headers['set-cookie'][0].split(';')[0];
+    const secret = 'access-vault-secret';
+    const access = { 'cf-access-jwt-assertion': 'good-assertion', 'x-intelio-profile': 'intelio' };
+    const saved = await request(address.port, 'POST', '/api/vault/login', {
+      cookie,
+      headers: access,
+      body: JSON.stringify({ domain: 'portal.example', username: 'ada', password: secret, save: true, profile: 'intelio' }),
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.body.includes(secret), false);
+    const list = await request(address.port, 'GET', '/api/vault/logins', { cookie, headers: access });
+    assert.match(list.body, /portal\.example/);
+    assert.match(list.body, /ada/);
+    assert.equal(list.body.includes(secret), false);
+    const fill = await request(address.port, 'POST', '/api/vault/fill', {
+      cookie,
+      headers: access,
+      body: JSON.stringify({ site: 'https://portal.example/login', profile: 'intelio' }),
+    });
+    assert.match(fill.body, /"filled":true/);
+    assert.equal(fill.body.includes(secret), false);
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+  }
+});
+
 test('the phone service refuses a public bind', () => {
   assert.throws(() => createPwaServer({ bind: 'example.invalid', upstream: 'http://127.0.0.1:9' }), /Refusing to listen/);
   assert.throws(() => createPwaServer({ bind: '127.0.0.1', upstream: 'http://example.invalid:8642' }), /tailnet or loopback/);
