@@ -117,6 +117,48 @@ test('creating an agent sets Codex config, writes a fresh key, and never calls a
   }), /already exists/);
 });
 
+test('createProfile uses HERMES_BIN and a missing CLI is a clear 502', async () => {
+  const previous = process.env.HERMES_BIN;
+  process.env.HERMES_BIN = '/opt/intelio/hermes';
+  const calls = [];
+  const fsImpl = {
+    readFileSync() { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+    writeFileSync() {},
+    chmodSync() {},
+    mkdirSync() {},
+  };
+  try {
+    await createProfile({
+      name: 'lumen',
+      description: 'soft glow',
+      home: path.join(os.tmpdir(), 'intelio-hermes-bin'),
+      run: async (bin, args) => {
+        calls.push([bin, ...args]);
+        return { code: 0, stdout: '', stderr: '' };
+      },
+      fsImpl,
+    });
+    const unit = require('node:fs').readFileSync(path.join(__dirname, '../../mobile/deploy/install-on-vps.sh'), 'utf8');
+    assert.match(unit, /Environment=PATH=%h\/\.local\/bin:\/usr\/local\/bin:\/usr\/bin:\/bin/);
+    assert.equal(calls[0][0], '/opt/intelio/hermes');
+    assert.equal(calls[1][0], '/opt/intelio/hermes');
+    assert.match(calls[0].join(' '), /profile create lumen/);
+    await assert.rejects(() => createProfile({
+      name: 'quartz',
+      home: path.join(os.tmpdir(), 'intelio-hermes-bin'),
+      run: async () => ({ code: 127, stdout: '', stderr: '' }),
+      fsImpl,
+    }), (error) => {
+      assert.equal(error.status, 502);
+      assert.equal(error.message, 'hermes CLI not found on the VPS');
+      return true;
+    });
+  } finally {
+    if (previous === undefined) delete process.env.HERMES_BIN;
+    else process.env.HERMES_BIN = previous;
+  }
+});
+
 test('a fresh key replaces a cloned one and the gateway restart is explicit', () => {
   const files = { '/tmp/cloned.env': 'API_SERVER_KEY=cloned-value-not-used\nOTHER=1\n' };
   const fsImpl = {

@@ -43,6 +43,23 @@ function displayName(slug) {
   return id.split('-').filter(Boolean).map((part) => part.slice(0, 1).toUpperCase() + part.slice(1)).join(' ');
 }
 
+function resolveHermesBin() {
+  const fromEnv = String(process.env.HERMES_BIN || '').trim();
+  if (fromEnv) return fromEnv;
+  const home = os.homedir();
+  const candidates = [
+    path.join(home, '.local', 'bin', 'hermes'),
+    path.join(home, '.hermes', 'hermes-agent', '.hermes', 'bin', 'hermes'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch { /* this location is not an executable hermes */ }
+  }
+  return 'hermes';
+}
+
 function runCommand(bin, args, timeoutMs = 20000) {
   return new Promise((resolve) => {
     let child;
@@ -95,7 +112,7 @@ function listProfiles({ home = os.homedir(), run = runCommand, fsImpl = fs } = {
       names.add(slug);
     }
   } catch { /* no profile directory yet */ }
-  return run('hermes', ['profile', 'list']).then((result) => {
+  return run(resolveHermesBin(), ['profile', 'list']).then((result) => {
     if (result && result.code === 0) for (const slug of slugsFromList(result.stdout)) names.add(slug);
     return [...names].filter((id) => !excludedAgent(id)).sort().map((id) => {
       const marker = readMarker(path.join(root, id), fsImpl);
@@ -285,15 +302,17 @@ async function createProfile({
   const args = ['profile', 'create', slug, '--no-alias'];
   if (summary) args.push('--description', summary);
   args.push('--clone-from', TEMPLATE);
-  const created = await run('hermes', args);
+  const hermesBin = resolveHermesBin();
+  const created = await run(hermesBin, args);
   if (!created || created.code !== 0) {
+    if (created?.code === 127) throw Object.assign(new Error('hermes CLI not found on the VPS'), { status: 502 });
     const detail = `${created?.stderr || ''} ${created?.stdout || ''}`;
     if (/exist/i.test(detail)) throw Object.assign(new Error('That agent already exists.'), { status: 409 });
     throw Object.assign(new Error('Could not create that agent.'), { status: 502 });
   }
   const describeArgs = ['profile', 'describe', slug];
   if (summary) describeArgs.push('--text', summary);
-  await run('hermes', describeArgs);
+  await run(hermesBin, describeArgs);
   const shaped = shapeProfile({ home, slug, title: summary, soul, orb, color, fsImpl });
   writeFreshKey(path.join(dir, '.env'), fsImpl);
   return {
@@ -318,6 +337,7 @@ async function restartGateway({ run = runCommand } = {}) {
 module.exports = {
   assertSlug,
   displayName,
+  resolveHermesBin,
   slugsFromList,
   listProfiles,
   createProfile,

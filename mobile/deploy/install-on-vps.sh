@@ -230,6 +230,7 @@ After=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=$ENV_FILE
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=$ROOT
 ExecStart=$(command -v node) $ROOT/mobile/pwa/server.cjs
 Restart=on-failure
