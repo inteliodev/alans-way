@@ -706,32 +706,259 @@
     note.classList.toggle('hidden', !text);
   }
 
-  function dictate() {
+  function voiceApi() {
+    if (root.IntelioDesktopVoice) return root.IntelioDesktopVoice;
+    if (typeof require === 'function') {
+      try { root.IntelioDesktopVoice = require('./intelio/desktop-voice.cjs'); return root.IntelioDesktopVoice; } catch { /* the page script already published it */ }
+    }
+    return { NOT_READY: "Voice isn't set up on the server yet", LISTENING: 'Listening…', voiceReady: () => false, appendDictation: (current, text) => text || current, splitSentences: () => ({ sentences: [], rest: '' }) };
+  }
+
+  function paintMic() {
+    const button = $('remote-mic');
+    if (!button) return;
+    const on = Boolean(ui.dictating);
+    button.classList.toggle('recording', on);
+    button.setAttribute('aria-pressed', String(on));
+    button.title = on ? 'Stop dictation' : 'Dictate';
+    button.setAttribute('aria-label', button.title);
+  }
+
+  function micMessage(error) {
+    const name = error?.name || '';
+    if (name === 'NotAllowedError' || name === 'SecurityError') return 'Allow the microphone for intelio, then try again.';
+    if (name === 'NotFoundError') return 'This computer has no microphone.';
+    return error?.message || 'The microphone did not start.';
+  }
+
+  async function voiceStatus() {
+    const status = await root.remoteHermes?.request?.('voice-status', { profile: ui.selected || 'intelio' });
+    ui.voiceStatus = status || null;
+    return status;
+  }
+
+  async function ensureVoice() {
+    try {
+      const status = await voiceStatus();
+      if (voiceApi().voiceReady(status)) return true;
+    } catch { /* the note below covers a missing worker and a missing route */ }
+    showInline('composer-note', voiceApi().NOT_READY);
+    return false;
+  }
+
+  function audioContext() {
+    if (ui.audio) return Promise.resolve(ui.audio);
+    const Ctx = root.AudioContext || root.webkitAudioContext;
+    if (!Ctx) return Promise.reject(Object.assign(new Error('This window cannot play audio.'), { name: 'NotSupportedError' }));
+    ui.audio = new Ctx();
+    const ready = ui.audio.state === 'suspended' && ui.audio.resume ? ui.audio.resume() : Promise.resolve();
+    return Promise.resolve(ready).then(() => ui.audio);
+  }
+
+  async function openMic() {
+    if (ui.mic?.stream) return ui.mic;
+    const media = root.navigator?.mediaDevices;
+    if (!media?.getUserMedia) throw Object.assign(new Error('The microphone is not available in this window.'), { name: 'NotSupportedError' });
+    const stream = await media.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 }, video: false });
+    const ctx = await audioContext();
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    source.connect(analyser);
+    ui.mic = { stream, analyser, chunks: [], recorder: null, speaking: false, quietSince: 0 };
+    return ui.mic;
+  }
+
+  function releaseMic() {
+    if (ui.vad) root.cancelAnimationFrame?.(ui.vad);
+    ui.vad = 0;
+    const mic = ui.mic;
+    ui.mic = null;
+    if (!mic) return;
+    try { if (mic.recorder && mic.recorder.state !== 'inactive') mic.recorder.stop(); } catch { /* already stopped */ }
+    for (const track of mic.stream?.getTracks?.() || []) track.stop();
+  }
+
+  function recorderMime() {
+    const Rec = root.MediaRecorder;
+    if (!Rec) return '';
+    return ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((type) => Rec.isTypeSupported?.(type)) || '';
+  }
+
+  function startRecorder() {
+    const Rec = root.MediaRecorder;
+    if (!ui.mic || !Rec) throw Object.assign(new Error('The microphone is not available in this window.'), { name: 'NotSupportedError' });
+    const mime = recorderMime();
+    ui.mic.chunks = [];
+    ui.mic.recorder = mime ? new Rec(ui.mic.stream, { mimeType: mime }) : new Rec(ui.mic.stream);
+    ui.mic.recorder.ondataavailable = (event) => { if (event.data && event.data.size) ui.mic.chunks.push(event.data); };
+    ui.mic.recorder.start();
+  }
+
+  function stopRecorder() {
+    const mic = ui.mic;
+    if (!mic?.recorder || mic.recorder.state === 'inactive') return Promise.resolve(null);
+    const recorder = mic.recorder;
+    return new Promise((resolve) => {
+      recorder.onstop = () => resolve(new root.Blob(mic.chunks || [], { type: recorder.mimeType || 'audio/webm' }));
+      try { recorder.stop(); } catch { resolve(null); }
+    });
+  }
+
+  async function blobToBase64(blob) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return root.btoa(binary);
+  }
+
+  async function transcribeBlob(blob) {
+    const audio = await blobToBase64(blob);
+    const result = await root.remoteHermes.request('voice-transcribe', {
+      profile: ui.selected || 'intelio',
+      audio,
+      type: blob.type || 'audio/webm',
+    });
+    return String(result?.text || '').trim();
+  }
+
+  function bargeIn() {
+    ui.ttsToken = (ui.ttsToken || 0) + 1;
+    ui.speakQueue = [];
+    ui.unspoken = '';
+    for (const source of ui.sources || []) { try { source.stop(); } catch { /* already ended */ } }
+    ui.sources = [];
+  }
+
+  function feedSpeech(delta) {
+    const api = voiceApi();
+    ui.unspoken = `${ui.unspoken || ''}${delta}`;
+    const parts = api.splitSentences(ui.unspoken);
+    ui.unspoken = parts.rest;
+    ui.speakQueue = ui.speakQueue || [];
+    for (const sentence of parts.sentences) ui.speakQueue.push(sentence);
+    pumpSpeech();
+  }
+
+  async function playSpoken(payload, token) {
+    if (!payload?.audio || token !== ui.ttsToken) return;
+    const binary = root.atob(payload.audio);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const ctx = await audioContext();
+    if (token !== ui.ttsToken) return;
+    const buffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
+    if (token !== ui.ttsToken) return;
+    await new Promise((resolve) => {
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      ui.sources = ui.sources || [];
+      ui.sources.push(source);
+      source.onended = () => { ui.sources = (ui.sources || []).filter((item) => item !== source); resolve(); };
+      source.start();
+    });
+  }
+
+  async function pumpSpeech() {
+    if (ui.pumping) return;
+    ui.pumping = true;
+    const token = ui.ttsToken || 0;
+    try {
+      while ((ui.speakQueue || []).length && token === ui.ttsToken && ui.call?.active && ui.call.speaker !== false) {
+        const sentence = ui.speakQueue.shift();
+        try {
+          const spoken = await root.remoteHermes.request('voice-speak', { profile: ui.selected || 'intelio', text: sentence });
+          await playSpoken(spoken, token);
+        } catch (error) {
+          if (error?.code === 'VOICE_OFF') showInline('composer-note', voiceApi().NOT_READY);
+        }
+      }
+    } finally {
+      ui.pumping = false;
+    }
+  }
+
+  function rms(bytes) {
+    if (!bytes || !bytes.length) return 0;
+    let sum = 0;
+    for (let i = 0; i < bytes.length; i++) {
+      const v = (bytes[i] - 128) / 128;
+      sum += v * v;
+    }
+    return Math.sqrt(sum / bytes.length);
+  }
+
+  function vadLoop() {
+    const mic = ui.mic;
+    if (!mic || !ui.call?.active) return;
+    const data = new Uint8Array(mic.analyser.fftSize);
+    mic.analyser.getByteTimeDomainData(data);
+    const level = rms(data);
+    const now = root.performance?.now?.() || Date.now();
+    if (level >= 0.045) {
+      if (!mic.speaking) {
+        mic.speaking = true;
+        bargeIn();
+        try { startRecorder(); } catch { /* the next quiet stretch retries */ }
+        showInline('composer-note', voiceApi().LISTENING);
+      }
+      mic.quietSince = 0;
+    } else if (mic.speaking && level < 0.03) {
+      if (!mic.quietSince) mic.quietSince = now;
+      if (now - mic.quietSince > 700) {
+        mic.speaking = false;
+        mic.quietSince = 0;
+        showInline('composer-note', '');
+        const pending = stopRecorder();
+        pending.then((blob) => blob && transcribeBlob(blob).then((text) => {
+          if (text && ui.call?.active) {
+            const input = $('remote-input');
+            if (input) input.value = text;
+            send({ preventDefault() {} });
+          }
+        })).catch((error) => {
+          showInline('composer-note', error?.code === 'VOICE_OFF' ? voiceApi().NOT_READY : (error?.message || voiceApi().NOT_READY));
+        });
+      }
+    }
+    ui.vad = root.requestAnimationFrame?.(() => vadLoop()) || 0;
+  }
+
+  async function dictate() {
     const input = $('remote-input');
-    const Rec = root.SpeechRecognition || root.webkitSpeechRecognition;
-    if (!input || !Rec) {
-      showInline('composer-note', 'Dictation is not available in this window.');
-      return;
-    }
-    if (ui.recognizer) {
-      try { ui.recognizer.stop(); } catch { /* already stopped */ }
-      ui.recognizer = null;
-      return;
-    }
-    const rec = new Rec();
-    rec.lang = 'en-US';
-    rec.interimResults = false;
-    rec.onresult = (event) => {
-      const text = String(event.results?.[0]?.[0]?.transcript || '').trim();
-      if (!text) return;
-      input.value = `${input.value ? `${input.value.trim()} ` : ''}${text}`;
-      input.focus();
+    if (!input || ui.call?.active) return;
+    if (ui.dictating) {
+      ui.dictating = false;
+      paintMic();
+      const blob = await stopRecorder();
+      releaseMic();
       showInline('composer-note', '');
-    };
-    rec.onerror = () => showInline('composer-note', 'Dictation is not available in this window.');
-    rec.onend = () => { ui.recognizer = null; };
-    ui.recognizer = rec;
-    try { rec.start(); } catch { showInline('composer-note', 'Dictation is not available in this window.'); }
+      if (!blob) return;
+      try {
+        const text = await transcribeBlob(blob);
+        if (text) {
+          input.value = voiceApi().appendDictation(input.value, text);
+          input.focus();
+        }
+      } catch (error) {
+        showInline('composer-note', error?.code === 'VOICE_OFF' ? voiceApi().NOT_READY : (error?.message || voiceApi().NOT_READY));
+      }
+      return;
+    }
+    if (!(await ensureVoice())) return;
+    try {
+      await openMic();
+      startRecorder();
+      ui.dictating = true;
+      paintMic();
+      showInline('composer-note', voiceApi().LISTENING);
+    } catch (error) {
+      ui.dictating = false;
+      paintMic();
+      releaseMic();
+      showInline('composer-note', micMessage(error));
+    }
   }
 
   async function callPhone() {
@@ -759,29 +986,47 @@
   }
 
   function stopMic() {
-    for (const track of ui.mic?.getTracks?.() || []) track.stop();
-    ui.mic = null;
+    ui.dictating = false;
+    paintMic();
+    bargeIn();
+    releaseMic();
     if (ui.callTimer) clearInterval(ui.callTimer);
     ui.callTimer = null;
   }
 
-  function toggleCall() {
+  async function toggleCall() {
     const api = callsApi();
     if (!api) return;
     if (ui.call?.active) {
       ui.call = api.endCall(ui.call, Date.now());
       stopMic();
-    } else {
-      ui.call = api.startCall(Date.now());
-      const media = root.navigator?.mediaDevices;
-      if (media?.getUserMedia) media.getUserMedia({ audio: true }).then((stream) => { ui.mic = stream; }).catch(() => {});
-      ui.callTimer = setInterval(() => {
-        if (!ui.call?.active) return;
-        ui.call = api.tickCall(ui.call, Date.now());
-        paintCall();
-      }, 500);
+      showInline('composer-note', '');
+      paintCall();
+      return;
     }
+    if (ui.dictating) {
+      ui.dictating = false;
+      paintMic();
+      releaseMic();
+    }
+    if (!(await ensureVoice())) return;
+    ui.call = api.startCall(Date.now());
+    ui.spokenProse = '';
+    ui.callTimer = setInterval(() => {
+      if (!ui.call?.active) return;
+      ui.call = api.tickCall(ui.call, Date.now());
+      paintCall();
+    }, 500);
     paintCall();
+    try {
+      await openMic();
+      vadLoop();
+    } catch (error) {
+      ui.call = api.endCall(ui.call, Date.now());
+      stopMic();
+      paintCall();
+      showInline('composer-note', micMessage(error));
+    }
   }
 
   function pushFrame(frame) {
@@ -1023,6 +1268,12 @@
         ui.streamRaw = `${ui.streamRaw || ''}${data.delta}`;
         const peeled = root.IntelioTranscript ? root.IntelioTranscript.peel(ui.streamRaw) : { prose: ui.streamRaw, chips: [] };
         ui.streaming.textContent = peeled.prose;
+        if (ui.call?.active) {
+          const prose = peeled.prose || '';
+          const spoken = prose.startsWith(ui.spokenProse || '') ? prose.slice((ui.spokenProse || '').length) : '';
+          ui.spokenProse = prose;
+          if (spoken) feedSpeech(spoken);
+        }
         if (!ui.toolEvents) {
           ui.liveSteps = peeled.chips.map((part) => ({ name: part.name, detail: part.detail || '', running: false, failed: false }));
           paintLiveTools();
@@ -1148,6 +1399,13 @@
       ui.bops = api.applyTaskResult(ui.bops, ui.bops.focusedId, { ok: false, error: error.message, code: error.code || '' });
       paintBops();
     } finally {
+      if (ui.call?.active && String(ui.unspoken || '').trim()) {
+        ui.speakQueue = ui.speakQueue || [];
+        ui.speakQueue.push(String(ui.unspoken).trim());
+        ui.unspoken = '';
+        pumpSpeech();
+      }
+      ui.spokenProse = '';
       ui.busy = false;
       ui.streaming = null;
       ui.liveSteps = [];

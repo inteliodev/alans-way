@@ -221,6 +221,59 @@
       inflight.delete(id);
     }
   }
+  function voiceOff() {
+    const error = new Error("Voice isn't set up on the server yet");
+    error.code = 'VOICE_OFF';
+    return error;
+  }
+  function bytesFromBase64(value) {
+    const binary = atob(String(value || ''));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+  function bytesToBase64(bytes) {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(binary);
+  }
+  async function voiceFetch(pathname, { method = 'GET', profile, body, contentType, accept } = {}) {
+    const id = profile || 'intelio';
+    const headers = { Accept: accept || 'application/json', 'x-intelio-profile': id, 'x-intelio-engine': 'auto' };
+    if (contentType) headers['content-type'] = contentType;
+    const join = pathname.includes('?') ? '&' : '?';
+    const response = await fetch(`${pathname}${join}profile=${encodeURIComponent(id)}`, {
+      method,
+      headers,
+      body,
+      credentials: 'same-origin',
+      redirect: 'manual',
+    });
+    const type = response.headers.get('content-type') || '';
+    const redirect = response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400);
+    if (redirect || type.includes('text/html')) {
+      markSignIn();
+      const error = new Error('Sign in to intelio');
+      error.code = 'CLOUD_ACCESS';
+      throw error;
+    }
+    const binary = response.ok && type.includes('audio');
+    if (binary) {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      return { audio: bytesToBase64(bytes), type: type || 'audio/wav' };
+    }
+    const text = await response.text();
+    let json = {};
+    try { json = text ? JSON.parse(text) : {}; } catch { json = {}; }
+    if (!response.ok) {
+      if (json.fallback === 'web' || response.status === 503) throw voiceOff();
+      const error = new Error(String(json.error || 'Could not use voice.').slice(0, 200));
+      error.status = response.status;
+      throw error;
+    }
+    if (text.includes('API_SERVER_KEY')) throw new Error('Could not use voice.');
+    return json;
+  }
   async function hermesRequest(name, value) {
     const profile = value.profile || '';
     if (name === 'agents') {
@@ -255,6 +308,29 @@
     if (name === 'screens') return fetchJson('/api/screens');
     if (name === 'skills') return fetchJson('/api/skills', { profile });
     if (name === 'phone-call') return fetchJson('/api/phone/call', { method: 'POST', profile: profile || 'intelio', body: { profile: profile || 'intelio' } });
+    if (name === 'voice-status') return voiceFetch('/api/voice', { profile: profile || 'intelio' });
+    if (name === 'voice-transcribe') {
+      const bytes = bytesFromBase64(value.audio);
+      if (bytes.length < 16) throw new Error('That recording was empty.');
+      const json = await voiceFetch('/api/voice/stt', {
+        method: 'POST',
+        profile: profile || 'intelio',
+        body: bytes,
+        contentType: String(value.type || 'audio/webm').slice(0, 80),
+      });
+      return { text: String(json.text || '').trim() };
+    }
+    if (name === 'voice-speak') {
+      const text = String(value.text || '').trim().slice(0, 2000);
+      if (!text) return { audio: '', type: 'audio/wav' };
+      return voiceFetch('/api/voice/tts', {
+        method: 'POST',
+        profile: profile || 'intelio',
+        body: JSON.stringify({ text, profile: profile || 'intelio' }),
+        contentType: 'application/json',
+        accept: 'audio/wav, audio/mpeg, application/octet-stream',
+      });
+    }
     if (name === 'agent-card') return fetchJson(`/api/agent/card?profile=${encodeURIComponent(profile)}`, { profile });
     if (name === 'agent-thinking') return fetchJson('/api/agent/thinking', { method: 'POST', profile, body: { profile, effort: value.effort } });
     if (name === 'agent-pause') return fetchJson('/api/agent/pause', { method: 'POST', profile, body: { profile, paused: value.paused !== false } });

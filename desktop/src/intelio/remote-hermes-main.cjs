@@ -541,6 +541,91 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
+  async function voiceRequest(profile, { pathname, method = 'GET', body, contentType, accept = 'application/json', timeoutMs = 20000 } = {}) {
+    const id = harnessId(profile) || 'intelio';
+    let cfg;
+    try { cfg = await config(); } catch { cfg = null; }
+    const cloud = Boolean(cfg?.origin || cfg?.activeMode === 'cloud');
+    const key = await getKey(id).catch(() => '') || await getKey('intelio').catch(() => '');
+    if (!key && !cloud) throw Object.assign(new Error("Voice isn't set up on the server yet"), { code: 'VOICE_OFF' });
+    const base = pwaBase(cfg || {});
+    if (!base) throw Object.assign(new Error("Voice isn't set up on the server yet"), { code: 'VOICE_OFF' });
+    const doFetch = selectFetch(cfg, { fetchImpl: globalThis.fetch, sessionFor });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const join = pathname.includes('?') ? '&' : '?';
+      return await doFetch(`${base}${pathname}${join}profile=${encodeURIComponent(id)}`, {
+        method,
+        headers: {
+          ...(key ? { Authorization: `Bearer ${key}` } : {}),
+          Accept: accept,
+          Origin: base,
+          'x-intelio-profile': id,
+          'x-intelio-engine': 'auto',
+          ...(contentType ? { 'Content-Type': contentType } : {}),
+        },
+        body,
+        signal: controller.signal,
+        redirect: 'error',
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function voiceOff() {
+    return Object.assign(new Error("Voice isn't set up on the server yet"), { code: 'VOICE_OFF' });
+  }
+
+  async function voiceStatus(profile) {
+    const response = await voiceRequest(profile, { pathname: '/api/voice' });
+    if (!response?.ok) throw voiceOff();
+    return response.json();
+  }
+
+  async function voiceTranscribe(profile, value = {}) {
+    const audio = Buffer.from(String(value.audio || ''), 'base64');
+    if (audio.length < 16) throw new Error('That recording was empty.');
+    const response = await voiceRequest(profile, {
+      pathname: '/api/voice/stt',
+      method: 'POST',
+      body: audio,
+      contentType: String(value.type || 'audio/webm').slice(0, 80),
+    });
+    const text = await response.text();
+    let parsed = {};
+    try { parsed = JSON.parse(text); } catch { parsed = {}; }
+    if (!response.ok) {
+      if (parsed.fallback === 'web' || response.status === 503) throw voiceOff();
+      throw new Error(String(parsed.error || 'Could not transcribe.').slice(0, 200));
+    }
+    if (text.includes('API_SERVER_KEY')) throw new Error('Could not transcribe.');
+    return { text: String(parsed.text || '').trim() };
+  }
+
+  async function voiceSpeak(profile, value = {}) {
+    const id = harnessId(profile) || 'intelio';
+    const sentence = String(value.text || '').trim().slice(0, 2000);
+    if (!sentence) return { audio: '', type: 'audio/wav' };
+    const response = await voiceRequest(id, {
+      pathname: '/api/voice/tts',
+      method: 'POST',
+      body: JSON.stringify({ text: sentence, profile: id }),
+      contentType: 'application/json',
+      accept: 'audio/wav, audio/mpeg, application/octet-stream',
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let parsed = {};
+      try { parsed = JSON.parse(text); } catch { parsed = {}; }
+      if (parsed.fallback === 'web' || response.status === 503) throw voiceOff();
+      throw new Error('Could not speak.');
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return { audio: bytes.toString('base64'), type: response.headers.get('content-type') || 'audio/wav' };
+  }
+
   async function phoneCall(profile) {
     const id = harnessId(profile) || 'intelio';
     const key = await getKey(id).catch(() => '') || await getKey('intelio').catch(() => '');
@@ -637,6 +722,9 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
           case 'agent-pause': return await agentPause(value.profile, value.paused !== false);
           case 'agent-profile': return await saveAgentProfile(value);
           case 'phone-call': return await phoneCall(value.profile);
+          case 'voice-status': return await voiceStatus(value.profile);
+          case 'voice-transcribe': return await voiceTranscribe(value.profile, value);
+          case 'voice-speak': return await voiceSpeak(value.profile, value);
           case 'screens': return { data: await listRemoteScreens() };
           case 'send': {
             const id = String(value.id);

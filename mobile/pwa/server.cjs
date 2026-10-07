@@ -45,7 +45,7 @@ const STATIC = {
 };
 const DESKTOP_SRC = path.resolve(__dirname, '../../desktop/src');
 const UI_EXT = new Set(['.css', '.js', '.woff2', '.png', '.svg']);
-const UI_CJS = new Set(['intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs']);
+const UI_CJS = new Set(['intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs', 'intelio/calls.cjs', 'intelio/desktop-voice.cjs']);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json' };
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -705,10 +705,10 @@ function createPwaServer({
       "img-src 'self' data: blob: crx:",
     );
     html = html.replace(/(href|src)="(?!\/|https?:|data:)([^"]+)"/g, '$1="/ui/$2"');
-    html = html.replace('</head>', '<script src="/desktop-boot.js?v=18"></script></head>');
+    html = html.replace('</head>', '<script src="/desktop-boot.js?v=19"></script></head>');
     html = html.replace(
       '<script src="/ui/renderer.js"></script>',
-      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=18"></script><script src="/ui/renderer.js"></script>',
+      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=19"></script><script src="/ui/renderer.js"></script>',
     );
     return html;
   }

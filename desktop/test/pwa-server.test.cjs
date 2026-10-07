@@ -401,7 +401,135 @@ test('a wide browser gets the desktop window and a phone stays on the phone shel
     assert.match(phone, /\/desktop\//);
     const boot = fs.readFileSync(path.join(__dirname, '../../mobile/pwa/public/desktop-boot.js'), 'utf8');
     assert.match(boot, /max-width: 999px/);
+    assert.match(page.body, /\/ui\/intelio\/desktop-voice\.cjs/);
+    assert.match(page.body, /desktop-transport\.js\?v=19/);
+    const voiceJs = await request(address.port, 'GET', '/ui/intelio/desktop-voice.cjs');
+    assert.equal(voiceJs.status, 200);
+    assert.match(voiceJs.body, /Voice isn't set up on the server yet/);
   } finally {
     await new Promise((resolve) => app.close(resolve));
+  }
+});
+
+test('the Access listener checks the profile key on voice and reports a missing worker', async () => {
+  const prcKey = 'prc-key-not-real-0002';
+  const upstream = await mockHermes();
+  let installed = false;
+  let localCalls = 0;
+  const voice = {
+    async status() { return { vps: installed, whisper: installed, piper: installed }; },
+    async transcribe(audio) { localCalls += 1; assert.ok(audio.length > 10); return { text: 'heard on the listener' }; },
+    async synthesize(text) { assert.equal(text, 'Hello there.'); return { wav: Buffer.from('RIFFsample') }; },
+  };
+  const app = createPwaServer({
+    bind: '127.0.0.1',
+    port: 0,
+    localPort: 0,
+    upstream: `http://127.0.0.1:${upstream.address().port}`,
+    fetchImpl: globalThis.fetch,
+    profileKey: KEY,
+    accessMode: true,
+    profileOps: { keyFor: (id) => (id === 'prc' ? prcKey : KEY) },
+    accessVerify: async () => ({ ok: false }),
+    voice,
+  });
+  await app.listen();
+  const port = app.local.address().port;
+  try {
+    const headers = { authorization: `Bearer ${KEY}`, 'x-intelio-profile': 'intelio', 'x-intelio-engine': 'auto' };
+    const missing = await request(port, 'GET', '/api/voice', { headers });
+    assert.equal(missing.status, 200);
+    assert.equal(JSON.parse(missing.body).recommended, 'web');
+    const blocked = await request(port, 'POST', '/api/voice/stt', {
+      headers: { ...headers, 'content-type': 'audio/webm' },
+      body: `RIFF${'a'.repeat(20)}`,
+    });
+    assert.equal(blocked.status, 503);
+    assert.match(blocked.body, /"fallback":"web"/);
+    assert.equal(localCalls, 0);
+    installed = true;
+    const ready = await request(port, 'GET', '/api/voice', { headers });
+    assert.equal(JSON.parse(ready.body).recommended, 'vps');
+    const stt = await request(port, 'POST', '/api/voice/stt', {
+      headers: { ...headers, 'content-type': 'audio/webm' },
+      body: `RIFF${'a'.repeat(20)}`,
+    });
+    assert.equal(stt.status, 200);
+    assert.match(stt.body, /heard on the listener/);
+    assert.equal(localCalls, 1);
+    const tts = await request(port, 'POST', '/api/voice/tts', {
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'Hello there.', profile: 'intelio' }),
+    });
+    assert.equal(tts.status, 200);
+    assert.match(String(tts.headers['content-type']), /audio\/wav/);
+    assert.equal(tts.body.includes(KEY), false);
+    const wrong = await request(port, 'POST', '/api/voice/stt', {
+      headers: { authorization: `Bearer ${prcKey}`, 'x-intelio-profile': 'intelio', 'content-type': 'audio/webm' },
+      body: `RIFF${'b'.repeat(20)}`,
+    });
+    assert.equal(wrong.status, 401);
+    assert.equal(wrong.body.includes(KEY), false);
+    assert.equal(wrong.body.includes(prcKey), false);
+    const other = await request(port, 'POST', '/api/voice/tts', {
+      headers: { authorization: `Bearer ${KEY}`, 'x-intelio-profile': 'prc', 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'Hello there.', profile: 'prc' }),
+    });
+    assert.equal(other.status, 401);
+    assert.equal(other.body.includes(KEY), false);
+    assert.equal(other.body.includes(prcKey), false);
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
+  }
+});
+
+test('Hermes audio wins on the Access listener when capabilities advertise it', async () => {
+  const upstream = http.createServer((req, res) => {
+    req.resume();
+    if (req.headers.authorization !== `Bearer ${KEY}`) { res.statusCode = 401; res.end('{"error":"no"}'); return; }
+    if (req.url === '/p/intelio/v1/capabilities') {
+      res.end(JSON.stringify({ features: { audio_api: true } }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/p/intelio/v1/audio/transcriptions') {
+      res.end(JSON.stringify({ text: 'from hermes' }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end('{}');
+  });
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  let localCalls = 0;
+  const app = createPwaServer({
+    bind: '127.0.0.1',
+    port: 0,
+    localPort: 0,
+    upstream: `http://127.0.0.1:${upstream.address().port}`,
+    fetchImpl: globalThis.fetch,
+    profileKey: KEY,
+    accessMode: true,
+    accessVerify: async () => ({ ok: false }),
+    voice: {
+      async status() { return { vps: true, whisper: true, piper: true }; },
+      async transcribe() { localCalls += 1; return { text: 'local' }; },
+      async synthesize() { return { wav: Buffer.from('RIFFsample') }; },
+    },
+  });
+  await app.listen();
+  const port = app.local.address().port;
+  try {
+    const headers = { authorization: `Bearer ${KEY}`, 'x-intelio-profile': 'intelio', 'x-intelio-engine': 'auto', 'content-type': 'audio/webm' };
+    const status = await request(port, 'GET', '/api/voice', { headers });
+    assert.equal(JSON.parse(status.body).recommended, 'hermes');
+    assert.equal(JSON.parse(status.body).hermesAudio, true);
+    const stt = await request(port, 'POST', '/api/voice/stt', { headers, body: `RIFF${'a'.repeat(20)}` });
+    assert.equal(stt.status, 200);
+    assert.match(stt.body, /from hermes/);
+    assert.equal(localCalls, 0);
+    assert.equal(stt.body.includes(KEY), false);
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
   }
 });

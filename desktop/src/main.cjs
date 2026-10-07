@@ -15,7 +15,7 @@ const { normalizeUrl, parseRemoteUrl, isSshTarget, requireActor, requireAgentRea
 const { createAvatarStore } = require('./avatar-store.cjs');
 const { createAgentInput, tintScript, botAccent } = require('./agent-input.cjs');
 const { createActivityTracker } = require('./activity.cjs');
-const { createSitePermissions } = require('./site-permissions.cjs');
+const { createSitePermissions, installAppMicrophone, appMediaPage } = require('./site-permissions.cjs');
 const { snapshotExpression, settleSnapshot, checkpointExpression, restoreExpression } = require('./browser-page.cjs');
 const { createVpsBrowser } = require('./vps-browser.cjs');
 const { createExtensionStore } = require('./extension-store.cjs');
@@ -1170,6 +1170,7 @@ function createWindow() {
     webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } };
   if (process.platform === 'darwin') { windowOptions.titleBarStyle = 'hiddenInset'; windowOptions.trafficLightPosition = { x: 18, y: 18 }; }
   win = new BrowserWindow(windowOptions);
+  installAppMicrophone(win.webContents.session, (wc) => appMediaPage(wc?.getURL?.(), ROOT));
   win.on('page-title-updated', (event) => {
     event.preventDefault();
     win.setTitle(intelioTitle());
