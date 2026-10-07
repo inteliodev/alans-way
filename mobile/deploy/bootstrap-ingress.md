@@ -1,6 +1,6 @@
 # Cloudflare Tunnel ingress for key bootstrap
 
-The desktop calls `GET https://os.intelio-ai.com/intelio/bootstrap` after Cloudflare Access sign-in, and only when no profile keys are stored yet.
+0.3.17 calls `GET https://app.intelio-ai.com/intelio/bootstrap` on the Access listener after Cloudflare Access sign-in, and only when no profile keys are stored yet. That route is served by the phone server. Older builds still call `GET https://os.intelio-ai.com/intelio/bootstrap`.
 
 The route is served by `mobile/bootstrap/server.cjs` on `127.0.0.1:8660`. Install that with `mobile/deploy/install-bootstrap-endpoint.sh` on the VPS after review. The installer does not edit cloudflared, open a firewall port, or restart hermes-gateway.
 

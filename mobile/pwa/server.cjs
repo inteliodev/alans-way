@@ -906,6 +906,72 @@ function createPwaServer({
     }
   }
 
+  function hermesDesktopPath(pathname) {
+    if (pathname === '/health' || pathname === '/intelio/bootstrap') return true;
+    return /^\/p\/[a-z0-9][a-z0-9_-]{0,63}\/(?:api|v1)\//.test(pathname);
+  }
+  async function proxyDesktopHermes(req, res, url, session) {
+    if (url.pathname === '/intelio/bootstrap') {
+      if (!session.access) return send(res, 401, { error: 'Sign in again.' });
+      const body = { vnc: vncSecret };
+      for (const name of ['intelio', 'prc', 'alignment', 'hhp']) {
+        try { body[name] = bearerKey(name); } catch { body[name] = ''; }
+      }
+      return send(res, 200, body);
+    }
+    let target;
+    let profileId = '';
+    if (url.pathname === '/health') {
+      target = new URL(upstreamUrl.toString());
+      target.pathname = '/health';
+      target.search = '';
+    } else {
+      const match = url.pathname.match(/^\/p\/([a-z0-9][a-z0-9_-]{0,63})(\/(?:api|v1)\/.*)$/);
+      if (!match) return send(res, 404, { error: 'Not found.' });
+      profileId = match[1];
+      const query = {};
+      for (const [key, value] of url.searchParams) if (value) query[key] = value;
+      target = hermesUrl(profileId, match[2], query);
+    }
+    const method = req.method || 'GET';
+    if (method !== 'GET' && method !== 'HEAD' && method !== 'POST') return send(res, 405, { error: 'Not found.' });
+    const raw = method === 'POST' ? await readRaw(req, 1024 * 1024) : null;
+    let key = '';
+    if (profileId) {
+      try { key = bearerKey(profileId); } catch { return send(res, 401, { error: 'Profile key is not available.' }); }
+    }
+    const stream = /\/chat\/stream$/.test(url.pathname);
+    let response;
+    try {
+      response = await fetchImpl(target, {
+        method,
+        headers: {
+          ...(key ? { Authorization: `Bearer ${key}` } : {}),
+          Accept: stream ? 'text/event-stream' : 'application/json',
+          ...(raw && raw.length ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body: raw && raw.length ? raw : undefined,
+        redirect: 'error',
+      });
+    } catch {
+      return send(res, 502, { error: 'Remote Hermes unreachable.' });
+    }
+    if (stream && response.body && typeof response.body.getReader === 'function') {
+      res.writeHead(response.status, { ...cookieHeaders(res), 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
+      const reader = response.body.getReader();
+      while (true) {
+        const step = await reader.read();
+        if (step.done) break;
+        res.write(Buffer.from(step.value));
+      }
+      return res.end();
+    }
+    const text = typeof response.text === 'function' ? await response.text() : '';
+    const type = response.headers?.get?.('content-type') || 'application/json; charset=utf-8';
+    res.writeHead(response.status || 502, { ...cookieHeaders(res), 'content-type': type, 'cache-control': 'no-store' });
+    return res.end(text);
+  }
+
   async function handle(req, res) {
     if (!originOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -996,6 +1062,7 @@ function createPwaServer({
         authFor.set(req, session);
       }
       if (!session) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+      if (req.accessListener && hermesDesktopPath(url.pathname)) return await proxyDesktopHermes(req, res, url, session);
       if (req.method === 'GET' && (url.pathname === '/session' || url.pathname === '/session/')) {
         return send(res, 200, { ok: true, login: session.login || '' });
       }

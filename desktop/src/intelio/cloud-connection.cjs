@@ -6,10 +6,10 @@
 const { remoteVersionLabel } = require('./remote-hermes.cjs');
 
 const CLOUD_PARTITION = 'persist:intelio-cloud';
-const CLOUD_API = 'https://os.intelio-ai.com';
-const CLOUD_DESKTOP = 'https://desktop.intelio-ai.com/vnc.html';
+const CLOUD_API = 'https://app.intelio-ai.com';
+const CLOUD_DESKTOP = 'https://app.intelio-ai.com/browser/vnc.html?path=/browser/websockify';
 const ACCESS_TEAM_HOST = 'muddy-scene-4e1c.cloudflareaccess.com';
-const PROBE_TIMEOUT_MS = 1500;
+const PROBE_TIMEOUT_MS = 4000;
 
 function normalizeConnectionMode(value) {
   const mode = String(value || '').trim().toLowerCase();
@@ -80,9 +80,9 @@ async function probeTailscale(origin, fetchImpl, timeoutMs) {
 }
 
 /**
- * Auto probes Tailscale /health. Reachable means HTTP 200 and a Hermes version.
- * Anything else (refused, timeout, a non-Hermes page) uses Intelio Cloud.
- * Explicit Tailscale does not fall back. Explicit Cloud does not probe.
+ * Auto probes Tailscale /health for a few seconds. Reachable means HTTP 200
+ * and a Hermes version. Anything else uses intelio cloud. Explicit Tailscale
+ * does not fall back. Explicit Cloud does not probe.
  */
 async function chooseConnection({ mode = 'auto', host = '', port = 8642, fetchImpl = globalThis.fetch, timeoutMs = PROBE_TIMEOUT_MS, env = process.env } = {}) {
   const selected = normalizeConnectionMode(mode);
@@ -125,7 +125,7 @@ function allowedSignInUrl(raw, env = process.env) {
   try { url = new URL(String(raw || '')); } catch { return false; }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (host === 'os.intelio-ai.com' || host === 'desktop.intelio-ai.com' || host === ACCESS_TEAM_HOST) return true;
+  if (host === 'app.intelio-ai.com' || host === 'os.intelio-ai.com' || host === 'desktop.intelio-ai.com' || host === ACCESS_TEAM_HOST) return true;
   if (env && env.INTELIO_E2E === '1' && (host === '127.0.0.1' || host === 'localhost' || host === '::1')) return true;
   return false;
 }

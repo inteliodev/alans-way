@@ -109,17 +109,18 @@
     body.append(element('h3', '', 'Remote Hermes (VPS)'));
     const remote = state?.remoteHermes;
     if (remote && (remote.host || remote.versionLabel || remote.activeMode)) {
-      const mode = remote.activeMode === 'cloud' ? 'Cloud' : remote.activeMode === 'tailscale' ? 'Tailscale' : '';
+      const pathName = remote.activeMode === 'cloud' ? 'intelio cloud' : remote.activeMode === 'tailscale' ? 'Tailscale' : '';
+      if (pathName) body.append(element('p', 'settings-note path-note', pathName));
       const host = remote.host ? `${remote.host}:${remote.port || 8642}` : '';
-      body.append(element('p', 'settings-note', ['VPS Hermes', host, remote.versionLabel || '', mode].filter(Boolean).join(' · ')));
+      body.append(element('p', 'settings-note', ['VPS Hermes', host, remote.versionLabel || ''].filter(Boolean).join(' · ')));
     }
-    body.append(element('p', 'settings-note', 'When Remote Hermes is on, the main window lists each profile and chats through that profile’s VPS sessions. Connection is Auto, Tailscale, or intelio Cloud. Auto uses Tailscale when that host answers, and otherwise intelio Cloud. intelio Cloud asks you to sign in once; that sign-in covers agents and the desktop. The Tailscale host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The import file remote-hermes-key.import can hold several lines, one profile=key per line. A legacy API_SERVER_KEY= line, or a single raw key, is the intelio key. A vnc= line is the VPS desktop password, stored the same way and sent when the desktop asks. It is not a profile, and it is not put in the viewer URL. Each profile only accepts its own key. intelio encrypts them and deletes that file. You do not type the keys or the desktop password. A new machine can receive the same keys after intelio Cloud sign-in.'));
+    body.append(element('p', 'settings-note', 'When Remote Hermes is on, the main window lists each profile and chats through that profile’s VPS sessions. Connection is Auto, Tailscale, or intelio cloud (app.intelio-ai.com). Auto tries the Tailscale host for a few seconds and, if it does not answer, uses intelio cloud. intelio cloud opens a sign-in window for the one-time email code. The sign-in cookie stays in the app session and is not saved in preferences. The Tailscale host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The import file remote-hermes-key.import can hold several lines, one profile=key per line. A legacy API_SERVER_KEY= line, or a single raw key, is the intelio key. A vnc= line is the VPS desktop password, stored the same way and sent when the desktop asks. It is not a profile, and it is not put in the viewer URL. Each profile only accepts its own key. intelio encrypts them and deletes that file. You do not type the keys or the desktop password. A new machine can receive the same keys after intelio cloud sign-in.'));
     const modeField = element('div', 'field');
     const modeLabel = element('label', '', 'Connection');
     modeLabel.htmlFor = 'remote-hermes-connection';
     const mode = element('select');
     mode.id = 'remote-hermes-connection';
-    for (const [value, text] of [['auto', 'Auto'], ['tailscale', 'Tailscale'], ['cloud', 'intelio Cloud']]) {
+    for (const [value, text] of [['auto', 'Auto'], ['tailscale', 'Tailscale'], ['cloud', 'intelio cloud (app.intelio-ai.com)']]) {
       const option = element('option', '', text);
       option.value = value;
       mode.append(option);

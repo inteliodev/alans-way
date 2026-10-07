@@ -291,3 +291,45 @@ test('voice routes use the server engine and never echo a posted secret', async 
     await new Promise((resolve) => upstream.close(resolve));
   }
 });
+
+test('the Access listener proxies Hermes, the desktop, and bootstrap without logging secrets', async () => {
+  const upstream = await mockHermes();
+  const logs = [];
+  const app = createPwaServer({
+    bind: '127.0.0.1',
+    port: 0,
+    localPort: 0,
+    upstream: `http://127.0.0.1:${upstream.address().port}`,
+    fetchImpl: globalThis.fetch,
+    profileKey: KEY,
+    vncPassword: 'desk-secret-not-logged',
+    accessMode: true,
+    accessVerify: async (token) => (token === 'good-assertion' ? { ok: true, login: 'hayden@intelio.co' } : { ok: false }),
+    log: (line) => logs.push(line),
+  });
+  await app.listen();
+  const port = app.local.address().port;
+  try {
+    const denied = await request(port, 'GET', '/health');
+    assert.equal(denied.status, 401);
+    const health = await request(port, 'GET', '/health', { cookie: 'CF_Authorization=good-assertion' });
+    assert.equal(health.status, 200);
+    assert.match(health.body, /"status":"ok"/);
+    const sessions = await request(port, 'GET', '/p/intelio/api/sessions?limit=1', { cookie: 'CF_Authorization=good-assertion' });
+    assert.equal(sessions.status, 200);
+    assert.match(sessions.body, /sample-tg/);
+    const boot = await request(port, 'GET', '/intelio/bootstrap', { cookie: 'CF_Authorization=good-assertion' });
+    assert.equal(boot.status, 200);
+    const parsed = JSON.parse(boot.body);
+    assert.equal(parsed.intelio, KEY);
+    assert.equal(parsed.vnc, 'desk-secret-not-logged');
+    const keyed = await request(port, 'GET', '/intelio/bootstrap', { headers: { authorization: `Bearer ${KEY}` } });
+    assert.equal(keyed.status, 401);
+    assert.equal(logs.join('\n').includes(KEY), false);
+    assert.equal(logs.join('\n').includes('desk-secret-not-logged'), false);
+    assert.equal(logs.join('\n').includes('good-assertion'), false);
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
+  }
+});

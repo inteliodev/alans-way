@@ -1,8 +1,25 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { chooseConnection, cloudTargets, labelWithMode, isAccessResponse, normalizeConnectionMode, CLOUD_API, CLOUD_DESKTOP } = require('../src/intelio/cloud-connection.cjs');
+const { chooseConnection, cloudTargets, labelWithMode, isAccessResponse, normalizeConnectionMode, allowedSignInUrl, CLOUD_API, CLOUD_DESKTOP, PROBE_TIMEOUT_MS } = require('../src/intelio/cloud-connection.cjs');
 const { createRemoteHermesClient } = require('../src/intelio/remote-hermes.cjs');
+
+test('the Access cookie is read from the session and is not written into preferences', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const main = fs.readFileSync(path.join(__dirname, '../src/intelio/remote-hermes-main.cjs'), 'utf8');
+  const prefs = fs.readFileSync(path.join(__dirname, '../src/intelio/preferences.cjs'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
+  const settings = fs.readFileSync(path.join(__dirname, '../src/intelio-ui.js'), 'utf8');
+  assert.equal(main.split('CF_Authorization').length - 1, 1);
+  assert.match(main, /cookies\.get\(\{ url: origin, name: 'CF_Authorization' \}\)/);
+  assert.equal(prefs.includes('CF_Authorization'), false);
+  assert.match(html, /Sign in again/);
+  assert.equal(html.includes('Needs you'), false);
+  assert.match(settings, /intelio cloud \(app\.intelio-ai\.com\)/);
+  assert.match(settings, /intelio cloud/);
+  assert.match(settings, /Tailscale/);
+});
 
 test('connection mode falls back to auto for anything else', () => {
   assert.equal(normalizeConnectionMode('auto'), 'auto');
@@ -13,6 +30,11 @@ test('connection mode falls back to auto for anything else', () => {
 });
 
 test('cloud targets stay on the Intelio hostnames unless e2e loopback is set', () => {
+  assert.equal(CLOUD_API, 'https://app.intelio-ai.com');
+  assert.equal(CLOUD_DESKTOP, 'https://app.intelio-ai.com/browser/vnc.html?path=/browser/websockify');
+  assert.ok(PROBE_TIMEOUT_MS >= 3000 && PROBE_TIMEOUT_MS <= 8000);
+  assert.equal(allowedSignInUrl('https://app.intelio-ai.com/'), true);
+  assert.equal(allowedSignInUrl('https://example.com/'), false);
   assert.deepEqual(cloudTargets({}), { origin: CLOUD_API, desktop: CLOUD_DESKTOP });
   assert.deepEqual(cloudTargets({ INTELIO_E2E: '1', INTELIO_CLOUD_API: 'https://example.com', INTELIO_CLOUD_DESKTOP: 'https://example.com/vnc.html' }), { origin: CLOUD_API, desktop: CLOUD_DESKTOP });
   assert.deepEqual(cloudTargets({ INTELIO_E2E: '1', INTELIO_CLOUD_API: 'http://127.0.0.1:9', INTELIO_CLOUD_DESKTOP: 'http://127.0.0.1:9/vnc.html' }), {

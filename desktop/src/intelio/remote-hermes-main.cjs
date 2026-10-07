@@ -229,7 +229,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     });
     signInWindow.on('closed', () => { closeSignInPoll(); signInWindow = null; });
     const origin = resolved.origin;
-    signInWindow.loadURL(`${origin}/health`).catch(() => {});
+    signInWindow.loadURL(`${origin}/`).catch(() => {});
     closeSignInPoll();
     let claimed = false;
     const poll = async () => {
