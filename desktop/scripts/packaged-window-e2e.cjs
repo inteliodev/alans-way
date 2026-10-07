@@ -150,6 +150,11 @@ function openCdp(url) {
   ws.addEventListener('message', (event) => {
     const raw = typeof event.data === 'string' ? event.data : Buffer.from(event.data).toString();
     const msg = JSON.parse(raw);
+    if (msg.method === 'Runtime.exceptionThrown') {
+      const details = msg.params && msg.params.exceptionDetails;
+      const text = details && (details.exception && details.exception.description || details.text) || 'exception';
+      process.stdout.write(`e2e exception: ${String(text).slice(0, 500)}\n`);
+    }
     if (!msg.id || !pending.has(msg.id)) return;
     const waiter = pending.get(msg.id);
     pending.delete(msg.id);
@@ -157,7 +162,7 @@ function openCdp(url) {
     else waiter.resolve(msg.result);
   });
   return {
-    async send(method, params, ms = 10000) {
+    async send(method, params, ms = 20000) {
       await opened;
       const id = ++seq;
       const result = new Promise((resolve, reject) => {
