@@ -6,6 +6,7 @@ HERMES_PROFILE, and tool handlers are not given a profile name. This module
 reads that per-message home (or hermes_cli.profiles.current_profile_name) and
 refuses default, custom, and unknown. It never guesses "intelio".
 """
+import ipaddress
 import json
 import os
 import urllib.request
@@ -136,7 +137,13 @@ def _check_origin(origin):
     host = parsed.hostname or ""
     if parsed.scheme not in ("http", "https") or not host or parsed.username or parsed.password:
         raise ValueError(FILLER_URL)
-    if host in {"0.0.0.0", "::"} or host == "*":
+    if host == "*":
+        raise ValueError(FILLER_URL)
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None and address.is_unspecified:
         raise ValueError(FILLER_URL)
     if ":" in host:
         host = f"[{host}]"

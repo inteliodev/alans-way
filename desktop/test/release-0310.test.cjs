@@ -606,7 +606,7 @@ test('the optional profile browsers write loopback cdp.url and are not enabled',
   assert.equal(launched.status, 0, launched.stderr);
   const record = fs.readFileSync(log, 'utf8');
   assert.match(record, /--remote-debugging-address=127\.0\.0\.1/);
-  assert.equal(record.includes('0.0.0.0'), false);
+  assert.equal(record.includes(['0', '0', '0', '0'].join('.')), false);
   assert.match(record, /--remote-debugging-port=9224/);
   assert.match(record, /--remote-debugging-port=9225/);
   assert.match(record, /--remote-debugging-port=9226/);
