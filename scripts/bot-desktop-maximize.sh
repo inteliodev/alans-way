@@ -130,14 +130,15 @@ maximize_one() {
   fi
   if command -v xdotool >/dev/null 2>&1; then
     note=""
-    found=1
+    # POSIX sh has no locals. run_all owns `found` and `failed`; do not assign them here.
+    hit=1
     for class in chromium Chromium; do
       if note=$(xdotool search --class "$class" windowmove 0 0 windowsize 1920 1080 2>&1); then
-        found=0
+        hit=0
         break
       fi
     done
-    if [ "$found" -eq 0 ]; then
+    if [ "$hit" -eq 0 ]; then
       clear_missing "$display"
       if [ "$quiet" -eq 0 ]; then
         echo "Maximized Chromium on $display"

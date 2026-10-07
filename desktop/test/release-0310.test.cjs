@@ -269,6 +269,33 @@ test('maximize sets XAUTHORITY, skips missing displays, and hides a failed xdoto
   assert.equal((quiet.stderr.match(/no Chromium window found/g) || []).length, 0);
 });
 
+test('a successful xdotool resize does not clear run_all’s display count', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-max-hit-'));
+  const x11 = path.join(root, 'x11');
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(x11);
+  fs.mkdirSync(bin);
+  const py = spawnSync('python3', ['-c', `import socket; s=socket.socket(socket.AF_UNIX); s.bind(${JSON.stringify(path.join(x11, 'X99'))}); s.listen(1)`], { encoding: 'utf8' });
+  assert.equal(py.status, 0, py.stderr);
+  fs.writeFileSync(path.join(bin, 'wmctrl'), '#!/bin/sh\nif [ "$1" = "-m" ]; then exit 1; fi\nexit 1\n');
+  fs.writeFileSync(path.join(bin, 'xdotool'), '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(path.join(bin, 'wmctrl'), 0o755);
+  fs.chmodSync(path.join(bin, 'xdotool'), 0o755);
+  const script = path.join(__dirname, '../../scripts/bot-desktop-maximize.sh');
+  const ran = spawnSync('sh', [script, '--all'], {
+    env: {
+      PATH: `${bin}:/usr/bin:/bin`,
+      HOME: root,
+      INTELIO_X11_DIR: x11,
+      INTELIO_BOT_DISPLAYS: ':99',
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.match(ran.stdout, /Maximized Chromium on :99/);
+  assert.equal(ran.stderr.includes('No Bot Desktop displays are up'), false);
+});
+
 test('fill_saved_login uses the per-message profile override and not the intelio key', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-plugin-profiles-'));
   const keys = {
