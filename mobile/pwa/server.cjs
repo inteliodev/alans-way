@@ -1046,8 +1046,9 @@ function createPwaServer({
       if (req.accessListener) {
         const keyed = presentedBearer(req);
         if (keyed.present) {
+          const pathProfile = /^\/p\/([a-z0-9][a-z0-9_-]{0,63})\//.exec(url.pathname)?.[1];
           let profileId = profileName;
-          try { profileId = chosenProfile(req, {}); } catch { profileId = profileName; }
+          try { profileId = pathProfile || chosenProfile(req, {}); } catch { profileId = profileName; }
           if (!keyEquals(keyed.token, profileId)) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
         } else {
           const access = await acceptAccess(req, res);

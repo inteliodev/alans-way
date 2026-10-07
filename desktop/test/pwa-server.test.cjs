@@ -292,6 +292,48 @@ test('voice routes use the server engine and never echo a posted secret', async 
   }
 });
 
+test('an Access listener bearer is checked against the profile in /p/<profile>/', async () => {
+  const intelioKey = 'intelio-key-not-real-0001';
+  const prcKey = 'prc-key-not-real-0002';
+  const hits = [];
+  const upstream = http.createServer((req, res) => {
+    hits.push({ url: req.url, auth: req.headers.authorization || '' });
+    if (req.url.startsWith('/p/prc/api/sessions') && req.headers.authorization === `Bearer ${prcKey}`) {
+      res.end(JSON.stringify({ data: [{ id: 'prc-session', title: 'PRC thread' }] }));
+      return;
+    }
+    res.statusCode = 401;
+    res.end('{"error":"no"}');
+  });
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const app = createPwaServer({
+    bind: '127.0.0.1',
+    port: 0,
+    localPort: 0,
+    upstream: `http://127.0.0.1:${upstream.address().port}`,
+    fetchImpl: globalThis.fetch,
+    profileKey: intelioKey,
+    accessMode: true,
+    profileOps: { keyFor: (id) => (id === 'prc' ? prcKey : intelioKey) },
+    accessVerify: async () => ({ ok: false }),
+  });
+  await app.listen();
+  const port = app.local.address().port;
+  try {
+    const ok = await request(port, 'GET', '/p/prc/api/sessions?limit=1', { headers: { authorization: `Bearer ${prcKey}` } });
+    assert.equal(ok.status, 200);
+    assert.match(ok.body, /prc-session/);
+    assert.equal(hits.some((row) => row.url.startsWith('/p/prc/api/sessions') && row.auth === `Bearer ${prcKey}`), true);
+    const wrong = await request(port, 'GET', '/p/prc/api/sessions?limit=1', { headers: { authorization: `Bearer ${intelioKey}` } });
+    assert.equal(wrong.status, 401);
+    assert.equal(wrong.body.includes(intelioKey), false);
+    assert.equal(wrong.body.includes(prcKey), false);
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
+  }
+});
+
 test('the Access listener proxies Hermes, the desktop, and bootstrap without logging secrets', async () => {
   const upstream = await mockHermes();
   const logs = [];
