@@ -29,10 +29,18 @@ body:not(.remote-main) #agent-caption-actions { display: flex !important; }
 .all-session .agent-name { font-size: 11px; font-weight: 650; }
 .session-time { margin-left: auto; color: #8d8d98; font-size: 10px; }
 .remote-thread { display: flex; flex-direction: column; min-height: 0; }
-.remote-messages { flex: 1; overflow: auto; padding: 14px 16px; }
-.msg { margin: 0 0 12px; white-space: pre-wrap; line-height: 1.45; }
-.msg.user { color: #c8c8d2; }
-.msg.assistant { color: #f4f4f8; }
+.remote-messages { flex: 1; overflow: auto; padding: 14px 16px; display: flex; flex-direction: column; align-items: flex-start; }
+.msg { max-width: min(640px, 88%); margin: 0 0 12px; padding: 8px 12px; border-radius: 14px; white-space: pre-wrap; line-height: 1.45; }
+.msg.user { align-self: flex-end; background: #1c1c22; color: #f4f4f8; }
+.msg.assistant { align-self: flex-start; background: #141418; color: #f4f4f8; }
+.tool-run { max-width: min(640px, 92%); }
+.tool-chip { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; padding: 0; border: 0; background: transparent; color: #8d8d98; font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+.tool-chip .mark { color: #70bc95; }
+.tool-chip.failed .mark { color: #ff453a; }
+.tool-chip.running .mark { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid currentColor; border-top-color: transparent; display: inline-block; animation: tool-spin 0.8s linear infinite; color: #8d8d98; }
+.tool-detail { display: none; margin: 0 0 10px 18px; white-space: pre-wrap; color: #8d8d98; font: 12px/1.4 inherit; }
+.tool-chip[aria-expanded="true"] + .tool-detail { display: block; }
+@keyframes tool-spin { to { transform: rotate(360deg); } }
 .remote-composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #232325; }
 .remote-composer input { flex: 1; background: #17171b; border: 1px solid #2c2c32; color: inherit; border-radius: 8px; padding: 8px 10px; }
 .remote-composer button { border-radius: 8px; padding: 8px 12px; background: #24242c; }

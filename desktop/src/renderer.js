@@ -88,18 +88,40 @@ function tabIcon(tab) {
   if (tab.favicon) { const img = element('img', 'tab-favicon'); img.src = tab.favicon; img.alt = ''; img.onerror = () => { img.replaceWith(tab.symbol || '◈'); }; icon.append(img); return icon; }
   icon.textContent = tab.symbol; return icon;
 }
+let agentPane = false;
+const agentUi = { id: '', tab: 'details', query: '', note: '', confirming: false, card: null, busy: false };
+function pinTab(label, selected, onClick) {
+  const node = element('div', `tab pin${selected ? ' active' : ''}`);
+  node.setAttribute('role', 'tab');
+  node.setAttribute('aria-selected', selected ? 'true' : 'false');
+  node.tabIndex = 0;
+  node.append(element('span', 'tab-title', label));
+  node.onclick = onClick;
+  node.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick(); } };
+  return node;
+}
 function renderTabs() {
   const container = $('tabs'); container.replaceChildren();
+  if (remoteActive()) {
+    const name = window.IntelioRemote?.selectedName?.() || 'Agent';
+    container.append(pinTab(`${name}'s computer`, !agentPane && state.activeTabId === 'vps', () => {
+      agentPane = false;
+      agentUi.confirming = false;
+      if (state.activeTabId !== 'vps') command('activate', { id: 'vps' });
+      else render(state);
+    }));
+    container.append(pinTab(name, agentPane, () => openAgentPane()));
+  }
   const entries = state.tabs.map((tab) => ({ ...tab, symbol: tab.loading ? '◌' : '◈' }));
   for (const tab of entries) {
-    const selected = state.browserTabId === tab.id;
+    const selected = !agentPane && state.browserTabId === tab.id;
     const node = element('div', `tab${selected ? ' active' : ''}`); node.setAttribute('role', 'tab'); node.setAttribute('aria-selected', selected ? 'true' : 'false'); node.tabIndex = 0;
     node.append(tabIcon(tab), element('span', 'tab-title', tab.title || 'New tab'));
     if (tab.controller === 'agent') { node.classList.add('agent'); node.append(element('span', 'agent-dot')); }
     if (tab.agentBusy) node.classList.add('busy');
     if(tab.host)node.title=`${tab.host==='vps'?'VPS':'Mac'} · ${state.bots.find(bot=>bot.id===tab.botId)?.name || tab.botId}${tab.controller === 'agent' ? ' · agent-controlled' : ''}`;
-    node.onclick = () => command('activate', { id: tab.id });
-    node.onkeydown = (event) => { if (event.key === 'Enter') command('activate', { id: tab.id }); };
+    node.onclick = () => { agentPane = false; command('activate', { id: tab.id }); };
+    node.onkeydown = (event) => { if (event.key === 'Enter') { agentPane = false; command('activate', { id: tab.id }); } };
     const close = element('button', 'tab-close', '×'); close.title = `Close ${tab.title || 'tab'}`; close.setAttribute('aria-label', close.title);
     close.onclick = (event) => { event.stopPropagation(); command('close-tab', { id: tab.id }); }; node.append(close);
     container.append(node);
@@ -199,6 +221,105 @@ function hermesChecklist(current) {
   const pin = (hermes.pinCommit || '').slice(0, 12) || 'missing';
   return { done: hermes.match === 'commit', label: `Hermes pin ${pin} · ${hermes.summary}` };
 }
+function agentOrb(id) {
+  return window.IntelioRemote?.signatureOf?.(id) || 'connecting';
+}
+function openAgentPane() {
+  agentPane = true;
+  const id = window.IntelioRemote?.selectedId?.() || 'intelio';
+  if (state?.activeTabId !== 'vps' && state?.showBrowser !== false) command('activate', { id: 'vps' }).catch(() => {});
+  loadAgentCard(id);
+  render(state);
+}
+async function loadAgentCard(id) {
+  const profile = ['intelio', 'prc', 'alignment', 'hhp'].includes(id) ? id : 'intelio';
+  agentUi.id = profile;
+  agentUi.note = '';
+  paintAgentCard();
+  let card = null;
+  try { card = await window.remoteHermes?.request('agent-card', { profile }); } catch { card = null; }
+  if (agentUi.id !== profile) return;
+  agentUi.card = card && card.id === profile ? card : agentUi.card;
+  if (!agentUi.card) agentUi.note = 'Profile details are not available yet.';
+  paintAgentCard();
+}
+function paintAgentCard() {
+  const host = $('agent-card');
+  if (!host || !agentPane) return;
+  const card = agentUi.card;
+  if (!card || !window.IntelioAgentCard) {
+    host.replaceChildren(element('p', 'agent-note', 'Loading profile…'));
+    host.classList.remove('hidden');
+    return;
+  }
+  window.IntelioAgentCard.mount(host, card, {
+    tab: agentUi.tab,
+    query: agentUi.query,
+    note: agentUi.note,
+    confirming: agentUi.confirming,
+    confirmLabel: card.paused ? 'Resume' : 'Pause',
+    busy: agentUi.busy,
+    orb: agentOrb(card.id),
+    onTab(next) { agentUi.tab = next; agentUi.confirming = false; paintAgentCard(); },
+    onQuery(value) { agentUi.query = value; },
+    onMessage() {
+      agentPane = false;
+      const input = $('remote-input');
+      if (input) input.focus();
+      render(state);
+    },
+    onCall() { window.IntelioRemote?.toggleCall?.(); },
+    onComputer() {
+      agentPane = false;
+      agentUi.confirming = false;
+      if (state.activeTabId !== 'vps') command('activate', { id: 'vps' });
+      else render(state);
+    },
+    onVault() { showSettings(card.id); },
+    async onThinking(effort) {
+      if (agentUi.busy) return;
+      agentUi.busy = true;
+      paintAgentCard();
+      try {
+        const next = await window.remoteHermes.request('agent-thinking', { profile: card.id, effort });
+        if (next?.id === card.id) agentUi.card = next;
+        agentUi.note = next?.readOnly ? 'Reasoning effort is read-only from this computer.' : '';
+      } catch (error) {
+        agentUi.note = error.message || 'Could not save reasoning effort.';
+      } finally {
+        agentUi.busy = false;
+        paintAgentCard();
+      }
+    },
+    onPause(current) {
+      agentUi.confirming = current.paused
+        ? `Resume ${current.name}? New turns from this app start again.`
+        : `Pause ${current.name}? New turns from this app stop. Scheduled jobs stay listed.`;
+      paintAgentCard();
+    },
+    onCancel() { agentUi.confirming = false; paintAgentCard(); },
+    async onConfirm() {
+      const paused = !card.paused;
+      agentUi.confirming = false;
+      agentUi.busy = true;
+      paintAgentCard();
+      try {
+        const next = await window.remoteHermes.request('agent-pause', { profile: card.id, paused });
+        if (next?.id === card.id) agentUi.card = next;
+        else agentUi.card = { ...card, paused };
+      } catch (error) {
+        agentUi.note = error.message || 'Could not pause this agent.';
+      } finally {
+        agentUi.busy = false;
+        paintAgentCard();
+      }
+    },
+    onCopy(value, note) {
+      window.IntelioAgentCard.copyText(value).then((ok) => { agentUi.note = ok ? note : 'Could not copy that.'; paintAgentCard(); });
+    },
+  });
+}
+window.onIntelioAgent = (id) => { if (agentPane) loadAgentCard(id); };
 function remoteActive(next = state) {
   const remote = next?.remoteHermes;
   if (window.IntelioRemote?.remoteConfigured) return window.IntelioRemote.remoteConfigured(remote);
@@ -269,6 +390,8 @@ function render(next) {
   $('vm-toggle').setAttribute('aria-label', $('vm-toggle').title);
   $('vm-toggle').setAttribute('aria-pressed', String(remote));
   $('shell').classList.toggle('browser-hidden', state.showBrowser === false);
+  document.querySelector('.workspace-pane')?.classList.toggle('agent-open', Boolean(agentPane && nowRemote));
+  if (!nowRemote) agentPane = false;
   $('browser-collapse').title = state.showBrowser === false ? 'Show browser pane' : 'Hide browser pane';
   $('browser-collapse').setAttribute('aria-label', $('browser-collapse').title);
   $('browser-collapse').setAttribute('aria-pressed', String(state.showBrowser === false));
@@ -306,6 +429,7 @@ function rect(id) {
   return { x: box.x + 1, y: box.y + 1, width: box.width - 2, height: box.height - 2 };
 }
 function browserRect() {
+  if (agentPane) return null;
   if (state?.activeTabId === 'vps' && (state.screenGrid || 1) > 1) {
     const cell = document.querySelector('.screen-cell.active');
     if (cell) {
@@ -474,7 +598,7 @@ async function showCookieSettings(body) {
   body.append(list, clearAll, element('hr', 'section-divider'));
   await refresh();
 }
-function showSettings() {
+function showSettings(profile) {
   openModal('Workspace settings');
   const body = $('modal-body'), field = element('div', 'field');
   const themeRow = element('div', 'setting-row');
@@ -487,7 +611,7 @@ function showSettings() {
   const vaultNote = element('p', 'settings-note', 'Site and username only. Passwords stay in this profile’s encrypted vault.');
   const vaultList = element('div', 'settings-bots');
   body.append(vaultHead, vaultNote, vaultList);
-  const vaultProfile = state.remoteHermes?.profile || 'intelio';
+  const vaultProfile = typeof profile === 'string' && profile ? profile : (window.IntelioRemote?.selectedId?.() || state.remoteHermes?.profile || 'intelio');
   command('vault-list', { profile: vaultProfile }).then((result) => {
     const rows = result?.logins || [];
     if (!rows.length) { vaultList.append(element('p', 'settings-note', 'No saved logins.')); return; }

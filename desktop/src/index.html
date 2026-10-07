@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: crx:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
-  <title>Intelio</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="intelio.css"><link rel="stylesheet" href="avatars.css"><link rel="stylesheet" href="remote-main.css"><link rel="stylesheet" href="theme-light.css">
+  <title>Intelio</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="intelio.css"><link rel="stylesheet" href="avatars.css"><link rel="stylesheet" href="remote-main.css"><link rel="stylesheet" href="agent-card.css"><link rel="stylesheet" href="theme-light.css">
 </head>
 <body>
   <div id="shell">
@@ -59,6 +59,7 @@
     <section class="workspace-pane">
       <div class="tab-bar drag"><div id="tabs" class="tabs"></div><button id="new-tab" class="icon-button new-tab no-drag" title="New local browser tab (⌘T)">＋</button><div class="pane-actions"><div id="screen-count" class="screen-count no-drag" role="group" aria-label="Screens"><button type="button" data-screens="1" aria-pressed="true">1</button><button type="button" data-screens="2">2</button><button type="button" data-screens="3">3</button><button type="button" data-screens="4">4</button></div><button id="browser-collapse" class="icon-button" title="Hide browser pane" aria-label="Hide browser pane" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></svg></button><button id="vm-toggle" class="icon-button" title="Local browser" aria-label="Local browser" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 10V8h3M14 8h3v3M17 14v2h-3M10 16H7v-2"/></svg></button></div></div>
       <div id="browser-toolbar" class="browser-toolbar"><button id="back" class="icon-button" title="Back">←</button><button id="forward" class="icon-button" title="Forward">→</button><button id="reload" class="icon-button" title="Reload">↻</button><form id="address-form"><span class="address-symbol">⌕</span><input id="address" placeholder="Search or enter a URL" autocomplete="off" spellcheck="false" aria-label="Browser address"></form><div id="pinned-extensions" class="pinned-extensions" role="toolbar" aria-label="Pinned extensions"></div><button id="extensions-button" class="icon-button" title="Extensions" aria-label="Extensions"><svg viewBox="0 0 24 24"><path d="M9 4h3a3 3 0 1 1 6 0h3v6a3 3 0 1 0 0 6v5h-6a3 3 0 1 0-6 0H4v-6a3 3 0 1 1 0-6V4h5Z"/></svg></button><button id="ask-bot" class="icon-button" title="Discuss this page with your agent" aria-label="Discuss this page with your agent"><svg viewBox="0 0 24 24"><path d="M4 5.5h16v10H9l-5 4z"/><path d="M12 13V8.5m0 0-2.4 2.4M12 8.5l2.4 2.4"/></svg></button><button id="control-button" class="control-button">You</button></div>
+      <div id="agent-card" class="agent-card hidden"></div>
       <div id="browser-slot" class="browser-slot">
         <div id="screen-grid" class="screen-grid hidden"></div>
         <div id="home" class="home">
@@ -83,5 +84,5 @@
   </div>
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-card"><div class="modal-heading"><h2 id="modal-title">Workspace settings</h2><button id="modal-close" class="icon-button" title="Close">×</button></div><div id="modal-body"></div></div></div>
   <div id="toast" class="toast hidden" role="status"></div>
-  <script src="avatars.js"></script><script src="intelio-ui.js"></script><script src="thinking-orbs.js"></script><script src="intelio/bops.cjs"></script><script src="remote-main.js"></script><script src="renderer.js"></script>
+  <script src="avatars.js"></script><script src="intelio-ui.js"></script><script src="thinking-orbs.js"></script><script src="intelio/bops.cjs"></script><script src="agent-card-ui.js"></script><script src="intelio/transcript.cjs"></script><script src="remote-main.js"></script><script src="renderer.js"></script>
 </body></html>

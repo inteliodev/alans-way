@@ -6,7 +6,8 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeRemoteConfig, createRemoteHermesClient, redactKey, PROFILE_RE } = require('./remote-hermes.cjs');
+const { normalizeRemoteConfig, createRemoteHermesClient, redactKey, PROFILE_RE, isTailnetOrLoopbackHost } = require('./remote-hermes.cjs');
+const { harnessId, buildCard } = require('./agent-card.cjs');
 const { vaultOrigin, postProfileVault } = require('./remote-vault.cjs');
 const { createRemoteMain } = require('./remote-main-data.cjs');
 const { checkTailscale, assertInstallUrl, installUrl } = require('./tailscale.cjs');
@@ -407,6 +408,74 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
+  async function pullPwaCard(profile, key, pathname, body) {
+    if (!key) return null;
+    let cfg;
+    try { cfg = await config(); } catch { return null; }
+    if (!cfg?.host || cfg.origin || cfg.activeMode === 'cloud' || !isTailnetOrLoopbackHost(cfg.host)) return null;
+    const port = Number(process.env.INTELIO_PWA_PORT || 8643);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    const host = cfg.host.includes(':') && !cfg.host.startsWith('[') ? `[${cfg.host}]` : cfg.host;
+    const scheme = cfg.host === '127.0.0.1' || cfg.host === 'localhost' || cfg.host === '::1' ? 'http' : 'https';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1200);
+    try {
+      const response = await fetch(`${scheme}://${host}:${port}${pathname}?profile=${encodeURIComponent(profile)}`, {
+        method: body ? 'POST' : 'GET',
+        headers: {
+          Authorization: `Bearer ${key}`,
+          Accept: 'application/json',
+          'x-intelio-profile': profile,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+        redirect: 'error',
+      });
+      if (!response.ok) return null;
+      const parsed = await response.json();
+      return parsed && parsed.id === profile ? parsed : null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function agentCard(profile) {
+    const id = harnessId(profile) || 'intelio';
+    const key = await getKey(id).catch(() => '');
+    const remote = key ? await pullPwaCard(id, key, '/api/agent/card') : null;
+    if (remote) return remote;
+    const jobs = await client.optional('GET', '/api/jobs', { profile: id });
+    const memory = await client.optional('GET', '/api/memory', { profile: id });
+    return buildCard({
+      id,
+      jobs,
+      userText: memory?.user || memory?.USER || '',
+      memoryText: memory?.memory || memory?.MEMORY || memory?.text || '',
+      computer: { status: 'stopped' },
+    });
+  }
+
+  async function agentThinking(profile, effort) {
+    const id = harnessId(profile) || 'intelio';
+    const key = await getKey(id).catch(() => '');
+    const remote = key ? await pullPwaCard(id, key, '/api/agent/thinking', { effort, profile: id }) : null;
+    if (remote) return remote;
+    const card = await agentCard(id);
+    return { ...card, readOnly: true };
+  }
+
+  async function agentPause(profile, paused) {
+    const id = harnessId(profile) || 'intelio';
+    const key = await getKey(id).catch(() => '');
+    const remote = key ? await pullPwaCard(id, key, '/api/agent/pause', { paused: paused === true, profile: id }) : null;
+    if (remote) return remote;
+    const card = await agentCard(id);
+    return { ...card, paused: paused === true, localOnly: true };
+  }
+
   function register() {
     ipcMain.handle('remote-hermes', async (event, name, value = {}) => {
       trusted(event);
@@ -433,6 +502,9 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
           case 'messages': return await client.messages(String(value.id), { profile: value.profile });
           case 'create-session': return await client.createSession(value.title, { profile: value.profile });
           case 'skills': return await client.skills();
+          case 'agent-card': return await agentCard(value.profile);
+          case 'agent-thinking': return await agentThinking(value.profile, value.effort);
+          case 'agent-pause': return await agentPause(value.profile, value.paused !== false);
           case 'send': {
             const id = String(value.id);
             const controller = new AbortController();

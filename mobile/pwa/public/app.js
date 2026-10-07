@@ -35,6 +35,15 @@
     searching: false,
     connecting: false,
     browserControl: false,
+    browserPane: 'computer',
+    profileTab: 'details',
+    profileCard: null,
+    profileNote: '',
+    profileQuery: '',
+    profileConfirm: false,
+    profileBusy: false,
+    profileLoaded: '',
+    updateReady: false,
   };
   let rfb = null;
   let audioCtx = null;
@@ -203,7 +212,7 @@
     const name = String(profile?.name || '').trim();
     return name || 'Intelio';
   }
-  const CLIENT_VERSION = 'intelio-pwa-9';
+  const CLIENT_VERSION = 'intelio-pwa-10';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);
@@ -398,6 +407,7 @@
     const screen = el('div', 'screen');
     screen.append(statusBar());
     if (state.sample) screen.append(sampleFlag());
+    if (state.updateReady) screen.append(updateBanner());
     const hint = installHint();
     if (hint) screen.append(hint);
     if (state.error) screen.append(el('div', 'toast', state.error));
@@ -497,7 +507,8 @@
     button.type = 'button';
     button.append(face(profile, 'avatar sm'));
     const copy = el('div', 'copy');
-    copy.append(el('strong', '', row.title), el('p', '', row.preview || ''));
+    const shown = window.IntelioTranscript ? window.IntelioTranscript.preview(row.preview || '') : (row.preview || '');
+    copy.append(el('strong', '', row.title), el('p', '', shown));
     button.append(copy);
     const live = (state.call.active && state.call.sessionId === row.id) || row.inCall;
     if (live) {
@@ -631,6 +642,10 @@
       button.addEventListener('click', () => selectProfile(profile));
       panel.append(button);
     }
+    const profileRow = el('button', 'navbtn', 'Profile');
+    profileRow.type = 'button';
+    profileRow.addEventListener('click', () => openBrowser('agent'));
+    panel.append(profileRow);
     panel.append(el('div', 'kicker', 'THREADS'));
     const sides = el('div', 'sides');
     const threads = visibleChats();
@@ -687,9 +702,286 @@
     return bar;
   }
 
-  function openBrowser() {
+  let profileToken = 0;
+
+  async function loadProfile(force) {
+    const id = String(state.bot?.id || '').toLowerCase();
+    if (!VPS_AGENTS.includes(id)) return;
+    if (!force && state.profileLoaded === id) return;
+    state.profileLoaded = id;
+    const token = ++profileToken;
+    try {
+      const response = await fetch(`/api/agent/card?profile=${encodeURIComponent(id)}`, { headers: profileHeaders(id) });
+      const card = await response.json().catch(() => null);
+      if (token !== profileToken || String(state.bot?.id || '').toLowerCase() !== id) return;
+      if (card && card.id === id) {
+        state.profileCard = card;
+        state.profileNote = '';
+      } else if (!state.profileCard || state.profileCard.id !== id) {
+        state.profileNote = 'Profile details are not available yet.';
+      }
+    } catch {
+      if (token !== profileToken) return;
+      if (!state.profileCard || state.profileCard.id !== id) state.profileNote = 'Profile details are not available yet.';
+    }
+    if (state.view === 'browser' && state.browserPane === 'agent') render();
+  }
+
+  async function postProfile(pathname, body) {
+    const id = String(state.bot?.id || '').toLowerCase();
+    state.profileBusy = true;
+    render();
+    try {
+      const response = await fetch(pathname, {
+        method: 'POST',
+        headers: profileHeaders(id, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ ...body, profile: id }),
+      });
+      const card = await response.json().catch(() => null);
+      if (card && card.id === id) state.profileCard = card;
+      state.profileLoaded = id;
+    } catch {
+      state.profileNote = 'Could not save that.';
+    } finally {
+      state.profileBusy = false;
+      if (state.view === 'browser') render();
+    }
+  }
+
+  async function copyProfile(value, note) {
+    let ok = false;
+    try {
+      if (value && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(String(value));
+        ok = true;
+      }
+    } catch { ok = false; }
+    state.profileNote = ok ? note : 'Could not copy that.';
+    const node = document.querySelector('.profile-note');
+    if (node) node.textContent = state.profileNote;
+    else if (state.view === 'browser') render();
+  }
+
+  function profileField(label, value, copyNote) {
+    const row = el('div', 'profile-field');
+    const copy = el('div', '');
+    copy.append(el('p', 'profile-kicker', label), el('p', 'profile-value', value || 'Not configured'));
+    row.append(copy);
+    if (value) {
+      const button = el('button', 'profile-text', 'Copy');
+      button.type = 'button';
+      button.addEventListener('click', () => copyProfile(value, copyNote));
+      row.append(button);
+    }
+    return row;
+  }
+
+  function profileSegment(label, options, selected, disabled, onPick) {
+    const wrap = el('div', 'profile-block');
+    wrap.append(el('h3', '', label));
+    const row = el('div', 'profile-segment');
+    for (const option of options) {
+      const button = el('button', 'profile-seg', option.label);
+      button.type = 'button';
+      button.disabled = disabled || state.profileBusy;
+      button.setAttribute('aria-pressed', String(option.id === selected));
+      if (!button.disabled) button.addEventListener('click', () => onPick(option.id));
+      row.append(button);
+    }
+    wrap.append(row);
+    return wrap;
+  }
+
+  function profileDetails(card) {
+    const wrap = el('div', 'profile-stack');
+    wrap.append(profileField(card.phone ? 'mobile · iMessage' : 'mobile', card.phoneLabel, 'Number copied.'));
+    wrap.append(profileField('email', card.email, 'Email copied.'));
+    const computer = el('button', 'profile-block profile-link');
+    computer.type = 'button';
+    const head = el('div', 'profile-row');
+    head.append(el('h3', '', 'Computer'), el('span', 'profile-muted', `${card.computer?.label || 'Stopped'} · open`));
+    computer.append(head, el('p', 'profile-muted', `${card.name}'s computer`));
+    computer.addEventListener('click', () => openBrowser('computer'));
+    wrap.append(computer);
+    const uses = el('div', 'profile-block');
+    const usesHead = el('div', 'profile-row');
+    usesHead.append(el('h3', '', 'Uses'));
+    const manage = el('button', 'profile-text', 'Manage in Vault');
+    manage.type = 'button';
+    manage.addEventListener('click', () => openSavedLogins(''));
+    usesHead.append(manage);
+    const icons = el('div', 'profile-uses');
+    const list = Array.isArray(card.uses) ? card.uses : [];
+    if (!list.length) icons.append(el('p', 'profile-muted', 'No connected toolsets in this profile.'));
+    for (const item of list) {
+      const badge = el('span', 'profile-use', String(item.name || '?').slice(0, 1).toUpperCase());
+      badge.title = item.name || '';
+      icons.append(badge);
+    }
+    uses.append(usesHead, icons);
+    wrap.append(uses);
+    wrap.append(profileSegment('Thinking', [
+      { id: 'auto', label: 'Auto' },
+      { id: 'low', label: 'Low' },
+      { id: 'medium', label: 'Medium' },
+      { id: 'high', label: 'High' },
+    ], card.thinking, !card.thinkingWritable, (effort) => postProfile('/api/agent/thinking', { effort })));
+    if (!card.thinkingWritable) wrap.append(el('p', 'profile-muted', 'Reasoning effort is read-only until this profile config has a model block.'));
+    wrap.append(profileSegment('Works on', [
+      { id: 'auto', label: 'Auto' },
+      { id: 'cloud', label: 'Cloud' },
+      { id: 'local', label: 'Your computer' },
+    ], card.worksOn || 'cloud', true, () => {}));
+    wrap.append(el('p', 'profile-muted', 'These agents run on the VPS. This choice is read-only.'));
+    const routines = el('div', 'profile-block');
+    routines.append(el('h3', '', 'Routines and scheduled'));
+    const jobs = Array.isArray(card.routines) ? card.routines : [];
+    if (!jobs.length) routines.append(el('p', 'profile-muted', 'No scheduled jobs.'));
+    for (const job of jobs) {
+      const row = el('div', 'profile-row');
+      row.append(el('strong', '', job.name || 'Scheduled job'), el('span', 'profile-muted', [job.schedule, job.status].filter(Boolean).join(' · ')));
+      routines.append(row);
+    }
+    wrap.append(routines);
+    const where = el('div', 'profile-block');
+    where.append(el('h3', '', `Where to find ${card.name}`));
+    const grid = el('div', 'profile-channels');
+    for (const channel of card.channels || []) {
+      const cell = el('div', 'profile-channel');
+      const name = el('span', '', channel.label);
+      name.append(el('span', `profile-dot ${channel.state || 'off'}`));
+      cell.append(name, el('span', 'profile-muted', channel.detail || ''));
+      grid.append(cell);
+    }
+    where.append(grid);
+    wrap.append(where);
+    const share = el('button', 'profile-wide', 'Share contact');
+    share.type = 'button';
+    share.addEventListener('click', () => copyProfile(card.contact, 'Contact copied.'));
+    wrap.append(share);
+    if (state.profileConfirm) {
+      const ask = el('div', 'profile-block');
+      ask.append(el('p', '', card.paused ? `Resume ${card.name}? New turns from this app start again.` : `Pause ${card.name}? New turns from this app stop. Scheduled jobs stay listed.`));
+      const yes = el('button', 'profile-pause', card.paused ? 'Resume' : 'Pause');
+      yes.type = 'button';
+      yes.addEventListener('click', () => {
+        state.profileConfirm = false;
+        postProfile('/api/agent/pause', { paused: !card.paused });
+      });
+      const no = el('button', 'profile-text', 'Cancel');
+      no.type = 'button';
+      no.addEventListener('click', () => { state.profileConfirm = false; render(); });
+      ask.append(yes, no);
+      wrap.append(ask);
+    } else {
+      const pause = el('button', 'profile-pause', card.paused ? `Resume ${card.name}` : `Pause ${card.name}`);
+      pause.type = 'button';
+      pause.disabled = state.profileBusy;
+      pause.addEventListener('click', () => { state.profileConfirm = true; render(); });
+      wrap.append(pause);
+    }
+    return wrap;
+  }
+
+  function profileMemory(card) {
+    const wrap = el('div', 'profile-stack');
+    const search = document.createElement('input');
+    search.className = 'profile-search';
+    search.type = 'search';
+    search.placeholder = 'Search memory';
+    search.setAttribute('aria-label', 'Search memory');
+    search.value = state.profileQuery || '';
+    const body = el('pre', 'profile-memory');
+    const paint = () => {
+      const q = search.value.trim().toLowerCase();
+      const text = card.memory || 'No memory file for this profile.';
+      if (!q) { body.textContent = text; return; }
+      const lines = text.split('\n').filter((line) => line.toLowerCase().includes(q));
+      body.textContent = lines.length ? lines.join('\n') : 'No matching lines.';
+    };
+    search.addEventListener('input', () => { state.profileQuery = search.value; paint(); });
+    paint();
+    wrap.append(search, body);
+    return wrap;
+  }
+
+  function profilePhone(card) {
+    const wrap = el('div', 'profile-stack');
+    wrap.append(el('h3', '', card.phoneSoon ? 'Phone soon' : 'Phone'));
+    wrap.append(el('p', 'profile-muted', card.phoneSoon ? 'Twilio voice is not live for this agent. iMessage uses the number below.' : 'Calling uses the number below.'));
+    wrap.append(profileField('iMessage', card.phoneLabel, 'Number copied.'));
+    return wrap;
+  }
+
+  function profileBody() {
+    const wrap = el('div', 'profile-sheet');
+    const card = state.profileCard && state.profileCard.id === state.bot?.id ? state.profileCard : null;
+    const head = el('header', 'profile-head');
+    head.append(face(state.bot, 'avatar', { still: true, pinned: true }));
+    const titles = el('div', '');
+    titles.append(el('h2', '', card?.name || agentLabel(state.bot)));
+    if (card?.title) titles.append(el('p', 'profile-muted', card.title));
+    head.append(titles);
+    const tools = el('div', 'profile-tools');
+    const message = el('button', 'profile-tool', 'Message');
+    message.type = 'button';
+    message.addEventListener('click', () => {
+      try { rfb?.disconnect(); } catch { /* already closed */ }
+      rfb = null;
+      state.view = state.chatId ? 'chat' : 'home';
+      render();
+    });
+    const call = el('button', 'profile-tool', 'Call');
+    call.type = 'button';
+    call.addEventListener('click', () => {
+      if (state.chatId) startCall(state.chatId);
+      else { state.profileNote = 'Open a thread, then call.'; render(); }
+    });
+    const video = el('button', 'profile-tool', 'Video');
+    video.type = 'button';
+    video.disabled = true;
+    video.title = 'Video soon';
+    const email = el('button', 'profile-tool', 'Email');
+    email.type = 'button';
+    email.disabled = !card?.email;
+    email.title = card?.email ? `Copy ${card.email}` : 'No email configured';
+    email.addEventListener('click', () => { if (card?.email) copyProfile(card.email, 'Email copied.'); });
+    tools.append(message, call, video, email);
+    head.append(tools);
+    wrap.append(head);
+    const tabs = el('div', 'profile-subtabs');
+    for (const [id, label] of [['details', 'Details'], ['memory', 'Memory'], ['phone', card?.phoneSoon === false ? 'Phone' : 'Phone soon']]) {
+      const button = el('button', 'profile-subtab', label);
+      button.type = 'button';
+      button.setAttribute('aria-selected', String(state.profileTab === id));
+      button.addEventListener('click', () => { state.profileTab = id; state.profileConfirm = false; render(); });
+      tabs.append(button);
+    }
+    wrap.append(tabs);
+    if (!card) wrap.append(el('p', 'profile-muted', state.profileNote || 'Loading profile…'));
+    else if (state.profileTab === 'memory') wrap.append(profileMemory(card));
+    else if (state.profileTab === 'phone') wrap.append(profilePhone(card));
+    else wrap.append(profileDetails(card));
+    if (state.profileNote) wrap.append(el('p', 'profile-note', state.profileNote));
+    return wrap;
+  }
+
+  function updateBanner() {
+    const bar = el('button', 'update-banner', 'New version. Tap to reload.');
+    bar.type = 'button';
+    bar.addEventListener('click', () => location.reload());
+    return bar;
+  }
+
+  function openBrowser(pane) {
     haptic();
+    const next = pane === 'agent' ? 'agent' : 'computer';
+    if (next === 'agent') {
+      try { rfb?.disconnect(); } catch { /* already closed */ }
+      rfb = null;
+    }
     state.view = 'browser';
+    state.browserPane = next;
     state.drawer = false;
     render();
   }
@@ -707,7 +999,20 @@
       state.view = state.chatId ? 'chat' : 'home';
       render();
     });
-    const title = el('strong', 'browser-title', `${agentLabel(state.bot)} browser`);
+    const strip = el('div', 'pane-tabs');
+    const computerTab = el('button', `pane-tab${state.browserPane === 'agent' ? '' : ' on'}`, `${agentLabel(state.bot)}'s computer`);
+    computerTab.type = 'button';
+    computerTab.addEventListener('click', () => { if (state.browserPane === 'agent') openBrowser('computer'); });
+    const agentTab = el('button', `pane-tab${state.browserPane === 'agent' ? ' on' : ''}`, agentLabel(state.bot));
+    agentTab.type = 'button';
+    agentTab.addEventListener('click', () => { if (state.browserPane !== 'agent') openBrowser('agent'); });
+    strip.append(computerTab, agentTab);
+    bar.append(back, strip);
+    if (state.browserPane === 'agent') {
+      wrap.append(bar, profileBody());
+      queueMicrotask(() => loadProfile(false));
+      return wrap;
+    }
     const lock = el('button', 'iconbtn');
     lock.type = 'button';
     lock.setAttribute('aria-label', 'Saved login for this site');
@@ -725,7 +1030,7 @@
       const hint = document.getElementById('browser-hint');
       if (hint) hint.textContent = state.browserControl ? 'You control this view.' : 'Watching. Take control to use the pointer and keyboard.';
     });
-    bar.append(back, title, lock, control);
+    bar.append(lock, control);
     const hint = el('p', 'browser-hint', state.browserControl ? 'You control this view.' : 'Watching. Take control to use the pointer and keyboard.');
     hint.id = 'browser-hint';
     const screen = el('div', 'vnc-screen');
@@ -811,17 +1116,40 @@
     return wrap;
   }
 
+  function phoneChip(item) {
+    const wrap = el('div', 'tool-run');
+    const button = el('button', `tool-chip${item.running ? ' running' : ''}${item.failed ? ' failed' : ''}`);
+    button.type = 'button';
+    button.append(el('span', 'mark', item.running ? '' : (item.failed ? '!' : '✓')));
+    button.append(document.createTextNode(` ${item.label}`));
+    if (item.detail) {
+      button.setAttribute('aria-expanded', 'false');
+      const detail = el('pre', 'tool-detail', item.detail);
+      button.addEventListener('click', () => {
+        const open = button.getAttribute('aria-expanded') === 'true';
+        button.setAttribute('aria-expanded', open ? 'false' : 'true');
+      });
+      wrap.append(button, detail);
+    } else wrap.append(button);
+    return wrap;
+  }
+
+  function threadItems(messages) {
+    if (window.IntelioTranscript) return window.IntelioTranscript.present(messages);
+    return messages.map((message) => ({ kind: 'bubble', role: message.role === 'user' ? 'user' : 'assistant', text: message.text || '' }));
+  }
+
   function fillThread(thread, messages) {
     thread.replaceChildren();
-    for (const message of messages) {
-      if (message.role === 'activity' || message.role === 'tool') thread.append(toolCard(message));
-      else if (message.role === 'time') thread.append(el('div', 'stamp', message.text));
-      else if (message.role === 'choice') {
-        const choice = el('button', 'choice', message.text);
+    for (const item of threadItems(messages)) {
+      if (item.kind === 'chip') thread.append(phoneChip(item));
+      else if (item.kind === 'time') thread.append(el('div', 'stamp', item.text));
+      else if (item.kind === 'choice') {
+        const choice = el('button', 'choice', item.text);
         choice.type = 'button';
-        choice.addEventListener('click', () => sendTurn(message.text));
+        choice.addEventListener('click', () => sendTurn(item.text));
         thread.append(choice);
-      } else thread.append(el('div', `bubble ${message.role === 'user' ? 'user' : 'bot'}`, message.text));
+      } else if (item.kind === 'bubble' && item.text) thread.append(el('div', `bubble ${item.role === 'user' ? 'user' : 'bot'}`, item.text));
     }
     const block = bopsBlock();
     if (block) thread.prepend(block);
@@ -897,9 +1225,9 @@
 
   function fillCaptions(node, lines) {
     node.replaceChildren();
-    for (const line of lines) {
-      if (line.role === 'activity' || line.role === 'time') continue;
-      node.append(el('p', `cap ${line.role === 'user' ? 'user' : 'bot'}`, line.text));
+    for (const item of threadItems(lines)) {
+      if (item.kind !== 'bubble' || !item.text) continue;
+      node.append(el('p', `cap ${item.role === 'user' ? 'user' : 'bot'}`, item.text));
     }
   }
 
@@ -919,8 +1247,8 @@
     return [...new Set(out)];
   }
 
-  function pushLine(role, text) {
-    const line = { role, text };
+  function pushLine(role, text, extra) {
+    const line = Object.assign({ role, text }, extra || {});
     for (const bucket of buckets()) bucket.push(line);
     paintThread();
     return line;
@@ -966,6 +1294,12 @@
     state.error = '';
     render();
     if ('serviceWorker' in navigator && location.protocol !== 'http:') {
+      const hadController = Boolean(navigator.serviceWorker.controller);
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (!hadController || event.data?.type !== 'intelio-pwa-update') return;
+        state.updateReady = true;
+        render();
+      });
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
   }
@@ -989,7 +1323,12 @@
     const lines = (body.data || []).map((message) => ({
       role: message.role || 'assistant',
       text: typeof message.content === 'string' ? message.content : (message.text || ''),
-    })).filter((message) => message.text);
+      content: message.content,
+      tool_name: message.tool_name || message.name || '',
+      tool_calls: message.tool_calls || message.toolCalls || [],
+      status: message.status || '',
+      title: message.title || '',
+    })).filter((message) => message.text || message.content || message.role === 'tool' || message.role === 'activity' || (message.tool_calls && message.tool_calls.length));
     if (target) {
       target.splice(0, target.length, ...lines);
     }
@@ -1025,6 +1364,10 @@
   function selectProfile(profile) {
     haptic();
     state.bot = profile;
+    state.profileLoaded = '';
+    state.profileCard = null;
+    state.profileNote = '';
+    state.profileConfirm = false;
     state.drawer = true;
     if (state.view === 'chat' || state.view === 'browser') {
       state.view = 'home';
@@ -1789,9 +2132,12 @@
       }
       const delta = payload.delta || payload.text || '';
       if (!delta) return;
+      const before = window.IntelioTranscript ? window.IntelioTranscript.peel(pending.text).prose : pending.text;
       pending.text += delta;
+      const after = window.IntelioTranscript ? window.IntelioTranscript.peel(pending.text).prose : pending.text;
+      const spoken = after.startsWith(before) ? after.slice(before.length) : '';
       paintThread();
-      if (state.call.active && state.call.speaker) feedSpeech(delta);
+      if (spoken && state.call.active && state.call.speaker) feedSpeech(spoken);
     });
     pending.pending = false;
     if (state.call.active && state.call.speaker && unspoken.trim()) {

@@ -248,6 +248,9 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
     getSession: (id, { profile } = {}) => request('GET', `/api/sessions/${encodeURIComponent(id)}`, { profile }),
     messages: (id, { profile } = {}) => request('GET', `/api/sessions/${encodeURIComponent(id)}/messages`, { query: { inline_images: 'false' }, profile }),
     createSession: (title, { profile } = {}) => request('POST', '/api/sessions', { body: title ? { title: String(title).slice(0, 200) } : {}, profile }),
+    optional(method, path, options) {
+      return request(method, path, options).catch(() => null);
+    },
     /** Run one turn in an existing session; calls onEvent for each SSE event. Resolves with the final assistant text. */
     async chat(id, input, { onEvent = () => {}, signal, profile } = {}) {
       const response = await request('POST', `/api/sessions/${encodeURIComponent(id)}/chat/stream`, { body: { input: String(input) }, stream: true, signal, profile });

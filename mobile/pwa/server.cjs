@@ -28,6 +28,8 @@ const { renderOrbPng } = require('./orbs.cjs');
 const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
 const { resolveVncUpstream, readVncPassword, bridgeVnc } = require('./vnc-proxy.cjs');
 const { resolveCdpUrl } = require('../../desktop/src/intelio/cdp-fill.cjs');
+const { harnessId, buildCard, readProfileFiles, writePaused, writeReasoning } = require('../../desktop/src/intelio/agent-card.cjs');
+const { preview: previewTranscript } = require('../../desktop/src/intelio/transcript.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
 const STATIC = {
@@ -497,7 +499,9 @@ function createPwaServer({
     };
   }
   function chosenProfile(req, body) {
-    const raw = String((body && body.profile) || req.headers['x-intelio-profile'] || profileName || 'intelio').trim().toLowerCase();
+    let fromQuery = '';
+    try { fromQuery = new URL(req.url || '/', 'http://127.0.0.1').searchParams.get('profile') || ''; } catch { fromQuery = ''; }
+    const raw = String((body && body.profile) || req.headers['x-intelio-profile'] || fromQuery || profileName || 'intelio').trim().toLowerCase();
     return assertSlug(raw);
   }
   function send(res, code, body, headers = {}) {
@@ -637,7 +641,7 @@ function createPwaServer({
         profileId,
         group: String(row.source || 'chat').toLowerCase(),
         title: String(row.title || 'Conversation').slice(0, 120),
-        preview: String(row.preview || row.last_message || row.title || '').slice(0, 180),
+        preview: previewTranscript(String(row.preview || row.last_message || row.title || '')).slice(0, 180),
         time: clockLabel(row.updated_at || row.updatedAt || row.created_at),
         source: String(row.source || ''),
       })).filter((row) => ID_RE.test(row.id));
@@ -665,7 +669,7 @@ function createPwaServer({
   }
   function publicAsset(pathname) {
     if (STATIC[pathname] || iconBytes[pathname]) return true;
-    if (pathname === '/bops.js') return true;
+    if (pathname === '/bops.js' || pathname === '/transcript.js') return true;
     if (pathname.startsWith('/avatars/') && /^\/avatars\/[a-z0-9-]+\.png$/.test(pathname)) return true;
     return Boolean(novncFile(pathname));
   }
@@ -702,8 +706,8 @@ function createPwaServer({
       res.writeHead(200, { ...cookieHeaders(res), 'content-type': type, 'content-length': payload.length, 'cache-control': 'public, max-age=300' });
       return res.end(payload);
     }
-    if (url.pathname === '/bops.js') {
-      const file = path.join(__dirname, '../../desktop/src/intelio/bops.cjs');
+    if (url.pathname === '/bops.js' || url.pathname === '/transcript.js') {
+      const file = path.join(__dirname, '../../desktop/src/intelio', url.pathname === '/transcript.js' ? 'transcript.cjs' : 'bops.cjs');
       const payload = fs.readFileSync(file);
       res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'text/javascript; charset=utf-8', 'content-length': payload.length, 'cache-control': 'no-cache' });
       return res.end(payload);
@@ -917,6 +921,27 @@ function createPwaServer({
       }
       if (req.method === 'GET' && url.pathname === '/api/browser/site') {
         return send(res, 200, { domain: await browserDomain(chosenProfile(req)) });
+      }
+      if (url.pathname === '/api/agent/card' || url.pathname === '/api/agent/thinking' || url.pathname === '/api/agent/pause') {
+        const writing = req.method === 'POST';
+        if (writing && !presentedBearer(req).present && !mutationOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
+        const body = writing ? await readBody(req, 4096) : {};
+        const id = harnessId(chosenProfile(req, body));
+        if (!id) return send(res, 404, { error: 'Unknown agent.' });
+        if (writing && url.pathname === '/api/agent/thinking') writeReasoning(vaultRootPath, id, String(body.effort || '').toLowerCase());
+        if (writing && url.pathname === '/api/agent/pause') writePaused(vaultRootPath, id, body.paused !== false);
+        const files = readProfileFiles(vaultRootPath, id);
+        const jobs = sample ? { list: [] } : await optionalList(id, '/api/jobs', normalizeJobs);
+        const card = buildCard({
+          id,
+          configText: files.configText,
+          userText: files.userText,
+          memoryText: files.memoryText,
+          paused: files.paused,
+          computer: files.computer,
+          jobs: jobs.list,
+        });
+        return send(res, 200, card);
       }
       if (req.method === 'GET' && url.pathname === '/api/home') {
         if (sample) return send(res, 200, SAMPLE_HOME);

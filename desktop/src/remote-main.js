@@ -259,7 +259,10 @@
       const meta = el('div', 'session-meta');
       meta.append(el('span', 'source-pill', session.sourceLabel || session.source || 'session'));
       item.append(meta, el('div', 'session-title', session.title || session.id));
-      if (session.preview) item.append(el('div', 'session-preview', session.preview));
+      if (session.preview) {
+        const shown = root.IntelioTranscript ? root.IntelioTranscript.preview(session.preview) : session.preview;
+        if (shown) item.append(el('div', 'session-preview', shown));
+      }
       item.onclick = () => openSession(session.id);
       list.append(item);
     }
@@ -272,16 +275,31 @@
     fillSessionList($('sidebar-threads'), mine);
   }
 
+  function chipNode(item) {
+    const wrap = el('div', 'tool-run');
+    const button = el('button', `tool-chip${item.running ? ' running' : ''}${item.failed ? ' failed' : ''}`);
+    button.type = 'button';
+    button.append(el('span', 'mark', item.running ? '' : (item.failed ? '!' : '✓')));
+    button.append(root.document.createTextNode(` ${item.label}`));
+    if (item.detail) {
+      button.setAttribute('aria-expanded', 'false');
+      const detail = el('pre', 'tool-detail', item.detail);
+      button.onclick = () => {
+        const open = button.getAttribute('aria-expanded') === 'true';
+        button.setAttribute('aria-expanded', open ? 'false' : 'true');
+      };
+      wrap.append(button, detail);
+    } else wrap.append(button);
+    return wrap;
+  }
   function paintMessages() {
     const pane = $('remote-messages');
     if (!pane) return;
     pane.replaceChildren();
-    for (const message of ui.messages) {
-      if (!['user', 'assistant', 'tool'].includes(message.role)) continue;
-      const text = textOf(message.content);
-      if (!text) continue;
-      const box = el('div', `msg ${message.role === 'user' ? 'user' : 'assistant'}`, message.role === 'tool' ? text.slice(0, 400) : text);
-      pane.append(box);
+    const items = root.IntelioTranscript ? root.IntelioTranscript.present(ui.messages) : ui.messages.map((message) => ({ kind: 'bubble', role: message.role === 'user' ? 'user' : 'assistant', text: textOf(message.content) }));
+    for (const item of items) {
+      if (item.kind === 'chip') pane.append(chipNode(item));
+      else if (item.kind === 'bubble' && item.text) pane.append(el('div', `msg ${item.role === 'user' ? 'user' : 'assistant'}`, item.text));
     }
     pane.scrollTop = pane.scrollHeight;
     paintBops();
@@ -645,6 +663,7 @@
 
   async function selectAgent(id, { sessionId = '' } = {}) {
     ui.selected = id;
+    if (typeof root.onIntelioAgent === 'function') root.onIntelioAgent(id);
     ui.sessionId = '';
     ui.messages = [];
     paintAgents();
@@ -722,8 +741,25 @@
         }
       }
       if (sessionId !== ui.sessionId || !ui.streaming) return;
-      if (event === 'assistant.delta' && typeof data?.delta === 'string') ui.streaming.append(root.document.createTextNode(data.delta));
-      else if (event === 'tool.started') setStatus(`Running ${data?.tool_name || data?.name || 'tool'}…`);
+      if (event === 'assistant.delta' && typeof data?.delta === 'string') {
+        ui.streamRaw = `${ui.streamRaw || ''}${data.delta}`;
+        const peeled = root.IntelioTranscript ? root.IntelioTranscript.peel(ui.streamRaw) : { prose: ui.streamRaw, chips: [] };
+        ui.streaming.textContent = peeled.prose;
+        if (!ui.toolEvents && ui.liveTools && root.IntelioTranscript) {
+          ui.liveTools.replaceChildren(...peeled.chips.map((part) => chipNode(root.IntelioTranscript.present([{ role: 'tool', tool_name: part.name, content: part.detail || '' }])[0])).filter(Boolean));
+        }
+      } else if (String(event).includes('tool')) {
+        ui.toolEvents = true;
+        const name = data?.tool_name || data?.name || 'tool';
+        const done = /complete|result|finished|fail/i.test(event);
+        const failed = /fail/i.test(event);
+        if (ui.liveTools && root.IntelioTranscript) {
+          if (done) ui.liveTools.querySelector('.tool-chip.running')?.closest('.tool-run')?.remove();
+          const item = root.IntelioTranscript.present([{ role: 'tool', tool_name: name, content: data?.summary || data?.error || '', status: failed ? 'Failed' : (done ? 'Done' : 'Running') }])[0];
+          if (item) ui.liveTools.append(chipNode(item));
+        }
+        setStatus(done ? '' : `Checking ${name}…`);
+      }
       const pane = $('remote-messages');
       if (pane) pane.scrollTop = pane.scrollHeight;
     });
@@ -802,8 +838,11 @@
       }
       return;
     }
+    ui.streamRaw = '';
+    ui.toolEvents = false;
+    ui.liveTools = el('div', 'tool-live');
     ui.streaming = el('div', 'msg assistant', '');
-    pane?.append(ui.streaming);
+    pane?.append(ui.liveTools, ui.streaming);
     setStatus('Thinking…');
     try {
       const jobs = [root.remoteHermes.request('send', { id: ui.sessionId, profile: ui.selected, input: text })];
@@ -871,7 +910,7 @@
 
   return {
     signatureOf, accentOf, switcherRows, seedAgents, remoteConfigured, chooseSidebar, sessionAt, sessionRows, SAMPLE,
-    sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => selectedAgent()?.name || '',
+    sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => selectedAgent()?.name || '', selectedId: () => ui.selected || '',
     presentBops, focusBops, stopBops, actBops, pushFrame, toggleCall, bopsEffect: () => ui.lastEffect,
   };
 });

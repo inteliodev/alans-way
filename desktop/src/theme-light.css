@@ -43,8 +43,11 @@ html[data-theme="light"] .all-session.active { background: #ececf1; }
 html[data-theme="light"] .source-pill { border-color: #d5d5dc; color: #3a3a44; }
 html[data-theme="light"] .side-tab { color: #5e5e68; }
 html[data-theme="light"] .side-tab[aria-selected="true"] { color: #1c1c21; }
-html[data-theme="light"] .msg.user { color: #3a3a44; }
-html[data-theme="light"] .msg.assistant { color: #1c1c21; }
+html[data-theme="light"] .msg.user { background: #ffffff; color: #1c1c21; border: 1px solid #e4e4e8; }
+html[data-theme="light"] .msg.assistant { background: #ffffff; color: #1c1c21; border: 1px solid #e4e4e8; }
+html[data-theme="light"] .tool-chip,
+html[data-theme="light"] .tool-detail { color: #5e5e68; }
+html[data-theme="light"] .tool-chip .mark { color: #1f9d55; }
 html[data-theme="light"] .remote-composer button { background: #ececf1; color: #1c1c21; }
 html[data-theme="light"] .tab { color: #5e5e68; }
 html[data-theme="light"] .tab:hover { background: #f3f3f6; color: #1c1c21; }

@@ -2,7 +2,7 @@
 (function remoteHermesUi() {
   const api = window.remoteHermes;
   const $ = (id) => document.getElementById(id);
-  const state = { sessions: [], activeId: '', busy: false, streaming: null, timer: null };
+  const state = { sessions: [], activeId: '', busy: false, streaming: null, streamRaw: '', liveTools: null, toolEvents: false, timer: null };
   const SOURCE_LABEL = { telegram: 'Telegram', api_server: 'App / API', cli: 'CLI', cron: 'Cron', oneshot: 'One-shot' };
 
   function el(tag, cls, text) { const node = document.createElement(tag); if (cls) node.className = cls; if (text !== undefined) node.textContent = text; return node; }
@@ -42,12 +42,34 @@
     if (!state.sessions.length) list.append(el('li', 'muted', 'No sessions yet.'));
   }
 
-  function renderMessage(role, text, meta) {
-    const box = el('div', `msg ${role === 'user' ? 'user' : role === 'tool' ? 'tool' : 'assistant'}`);
-    if (meta) box.append(el('span', 'meta', meta));
-    box.append(document.createTextNode(text));
-    $('rh-messages').append(box);
-    return box;
+  function chipNode(item) {
+    const wrap = el('div', 'tool-run');
+    const button = el('button', `tool-chip${item.running ? ' running' : ''}${item.failed ? ' failed' : ''}`);
+    button.type = 'button';
+    button.append(el('span', 'mark', item.running ? '' : (item.failed ? '!' : '✓')));
+    button.append(document.createTextNode(` ${item.label}`));
+    if (item.detail) {
+      button.setAttribute('aria-expanded', 'false');
+      const detail = el('pre', 'tool-detail', item.detail);
+      button.onclick = () => {
+        const open = button.getAttribute('aria-expanded') === 'true';
+        button.setAttribute('aria-expanded', open ? 'false' : 'true');
+      };
+      wrap.append(button, detail);
+    } else wrap.append(button);
+    return wrap;
+  }
+
+  function renderPresented(messages) {
+    const pane = $('rh-messages');
+    pane.replaceChildren();
+    const items = window.IntelioTranscript
+      ? window.IntelioTranscript.present(messages)
+      : messages.map((message) => ({ kind: 'bubble', role: message.role === 'user' ? 'user' : 'assistant', text: textOf(message.content) }));
+    for (const item of items) {
+      if (item.kind === 'chip') pane.append(chipNode(item));
+      else if (item.kind === 'bubble' && item.text) pane.append(el('div', `msg ${item.role === 'user' ? 'user' : 'assistant'}`, item.text));
+    }
   }
 
   async function loadMessages({ keepScroll = false } = {}) {
@@ -55,13 +77,7 @@
     const pane = $('rh-messages');
     const atBottom = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40;
     const result = await api.request('messages', { id: state.activeId });
-    pane.replaceChildren();
-    for (const message of result?.data || []) {
-      if (!['user', 'assistant', 'tool'].includes(message.role)) continue;
-      const text = textOf(message.content);
-      if (!text && message.role !== 'tool') continue;
-      renderMessage(message.role, message.role === 'tool' ? `${message.tool_name || 'tool'}: ${text.slice(0, 400)}` : text, message.role === 'tool' ? '' : when(message.timestamp));
-    }
+    renderPresented((result?.data || []).filter((message) => ['user', 'assistant', 'tool'].includes(message.role)));
     if (!keepScroll || atBottom) pane.scrollTop = pane.scrollHeight;
   }
 
@@ -79,8 +95,13 @@
     const input = $('rh-input').value.trim();
     if (!input || !state.activeId || state.busy) return;
     state.busy = true; $('rh-send').disabled = true; $('rh-cancel').hidden = false; $('rh-input').value = '';
-    renderMessage('user', input, 'you · app');
-    state.streaming = renderMessage('assistant', '', 'Hermes (VPS)');
+    state.streamRaw = '';
+    state.toolEvents = false;
+    const pane = $('rh-messages');
+    pane.append(el('div', 'msg user', input));
+    state.liveTools = el('div', 'tool-live');
+    state.streaming = el('div', 'msg assistant', '');
+    pane.append(state.liveTools, state.streaming);
     $('rh-activity').textContent = 'Thinking…';
     try {
       await api.request('send', { id: state.activeId, input });
@@ -94,9 +115,25 @@
 
   api.onEvent(({ sessionId, event, data }) => {
     if (sessionId !== state.activeId || !state.streaming) return;
-    if (event === 'assistant.delta' && typeof data?.delta === 'string') state.streaming.append(document.createTextNode(data.delta));
-    else if (event === 'tool.started') $('rh-activity').textContent = `Running ${data?.tool_name || data?.name || 'tool'}…`;
-    else if (event === 'tool.completed' || event === 'tool.failed') $('rh-activity').textContent = 'Thinking…';
+    if (event === 'assistant.delta' && typeof data?.delta === 'string') {
+      state.streamRaw = `${state.streamRaw || ''}${data.delta}`;
+      const peeled = window.IntelioTranscript ? window.IntelioTranscript.peel(state.streamRaw) : { prose: state.streamRaw, chips: [] };
+      state.streaming.textContent = peeled.prose;
+      if (!state.toolEvents && state.liveTools && window.IntelioTranscript) {
+        state.liveTools.replaceChildren(...peeled.chips.map((part) => chipNode(window.IntelioTranscript.present([{ role: 'tool', tool_name: part.name, content: part.detail || '' }])[0])).filter(Boolean));
+      }
+    } else if (String(event).includes('tool')) {
+      state.toolEvents = true;
+      const name = data?.tool_name || data?.name || 'tool';
+      const done = /complete|result|finished|fail/i.test(event);
+      const failed = /fail/i.test(event);
+      if (state.liveTools && window.IntelioTranscript) {
+        if (done) state.liveTools.querySelector('.tool-chip.running')?.closest('.tool-run')?.remove();
+        const item = window.IntelioTranscript.present([{ role: 'tool', tool_name: name, content: data?.summary || data?.error || '', status: failed ? 'Failed' : (done ? 'Done' : 'Running') }])[0];
+        if (item) state.liveTools.append(chipNode(item));
+      }
+      $('rh-activity').textContent = done ? 'Thinking…' : `Checking ${name}…`;
+    }
     $('rh-messages').scrollTop = $('rh-messages').scrollHeight;
   });
 
