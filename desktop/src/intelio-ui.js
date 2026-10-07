@@ -26,7 +26,30 @@
     text('hermes-pin', intelio.ok ? `${launch} · pin ${pin} · ${hermes.summary || 'unavailable'}` : 'Hermes pin unavailable');
   }
 
+  function remoteOn(state) {
+    if (window.IntelioHost?.remoteModeOn) return window.IntelioHost.remoteModeOn(state?.remoteHermes);
+    const remote = state?.remoteHermes;
+    return Boolean(remote?.enabled && remote?.host);
+  }
+
+  function appendVpsHermes(body, { element, state }) {
+    const remote = state?.remoteHermes || {};
+    const line = window.IntelioHost?.vpsHermesLine
+      ? window.IntelioHost.vpsHermesLine(remote)
+      : (remote.versionLabel || 'VPS Hermes version is still loading.');
+    body.append(element('h3', '', 'VPS Hermes'));
+    body.append(element('p', 'settings-note', line));
+    const where = [remote.host ? `${remote.host}:${remote.port || 8642}` : '', remote.profile ? `profile ${remote.profile}` : ''].filter(Boolean).join(' · ');
+    if (where) body.append(element('p', 'settings-note', where));
+    body.append(element('hr', 'section-divider'));
+  }
+
   function appendSettings(body, { element, command, state, toast }) {
+    if (remoteOn(state)) {
+      appendVpsHermes(body, { element, state });
+      appendRemoteHermes(body, { element, command, toast, state });
+      return;
+    }
     const intelio = state?.intelio || {};
     body.append(element('h3', '', 'Intelio profile'));
     if (!intelio.ok) body.append(element('p', 'settings-note', intelio.error || 'The Intelio profile did not load.'));

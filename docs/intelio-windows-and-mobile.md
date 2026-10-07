@@ -131,6 +131,8 @@ Open `http://intelio-vps.tail9c1007.ts.net:8643` (or `https://` after `tailscale
 
 ## Bops-mode (0.3.10)
 
+Remote mode Settings does not show the local Intelio profile, the local Hermes command, or a local pin check. That block is the VPS Hermes version from `/health` (`hermes-agent 0.21.5 · Cloud` when that is what the gateway reports). Windows labels say This PC: the screen pane, the SSH address, and the browser connector. macOS keeps Mac. Light theme paints the 2–4 screen grid with the light surface and a `#d5d5dc` border.
+
 Submit on a Secure Sign-in card calls the VPS filler. The filler attaches to loopback CDP (`http://127.0.0.1:9223`, or `~/.hermes/profiles/<profile>/bot-desktop/cdp.url`) and types into the selectors on the card. Save login is optional. A password or one-time code is not written into the task, the transcript, or the tool result.
 
 `fill_saved_login(site)` is the Hermes plugin in `plugins/intelio-vault/` (not a Hermes core edit). It POSTs the site to `http://127.0.0.1:8643/api/vault/fill`. The filler reads that profile’s vault and types the secret. The tool result is domain and username only.

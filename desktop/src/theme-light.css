@@ -89,8 +89,9 @@ html[data-theme="light"] .bops-signin { background: #ffffff; border-color: #d5d5
 html[data-theme="light"] .signin-form input[type="text"],
 html[data-theme="light"] .signin-form input[type="password"] { background: #ffffff; color: #1c1c21; border-color: #d5d5dc; }
 html[data-theme="light"] .screen-count button { background: #ffffff; color: #1c1c21; }
-html[data-theme="light"] .screen-cell { background: #ffffff; color: #1c1c21; border-color: #d5d5dc; }
-html[data-theme="light"] .screen-cell.active { border-color: #c9a227; }
+html[data-theme="light"] .screen-grid { background: #f6f6f8; }
+html[data-theme="light"] .screen-cell { background: #ffffff; color: #1c1c21; border: 1px solid #d5d5dc; box-shadow: none; }
+html[data-theme="light"] .screen-cell.active { border-color: #c9a227; box-shadow: inset 0 0 0 1px #c9a227; }
 html[data-theme="light"] .bops-handoff,
 html[data-theme="light"] .preview-badge { color: #8a5a12; }
 html[data-theme="light"] .preview-live { color: #5e5e68; }

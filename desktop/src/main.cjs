@@ -30,6 +30,7 @@ const { createVaultStore } = require('./intelio/vault.cjs');
 const { usesRemoteVault } = require('./intelio/remote-vault.cjs');
 const { buildFill, publicFill, fieldValue } = require('./intelio/login-fill.cjs');
 const { normalizeTheme } = require('./intelio/theme.cjs');
+const { hostLabels } = require('./intelio/host-labels.cjs');
 const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
 
 if (!applyLinuxDemo(app)) app.enableSandbox();
@@ -184,6 +185,8 @@ function getState() {
     sidebarTab: prefs.sidebarTab === 'sessions' ? 'sessions' : 'agents',
     screenGrid: prefs.screenGrid || 1,
     activeScreen: prefs.activeScreen || 0,
+    platform: process.platform,
+    host: hostLabels(process.platform),
     theme: currentTheme() };
 }
 let lastBotWorkSignature = '';
@@ -638,7 +641,7 @@ function registerIpc() {
         if (usesRemoteVault(prefs)) return remoteVault('fill', value);
         return loginVaultStore().toolResult(vaultProfile(value), value.site);
       case 'settings':
-        if (typeof value.macSshHost === 'string' && value.macSshHost.trim() && !isSshTarget(value.macSshHost.trim())) throw new Error('Enter the Mac SSH address as user@host or host, with no spaces or symbols.');
+        if (typeof value.macSshHost === 'string' && value.macSshHost.trim() && !isSshTarget(value.macSshHost.trim())) throw new Error(hostLabels(process.platform).sshInvalid);
         if (value.vpsBrowser && typeof value.vpsBrowser === 'object') { prefs.vpsBrowser={sshHost:String(value.vpsBrowser.sshHost || '').trim(),scriptPath:String(value.vpsBrowser.scriptPath || '').trim(),sudo:value.vpsBrowser.sudo===true}; vpsBrowserStatus='connecting'; refreshVpsTabs(); }
         if (Number.isFinite(value.agentIdleMinutes)) prefs.agentIdleMinutes = Math.max(1, Math.min(240, value.agentIdleMinutes));
         if (typeof value.remoteUrl === 'string') { parseRemoteUrl(value.remoteUrl); prefs.remoteUrl = value.remoteUrl; remoteStatus = 'disconnected'; prefs.remoteControl = false; }
@@ -697,8 +700,9 @@ function registerIpc() {
       case 'agent-prompt': {
         const botId = String(value?.botId || prefs.selectedBotId || '').replace(/[^0-9A-Za-z_-]/g, '');
         const macSsh = (prefs.macSshHost || '').trim();
-        clipboard.writeText(`Set up Intelio on this machine and connect it to my Mac.
-1. If Tailscale isn't installed or connected here, install it (tailscaled + \`tailscale up\`). Tell me this machine's tailnet name/IP when done. My Mac's SSH address is: ${macSsh || '<my-mac-tailscale>'}.
+        const labels = hostLabels(process.platform);
+        clipboard.writeText(`${labels.promptLead}
+1. If Tailscale isn't installed or connected here, install it (tailscaled + \`tailscale up\`). Tell me this machine's tailnet name/IP when done. ${labels.promptSsh} ${macSsh || '<my-mac-tailscale>'}.
 2. Fetch the bootstrap: git clone ${agents} (or \`git -C alans-way-agents pull\` if already cloned).
 3. Run: ./alans-way-agents/setup.sh --bot-id '${botId || '<telegram-bot-id>'}' --mac-ssh '${macSsh || '<my-mac-tailscale>'}' --restart — answer its prompts; if it asks to bind a primary route, pick the bot matching this chat.
 4. Report: plugin status, whether the browser host started, the workspace_browser block location, and anything it flagged. Then run ./alans-way-agents/setup.sh --verify and paste me the summary.
@@ -709,8 +713,9 @@ function registerIpc() {
         const host = (prefs.vpsBrowser?.sshHost || '').trim();
         const mac = (prefs.macSshHost || '').trim();
         if (!host) throw new Error('Save a VPS browser SSH host first.');
-        if (!mac) throw new Error('Enter this Mac’s SSH address as your VPS reaches it.');
-        if (!isSshTarget(mac)) throw new Error('The saved Mac SSH address is invalid. Re-enter it as user@host or host.');
+        const labels = hostLabels(process.platform);
+        if (!mac) throw new Error(labels.sshMissing);
+        if (!isSshTarget(mac)) throw new Error(labels.sshSavedInvalid);
         return new Promise((resolve) => {
           const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=yes', host,
             `ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=yes ${mac} 'echo AGENT_PATH_OK'`], { timeout: 30000 });
@@ -719,7 +724,7 @@ function registerIpc() {
           child.stderr.on('data', chunk => { out += chunk; });
           child.on('error', () => resolve({ ok: false, detail: 'Could not start ssh — check local ssh access.' }));
           child.on('close', code => resolve(out.includes('AGENT_PATH_OK')
-            ? { ok: true, detail: 'VPS reaches this Mac over ssh — agents can route here.' }
+            ? { ok: true, detail: hostLabels(process.platform).sshOk }
             : { ok: false, detail: `Path check failed (exit ${code}). ${out.trim().slice(0, 300)}` }));
         });
       }

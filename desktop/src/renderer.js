@@ -176,6 +176,10 @@ function applyTheme(theme) {
   button.title = next === 'light' ? 'Switch to Dark' : 'Switch to Light';
   button.setAttribute('aria-pressed', String(next === 'light'));
 }
+function hostCopy() {
+  const fallback = window.IntelioHost?.hostLabels?.('darwin') || {};
+  return { ...fallback, ...(state?.host || {}) };
+}
 function remoteActive(next = state) {
   const remote = next?.remoteHermes;
   if (window.IntelioRemote?.remoteConfigured) return window.IntelioRemote.remoteConfigured(remote);
@@ -261,10 +265,13 @@ function render(next) {
   const askBot = $('ask-bot'); askBot.disabled = !tab || !/^https?:\/\//.test(tab?.url || ''); askBot.title = tab ? `Share ${tab.title || 'this page'} with ${bot?.name || 'the selected bot'}` : 'Discuss this page with your agent';
   $('browser-slot').classList.toggle('agent-live', !!tab && tab.controller === 'agent');
   if (tab?.extensionPage) $('control-button').textContent = 'You';
-  $('control-button').title = tab ? `Browser runs on ${tab.host==='vps'?'the VPS':'your Mac'} · ${tab.controller === 'agent' ? 'Agent' : 'You'} control it` : 'Open a browser tab first';
+  const machine = hostCopy();
+  const blurb = $('home-blurb');
+  if (blurb?.firstChild && machine.browse) blurb.firstChild.textContent = `Talk to your agents. ${machine.browse}`;
+  $('control-button').title = tab ? `Browser runs on ${tab.host==='vps'?'the VPS':machine.controlLocal || 'your Mac'} · ${tab.controller === 'agent' ? 'Agent' : 'You'} control it` : 'Open a browser tab first';
   if (document.activeElement !== $('address')) $('address').value = tab?.internal ? '' : tab?.url || '';
   const agentName = tab ? state.bots.find(bot => bot.id === tab.botId)?.name || 'Agent' : '';
-  $('workspace-status').textContent = tab?.error ? `Page: ${tab.error}` : tab?.loading ? 'Loading…' : tab ? `${tab.controller === 'agent' ? `${agentName}${tab.agentBusy ? ' is working' : ' is browsing'}` : 'You'} in control${tab.controller === 'agent' ? ' · Take over anytime' : ''} · ${tab.host==='vps'?'VPS':'Mac'}${tab.handoff?.phase==='handed_off'?` · Handed off to the ${tab.handoff.destinationHost==='vps'?'VPS':'Mac'} — agents continue there`:tab.handoff&&tab.handoff.phase!=='reviewed'?' · Handoff: review page before continuing':''}` : state.activeTabId === 'vps' ? `VPS · ${state.remoteStatus}` : 'Ready';
+  $('workspace-status').textContent = tab?.error ? `Page: ${tab.error}` : tab?.loading ? 'Loading…' : tab ? `${tab.controller === 'agent' ? `${agentName}${tab.agentBusy ? ' is working' : ' is browsing'}` : 'You'} in control${tab.controller === 'agent' ? ' · Take over anytime' : ''} · ${tab.host==='vps'?'VPS':(machine.statusLocal || 'Mac')}${tab.handoff?.phase==='handed_off'?` · Handed off to the ${tab.handoff.destinationHost==='vps'?'VPS':(machine.statusLocal || 'Mac')} — agents continue there`:tab.handoff&&tab.handoff.phase!=='reviewed'?' · Handoff: review page before continuing':''}` : state.activeTabId === 'vps' ? `VPS · ${state.remoteStatus}` : 'Ready';
   $('connection-status').textContent = state.api.ready ? 'Browser connector ready' : state.api.error ? 'Browser connector unavailable' : 'Browser connector starting…';
   const notes = { login: 'Sign in with your Telegram account. Your bots appear on the left.', connected: 'Your Telegram account · bot chats only', locked: 'Unlock Telegram to load your bot chats.', offline: 'Telegram is offline. Check your connection, then sync in Settings.', loading: 'Connecting to Telegram…' };
   if (!nowRemote) $('telegram-note').textContent = notes[state.telegramStatus] || notes.loading;
@@ -298,7 +305,7 @@ function paintScreenGrid() {
   grid.dataset.count = String(count);
   grid.replaceChildren();
   if (!show) return;
-  const labels = ["Agent's computer", 'Your Mac', 'Screen 3', 'Screen 4'];
+  const labels = ["Agent's computer", state?.host?.pane || 'Your Mac', 'Screen 3', 'Screen 4'];
   const active = Number.isInteger(state.activeScreen) ? state.activeScreen : 0;
   for (let i = 0; i < count; i += 1) {
     const cell = element('button', `screen-cell${i === active ? ' active' : ''}`, labels[i]);
@@ -500,28 +507,32 @@ function showSettings() {
   const folder = element('button', 'secondary-button', 'Open app data'); folder.onclick = () => command('show-data'); body.append(copy, folder);
   body.append(element('h3', '', 'Agent setup'));
   const checklist = element('div', 'checklist');
+  const labels = hostCopy();
+  const hermesCheck = window.IntelioHost?.hermesChecklist
+    ? window.IntelioHost.hermesChecklist(state)
+    : { done: state.intelio?.hermes?.match === 'commit', label: 'Hermes pin not loaded' };
   const checks = [
     [state.telegramStatus === 'connected', 'Signed in to Telegram'],
     [state.bots.length > 0, state.bots.length ? `${state.bots.length} bot${state.bots.length === 1 ? '' : 's'} discovered` : 'No bots discovered yet'],
     [!!(state.vpsBrowser?.sshHost), 'VPS SSH address saved'],
-    [!!state.macSshHost, 'This Mac’s SSH address saved'],
+    [!!state.macSshHost, labels.sshSaved || 'This Mac’s SSH address saved'],
     [state.api.ready, 'Browser connector ready'],
-    [state.intelio?.hermes?.match === 'commit', state.intelio?.hermes ? `Hermes pin ${(state.intelio.hermes.pinCommit || '').slice(0, 12) || 'missing'} · ${state.intelio.hermes.summary}` : 'Hermes pin not loaded'],
+    [hermesCheck.done, hermesCheck.label],
   ];
   for (const [done, label] of checks) checklist.append(element('p', `check-item${done ? ' done' : ''}`, `${done ? '✓' : '○'} ${label}`));
   body.append(checklist);
-  body.append(element('p', 'settings-note', 'Connect your Hermes agents on a VPS to this Mac. Fill in both SSH addresses, run the setup on your VPS, then test the agent path.'));
+  body.append(element('p', 'settings-note', labels.connectAgents || 'Connect your Hermes agents on a VPS to this Mac. Fill in both SSH addresses, run the setup on your VPS, then test the agent path.'));
   const vpsField = element('div', 'field'), vpsLabel = element('label', '', 'VPS SSH address (where your Hermes gateway runs)'); vpsLabel.htmlFor = 'vps-ssh-host';
   const vpsInput = element('input'); vpsInput.id = 'vps-ssh-host'; vpsInput.placeholder = 'you@your-vps'; vpsInput.value = state.vpsBrowser?.sshHost || ''; vpsInput.autocomplete = 'off';
   vpsField.append(vpsLabel, vpsInput);
-  const sshField = element('div', 'field'), sshLabel = element('label', '', 'This Mac’s SSH address (as your VPS reaches it)'); sshLabel.htmlFor = 'mac-ssh-host';
-  const sshInput = element('input'); sshInput.id = 'mac-ssh-host'; sshInput.placeholder = 'you@mymac or mymac.tailnet-name'; sshInput.value = state.macSshHost || ''; sshInput.autocomplete = 'off';
+  const sshField = element('div', 'field'), sshLabel = element('label', '', labels.sshField || 'This Mac’s SSH address (as your VPS reaches it)'); sshLabel.htmlFor = 'mac-ssh-host';
+  const sshInput = element('input'); sshInput.id = 'mac-ssh-host'; sshInput.placeholder = labels.sshPlaceholder || 'you@mymac or mymac.tailnet-name'; sshInput.value = state.macSshHost || ''; sshInput.autocomplete = 'off';
   sshField.append(sshLabel, sshInput);
   const sshSave = element('button', 'secondary-button', 'Save addresses'); sshSave.onclick = async () => { if (await command('settings', { macSshHost: sshInput.value.trim(), vpsBrowser: { ...state.vpsBrowser, sshHost: vpsInput.value.trim() } })) toast('SSH addresses saved.'); };
   const agentSetup = element('button', 'secondary-button', 'Copy setup command'); agentSetup.onclick = async () => { const ok = await command('agent-setup', { botId: state.selectedBotId }); if (ok !== false) toast('Bootstrap command copied — paste it in a terminal on your VPS.'); };
   const agentPrompt = element('button', 'secondary-button', 'Copy setup prompt'); agentPrompt.onclick = async () => { const ok = await command('agent-prompt', { botId: state.selectedBotId }); if (ok !== false) toast('Setup prompt copied — paste it to a Hermes agent that has a terminal on your VPS.'); };
   const agentTest = element('button', 'secondary-button', 'Test agent path'); const agentResult = element('p', 'settings-note', '');
-  agentTest.onclick = async () => { agentTest.disabled = true; agentResult.textContent = 'Checking VPS → Mac ssh path…'; const result = await command('test-agent-path'); agentTest.disabled = false; agentResult.textContent = result && typeof result === 'object' ? `${result.ok ? '✓' : '✗'} ${result.detail}` : '✗ Path check failed.'; };
+  agentTest.onclick = async () => { agentTest.disabled = true; agentResult.textContent = labels.pathCheck || 'Checking VPS → Mac ssh path…'; const result = await command('test-agent-path'); agentTest.disabled = false; agentResult.textContent = result && typeof result === 'object' ? `${result.ok ? '✓' : '✗'} ${result.detail}` : '✗ Path check failed.'; };
   body.append(vpsField, sshField, element('div', 'setting-row'), sshSave, agentSetup, agentPrompt, agentTest, agentResult);
   const primaryField = element('div', 'field'), primaryLabel = element('label', '', 'Primary bot'); primaryLabel.htmlFor = 'primary-bot';
   const primarySelect = element('select'); primarySelect.id = 'primary-bot';
@@ -534,12 +545,12 @@ function showSettings() {
   const linkToggle = element('button', 'secondary-button', state.autoOpenLinks ? 'On' : 'Off');
   linkToggle.onclick = async () => { const next = !state.autoOpenLinks; await command('settings', { autoOpenLinks: next }); state.autoOpenLinks = next; linkToggle.textContent = next ? 'On' : 'Off'; };
   linkRow.append(linkToggle); body.append(linkRow);
-  body.append(element('p', 'settings-note', 'A link sent by you or a bot opens a local tab assigned to that bot, so both of you can see it. If the Mac is unreachable, the bot opens its own copy on the VPS desktop instead.'));
-  body.append(element('p', 'settings-note', 'The setup installs the agent plugin on your gateway host and wires this Mac’s browser connector for the selected bot. Run once per bot.'));
+  body.append(element('p', 'settings-note', labels.links || 'A link sent by you or a bot opens a local tab assigned to that bot, so both of you can see it. If the Mac is unreachable, the bot opens its own copy on the VPS desktop instead.'));
+  body.append(element('p', 'settings-note', labels.setupWires || 'The setup installs the agent plugin on your gateway host and wires this Mac’s browser connector for the selected bot. Run once per bot.'));
   body.append(element('p', 'settings-note', 'Taking over a local tab blocks new agent actions on that tab. VPS control currently uses your existing shared desktop; it does not pause your Hermes bots.'));
   body.append(element('hr', 'section-divider'));
   const sync = element('button', 'secondary-button', 'Sync Telegram bots'); sync.onclick = () => { command('sync-telegram'); toast('Reading Telegram’s bot chat list…'); };
-  body.append(sync, element('p', 'settings-note', 'Bot discovery reads Telegram Web A’s local cache. Newly opened bot chats appear after Telegram saves them. Your Telegram session and browser logins stay on this Mac.'));
+  body.append(sync, element('p', 'settings-note', labels.stay || 'Bot discovery reads Telegram Web A’s local cache. Newly opened bot chats appear after Telegram saves them. Your Telegram session and browser logins stay on this Mac.'));
 }
 function showAvatarEditor(botId = state.selectedBotId || orderedBots()[0]?.id) {
   if (!botId) return toast('Open a Telegram bot before customizing its avatar.');
