@@ -100,17 +100,26 @@ function pinTab(label, selected, onClick) {
   node.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick(); } };
   return node;
 }
+function paneAgentName(id) {
+  const key = String(id || '').trim().toLowerCase();
+  const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+  if (known[key]) return known[key];
+  if (agentUi.card && agentUi.card.id === key && agentUi.card.name) return agentUi.card.name;
+  return '';
+}
+window.renderIntelioTabs = () => renderTabs();
 function renderTabs() {
   const container = $('tabs'); container.replaceChildren();
   if (remoteActive()) {
-    const name = window.IntelioRemote?.selectedName?.() || 'Agent';
-    container.append(pinTab(`${name}'s computer`, !agentPane && state.activeTabId === 'vps', () => {
+    const chatName = window.IntelioRemote?.selectedName?.() || 'Agent';
+    const shown = agentPane ? (paneAgentName(agentUi.id) || chatName) : chatName;
+    container.append(pinTab(`${shown}'s computer`, !agentPane && state.activeTabId === 'vps', () => {
       agentPane = false;
       agentUi.confirming = false;
       if (state.activeTabId !== 'vps') command('activate', { id: 'vps' });
       else render(state);
     }));
-    container.append(pinTab(name, agentPane, () => openAgentPane()));
+    container.append(pinTab(shown, agentPane, () => openAgentPane(agentUi.id || undefined)));
   }
   const entries = state.tabs.map((tab) => ({ ...tab, symbol: tab.loading ? '◌' : '◈' }));
   for (const tab of entries) {

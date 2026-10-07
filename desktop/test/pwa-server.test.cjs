@@ -375,3 +375,33 @@ test('the Access listener proxies Hermes, the desktop, and bootstrap without log
     await new Promise((resolve) => upstream.close(resolve));
   }
 });
+
+test('a wide browser gets the desktop window and a phone stays on the phone shell', async () => {
+  const app = createPwaServer({ bind: '127.0.0.1', port: 0, sample: true, upstream: 'http://127.0.0.1:9', fetchImpl: async () => { throw new Error('upstream'); } });
+  const address = await app.listen();
+  try {
+    const page = await request(address.port, 'GET', '/desktop/');
+    assert.equal(page.status, 200);
+    assert.match(page.headers['content-type'], /text\/html/);
+    assert.match(page.body, /connect-src 'self' ws: wss:/);
+    assert.equal(page.body.includes("connect-src 'none'"), false);
+    assert.match(page.body, /\/desktop-transport\.js/);
+    assert.match(page.body, /\/desktop-boot\.js/);
+    assert.match(page.body, /\/ui\/renderer\.js/);
+    assert.match(page.body, /\/ui\/intelio\/host-labels\.cjs/);
+    const css = await request(address.port, 'GET', '/ui/remote-main.css');
+    assert.equal(css.status, 200);
+    assert.match(css.body, /100dvh/);
+    const blocked = await request(address.port, 'GET', '/ui/intelio/remote-hermes-main.cjs');
+    assert.equal(blocked.status, 404);
+    const escaped = await request(address.port, 'GET', '/ui/%2e%2e/package.json');
+    assert.equal(escaped.status, 404);
+    const phone = fs.readFileSync(path.join(__dirname, '../../mobile/pwa/public/index.html'), 'utf8');
+    assert.match(phone, /min-width: 1000px/);
+    assert.match(phone, /\/desktop\//);
+    const boot = fs.readFileSync(path.join(__dirname, '../../mobile/pwa/public/desktop-boot.js'), 'utf8');
+    assert.match(boot, /max-width: 999px/);
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+  }
+});

@@ -40,7 +40,12 @@ const STATIC = {
   '/thinking-orbs.js': 'thinking-orbs.js',
   '/sw.js': 'sw.js',
   '/manifest.webmanifest': 'manifest.webmanifest',
+  '/desktop-boot.js': 'desktop-boot.js',
+  '/desktop-transport.js': 'desktop-transport.js',
 };
+const DESKTOP_SRC = path.resolve(__dirname, '../../desktop/src');
+const UI_EXT = new Set(['.css', '.js', '.woff2', '.png', '.svg']);
+const UI_CJS = new Set(['intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs']);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json' };
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -642,7 +647,9 @@ function createPwaServer({
         group: String(row.source || 'chat').toLowerCase(),
         title: String(row.title || 'Conversation').slice(0, 120),
         preview: previewTranscript(String(row.preview || row.last_message || row.title || '')).slice(0, 180),
+        last_message: previewTranscript(String(row.last_message || row.preview || '')).slice(0, 180),
         time: clockLabel(row.updated_at || row.updatedAt || row.created_at),
+        updated_at: String(row.updated_at || row.updatedAt || row.created_at || '').slice(0, 40),
         source: String(row.source || ''),
       })).filter((row) => ID_RE.test(row.id));
     } catch {
@@ -672,10 +679,45 @@ function createPwaServer({
     for (const agent of profiles) conversations.push(...await sessionsFor(agent.id));
     return { sample: false, label: '', profiles, conversations, skills: [], jobs: [], skillsOk: false, jobsOk: false };
   }
+  function uiFile(pathname) {
+    if (!pathname.startsWith('/ui/')) return '';
+    const rel = pathname.slice('/ui/'.length);
+    if (!rel || rel.split('/').some((part) => !part || part === '.' || part === '..')) return '';
+    const ext = path.extname(rel).toLowerCase();
+    if (ext === '.cjs') {
+      if (!UI_CJS.has(rel)) return '';
+    } else if (!UI_EXT.has(ext)) return '';
+    const file = path.resolve(DESKTOP_SRC, rel);
+    const root = DESKTOP_SRC.endsWith(path.sep) ? DESKTOP_SRC : DESKTOP_SRC + path.sep;
+    if (!file.startsWith(root)) return '';
+    try {
+      if (!fs.statSync(file).isFile()) return '';
+    } catch { return ''; }
+    return file;
+  }
+  function desktopShell() {
+    let html = fs.readFileSync(path.join(DESKTOP_SRC, 'index.html'), 'utf8');
+    html = html.replace(
+      "connect-src 'none'",
+      "connect-src 'self' ws: wss:",
+    ).replace(
+      "img-src 'self' data: crx:",
+      "img-src 'self' data: blob: crx:",
+    );
+    html = html.replace(/(href|src)="(?!\/|https?:|data:)([^"]+)"/g, '$1="/ui/$2"');
+    html = html.replace('</head>', '<script src="/desktop-boot.js?v=18"></script></head>');
+    html = html.replace(
+      '<script src="/ui/renderer.js"></script>',
+      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=18"></script><script src="/ui/renderer.js"></script>',
+    );
+    return html;
+  }
   function publicAsset(pathname) {
     if (STATIC[pathname] || iconBytes[pathname]) return true;
+    if (pathname === '/desktop' || pathname === '/desktop/') return true;
     if (pathname === '/bops.js' || pathname === '/transcript.js') return true;
     if (pathname.startsWith('/avatars/') && /^\/avatars\/[a-z0-9-]+\.png$/.test(pathname)) return true;
+    if (uiFile(pathname)) return true;
     return Boolean(novncFile(pathname));
   }
   function novncFile(pathname) {
@@ -711,6 +753,19 @@ function createPwaServer({
       res.writeHead(200, { ...cookieHeaders(res), 'content-type': type, 'content-length': payload.length, 'cache-control': 'public, max-age=300' });
       return res.end(payload);
     }
+    if (url.pathname === '/desktop' || url.pathname === '/desktop/') {
+      const payload = Buffer.from(desktopShell(), 'utf8');
+      res.writeHead(200, { ...cookieHeaders(res), 'content-type': 'text/html; charset=utf-8', 'content-length': payload.length, 'cache-control': 'no-cache' });
+      return res.end(payload);
+    }
+    const ui = uiFile(url.pathname);
+    if (ui) {
+      const payload = fs.readFileSync(ui);
+      const ext = path.extname(ui).toLowerCase();
+      const type = ext === '.js' || ext === '.cjs' ? 'text/javascript; charset=utf-8' : (ext === '.woff2' ? 'font/woff2' : (TYPES[ext] || 'application/octet-stream'));
+      res.writeHead(200, { ...cookieHeaders(res), 'content-type': type, 'content-length': payload.length, 'cache-control': 'no-cache' });
+      return res.end(payload);
+    }
     if (url.pathname === '/bops.js' || url.pathname === '/transcript.js') {
       const file = path.join(__dirname, '../../desktop/src/intelio', url.pathname === '/transcript.js' ? 'transcript.cjs' : 'bops.cjs');
       const payload = fs.readFileSync(file);
@@ -722,7 +777,8 @@ function createPwaServer({
       const file = path.join(PUBLIC, name);
       const payload = fs.readFileSync(file);
       const ext = path.extname(name);
-      res.writeHead(200, { ...cookieHeaders(res), 'content-type': TYPES[ext] || 'application/octet-stream', 'content-length': payload.length, 'cache-control': name === 'sw.js' ? 'no-cache' : 'public, max-age=300' });
+      const fresh = name === 'sw.js' || name === 'desktop-boot.js' || name === 'desktop-transport.js';
+      res.writeHead(200, { ...cookieHeaders(res), 'content-type': TYPES[ext] || 'application/octet-stream', 'content-length': payload.length, 'cache-control': fresh ? 'no-cache' : 'public, max-age=300' });
       return res.end(payload);
     }
     return send(res, 404, { error: 'Not found.' });

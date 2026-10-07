@@ -255,7 +255,7 @@
     if (name.toLowerCase() === 'intelio') return 'intelio';
     return name || 'intelio';
   }
-  const CLIENT_VERSION = 'intelio-pwa-15';
+  const CLIENT_VERSION = 'intelio-pwa-16';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);
@@ -1651,7 +1651,7 @@
       navigator.serviceWorker.addEventListener('message', (event) => {
         if (!hadController || event.data?.type !== 'intelio-pwa-update') return;
         state.updateReady = true;
-        render();
+        location.reload();
       });
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }

@@ -328,7 +328,11 @@ Desktop. Auto still tries the Tailscale host first. If that host does not answer
 
 Desktop. A JSON 401 or 403 from Hermes is a profile error. It does not open the sign-in window. Sign-in opens only for a Cloudflare Access redirect (`*.cloudflareaccess.com`, `/cdn-cgi/access`, or the login page) or an HTML challenge. When the `CF_Authorization` cookie is already in the cloud session, intelio refreshes keys instead of opening another window, and it will not open a second sign-in window within 15 seconds. The sign-in window no longer loads `vnc.html`. The computer pane still uses the local viewer on the `persist:intelio-cloud` session, and that session attaches the Access cookie to the websockify handshake. Hermes requests send `x-intelio-profile`. The first-run Tailscale install dialog stays hidden when cloud mode is the connection in use. The draft tag is `v0.3.18-intelio-windows`. It stays unpublished.
 
-The Access listener on the VPS has to be the copy that proxies `/health`, `/p/<profile>/api`, `/p/<profile>/v1`, and `/intelio/bootstrap`. Copy `mobile/pwa/server.cjs` onto the phone server and `systemctl --user restart intelio-pwa.service`. Do not restart `hermes-gateway` as part of that deploy.
+A desktop-width browser at app.intelio-ai.com (about 1000px and wider) uses the same window as the laptop app: the agent sidebar, the chat, the screen pills, and the agent computer on `/browser/websockify`. The phone layout stays under that width. The phone client version is `intelio-pwa-16`. The service worker cache is `intelio-pwa-18`.
+
+The window stays one screen tall (`100dvh`, overflow hidden). The sidebar, the message list, and the Details card each scroll on their own. A long Details card does not push the composer off the screen, and opening a chat or sending a message scrolls the message list to the newest line. The Details tab is named for the agent on that card.
+
+The Access listener on the VPS has to be the copy that proxies `/health`, `/p/<profile>/api`, `/p/<profile>/v1`, and `/intelio/bootstrap`. Copy `mobile/pwa/server.cjs` and `mobile/pwa/profiles.cjs` onto the phone server. The phone unit needs `Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin` (re-run `mobile/deploy/install-on-vps.sh`, or add that line to the unit). Then `systemctl --user restart intelio-pwa.service`. Do not restart `hermes-gateway` as part of that deploy.
 
 ## What you do
 

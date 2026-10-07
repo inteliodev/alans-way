@@ -256,6 +256,7 @@
       status.textContent = count ? `Working on ${count} ${count === 1 ? 'thing' : 'things'}` : '';
       status.classList.toggle('hidden', !count);
     }
+    root.renderIntelioTabs?.();
     const avatar = $('chat-avatar');
     if (avatar && agent) {
       avatar.replaceChildren();
@@ -505,6 +506,8 @@
     }
     flushRead();
     pane.scrollTop = pane.scrollHeight;
+    const raf = root.requestAnimationFrame;
+    if (typeof raf === 'function') raf(() => { pane.scrollTop = pane.scrollHeight; });
     paintBops();
   }
 

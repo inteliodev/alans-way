@@ -1,8 +1,8 @@
-const CACHE = 'intelio-pwa-17';
-const FILES = ['/', '/index.html', '/app.css', '/app.js', '/bops.js', '/transcript.js', '/thinking-orbs.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
+const CACHE = 'intelio-pwa-18';
+const FILES = ['/', '/index.html', '/app.css', '/app.js', '/bops.js', '/transcript.js', '/thinking-orbs.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/desktop/', '/desktop-boot.js', '/desktop-transport.js'];
 
 function shellPath(pathname) {
-  return pathname === '/' || pathname === '/index.html' || pathname === '/app.js' || pathname === '/app.css' || pathname === '/sw.js' || pathname === '/transcript.js';
+  return pathname === '/' || pathname === '/index.html' || pathname === '/app.js' || pathname === '/app.css' || pathname === '/sw.js' || pathname === '/transcript.js' || pathname === '/desktop' || pathname === '/desktop/' || pathname === '/desktop-boot.js' || pathname === '/desktop-transport.js' || pathname.startsWith('/ui/');
 }
 
 self.addEventListener('install', (event) => {

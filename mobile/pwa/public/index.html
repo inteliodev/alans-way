@@ -22,6 +22,7 @@
       if (meta) meta.setAttribute('content', theme === 'light' ? '#f4f4f6' : '#070708');
       var apple = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
       if (apple) apple.setAttribute('content', theme === 'light' ? 'default' : 'black-translucent');
+      if (window.matchMedia && window.matchMedia('(min-width: 1000px)').matches) location.replace('/desktop/');
     })();
   </script>
   <link rel="stylesheet" href="/app.css">
