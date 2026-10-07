@@ -1,0 +1,12 @@
+[Unit]
+Description=Optional per-profile Bot Desktop Chromium for prc, alignment, and hhp
+
+[Service]
+Type=simple
+Environment=INTELIO_HARNESS_DIR=%h/intelio/alans-way-pwa
+ExecStart=/bin/sh -c 'exec "$INTELIO_HARNESS_DIR/scripts/bot-desktop-chromium.sh"'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

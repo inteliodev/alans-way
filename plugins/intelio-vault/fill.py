@@ -10,6 +10,7 @@ import json
 import os
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 SCHEMA = {
     "name": "fill_saved_login",
@@ -28,7 +29,9 @@ SCHEMA = {
 
 PUBLIC_KEYS = ("ok", "filled", "saved", "domain", "username", "error")
 UNKNOWN = "Unknown profile."
+FILLER_URL = "Filler URL is not configured."
 REFUSED = frozenset({"default", "custom", "unknown"})
+FIXED_ERRORS = frozenset({UNKNOWN, FILLER_URL})
 
 
 def public_result(payload):
@@ -109,6 +112,68 @@ def active_profile():
     raise ValueError(UNKNOWN)
 
 
+def _env_file_map(path):
+    values = {}
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return values
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[7:].strip()
+        if "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _check_origin(origin):
+    parsed = urlparse(str(origin or "").strip())
+    host = parsed.hostname or ""
+    if parsed.scheme not in ("http", "https") or not host or parsed.username or parsed.password:
+        raise ValueError(FILLER_URL)
+    if host in {"0.0.0.0", "::"} or host == "*":
+        raise ValueError(FILLER_URL)
+    if ":" in host:
+        host = f"[{host}]"
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}"
+
+
+def filler_origin(env=None, env_file=None):
+    """PWA origin. https when pwa.env has a cert and key; never loopback by default.
+
+    INTELIO_FILLER_URL wins. Otherwise read ~/.config/intelio/pwa.env
+    (INTELIO_PWA_BIND, INTELIO_PWA_PORT, INTELIO_PWA_CERT, INTELIO_PWA_KEY).
+    The phone client listens on the tailnet host with Tailscale TLS.
+    A missing bind is an error; there is no loopback fallback.
+    """
+    env = os.environ if env is None else env
+    explicit = str(env.get("INTELIO_FILLER_URL") or "").strip()
+    if explicit:
+        return _check_origin(explicit)
+    path = env_file or env.get("INTELIO_PWA_ENV") or str(
+        Path(env.get("HOME") or ".") / ".config" / "intelio" / "pwa.env"
+    )
+    values = _env_file_map(path)
+    bind = str(values.get("INTELIO_PWA_BIND") or env.get("INTELIO_PWA_BIND") or "").strip()
+    port = str(values.get("INTELIO_PWA_PORT") or env.get("INTELIO_PWA_PORT") or "8643").strip()
+    cert = str(values.get("INTELIO_PWA_CERT") or env.get("INTELIO_PWA_CERT") or "").strip()
+    key = str(values.get("INTELIO_PWA_KEY") or env.get("INTELIO_PWA_KEY") or "").strip()
+    if not bind or not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise ValueError(FILLER_URL)
+    if "://" in bind or "/" in bind or "@" in bind or " " in bind:
+        raise ValueError(FILLER_URL)
+    if bool(cert) != bool(key):
+        raise ValueError(FILLER_URL)
+    scheme = "https" if cert and key else "http"
+    return _check_origin(f"{scheme}://{bind}:{port}")
+
+
 def read_profile_key(profile, home=None):
     root = Path(home or os.environ.get("HOME") or ".")
     env_file = root / ".hermes" / "profiles" / profile / ".env"
@@ -136,7 +201,7 @@ def fill_saved_login(args, **kwargs):
             return json.dumps(public_result({"ok": False, "filled": False, "error": "Enter a site domain."}))
         profile = active_profile()
         key = read_profile_key(profile)
-        origin = str(os.environ.get("INTELIO_FILLER_URL") or "http://127.0.0.1:8643").rstrip("/")
+        origin = filler_origin()
         url = origin + "/api/vault/fill"
         payload = json.dumps({"site": site, "profile": profile}).encode("utf-8")
         request = urllib.request.Request(
@@ -153,7 +218,8 @@ def fill_saved_login(args, **kwargs):
         with urllib.request.urlopen(request, timeout=20) as response:
             raw = response.read().decode("utf-8", "replace")
         return json.dumps(public_result(json.loads(raw)))
-    except ValueError:
-        return json.dumps(public_result({"ok": False, "filled": False, "error": UNKNOWN}))
+    except ValueError as exc:
+        message = str(exc) if str(exc) in FIXED_ERRORS else UNKNOWN
+        return json.dumps(public_result({"ok": False, "filled": False, "error": message}))
     except Exception:
         return json.dumps(public_result({"ok": False, "filled": False, "error": "Filler did not run."}))

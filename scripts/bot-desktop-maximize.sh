@@ -2,12 +2,16 @@
 # Harness-side Bot Desktop maximize. This is not Hermes code.
 #
 # Each profile display has its own authority file:
-#   ~/.hermes/profiles/<profile>/bot-desktop/display      (contents :20)
+#   ~/.hermes/profiles/<profile>/bot-desktop/display      (contents 20 or :20)
 #   ~/.hermes/profiles/<profile>/bot-desktop/Xauthority
 #
+# Hermes writes the display number without a colon. This script adds ":" before
+# matching that file to an X socket.
+#
 # --all walks existing X sockets on :20 and up. A missing display is skipped.
-# wmctrl is used when it is installed. xdotool is the fallback, and a failed
-# xdotool does not print success.
+# wmctrl is used only when it can see a window manager. Display :99 has none,
+# so wmctrl -m failing falls through to xdotool. A failed xdotool does not
+# print success.
 #
 #   bash scripts/bot-desktop-maximize.sh :20
 #   bash scripts/bot-desktop-maximize.sh --all
@@ -32,19 +36,31 @@ x11_dir() {
   printf '%s\n' "${INTELIO_X11_DIR:-/tmp/.X11-unix}"
 }
 
+normalize_display() {
+  raw=$(printf '%s' "$1" | tr -d '[:space:]')
+  case "$raw" in
+    :*) num=${raw#:} ;;
+    *) num=$raw ;;
+  esac
+  case "$num" in
+    ''|*[!0-9]*) printf '%s\n' "$raw"; return ;;
+  esac
+  printf ':%s\n' "$num"
+}
+
 display_exists() {
   num=${1#:}
   [ -S "$(x11_dir)/X${num}" ]
 }
 
 xauthority_for() {
-  display=$1
+  display=$(normalize_display "$1")
   root=$(profiles_root)
   [ -d "$root" ] || return 1
   for dir in "$root"/*/bot-desktop; do
     [ -d "$dir" ] || continue
     [ -f "$dir/display" ] || continue
-    current=$(tr -d ' \t\r\n' < "$dir/display")
+    current=$(normalize_display "$(tr -d '[:space:]' < "$dir/display")")
     if [ "$current" = "$display" ] && [ -f "$dir/Xauthority" ]; then
       printf '%s\n' "$dir/Xauthority"
       return 0
@@ -74,7 +90,7 @@ clear_missing() {
 }
 
 maximize_one() {
-  display=$1
+  display=$(normalize_display "$1")
   case "$display" in
     :[0-9]*) ;;
     *) echo "Display must look like :20" >&2; return 1 ;;
@@ -92,7 +108,8 @@ maximize_one() {
   fi
   DISPLAY=$display
   export DISPLAY
-  if command -v wmctrl >/dev/null 2>&1; then
+  # wmctrl -m fails when the display has no window manager (:99). Use xdotool there.
+  if command -v wmctrl >/dev/null 2>&1 && wmctrl -m >/dev/null 2>&1; then
     ids=$(wmctrl -l -x 2>/dev/null | awk 'BEGIN{IGNORECASE=1} /chromium|chrome|google-chrome/ {print $1}')
     if [ -z "$ids" ]; then
       log_missing "$display"
@@ -128,6 +145,7 @@ maximize_one() {
 existing_displays() {
   if [ -n "${INTELIO_BOT_DISPLAYS:-}" ]; then
     for display in $INTELIO_BOT_DISPLAYS; do
+      display=$(normalize_display "$display")
       if display_exists "$display"; then
         printf '%s\n' "$display"
       fi

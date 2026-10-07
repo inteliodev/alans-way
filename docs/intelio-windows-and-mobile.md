@@ -168,13 +168,33 @@ Keep the toolsets already in that file and add `intelio` to each of them. If the
 
 `scripts/intelio-bot-desktop-maximize.service` sets `INTELIO_HARNESS_DIR` to `%h/intelio/alans-way-pwa`, the VPS checkout that contains `scripts/bot-desktop-maximize.sh`. Change that variable if the script lives somewhere else.
 
+Hermes writes `bot-desktop/display` as `20` or `21` with no colon. The maximize script adds `:` before it matches that file to an X socket, so `XAUTHORITY` is the profile’s `bot-desktop/Xauthority`. `wmctrl` is used only when `wmctrl -m` sees a window manager. Display `:99` has none, and then the script uses xdotool.
+
+The plugin does not call `http://127.0.0.1:8643`. The phone client listens on `https://<tailnet-host>:8643` when `~/.config/intelio/pwa.env` sets `INTELIO_PWA_CERT` and `INTELIO_PWA_KEY` (otherwise `http` on `INTELIO_PWA_BIND`). `fill_saved_login` reads that file. `INTELIO_FILLER_URL` overrides it. Pin it with a gateway drop-in so the user service does not depend on the file being readable:
+
+```sh
+mkdir -p ~/.config/systemd/user/hermes-gateway.service.d
+cp scripts/intelio-filler.conf ~/.config/systemd/user/hermes-gateway.service.d/intelio-filler.conf
+```
+
+Edit the copied file and set the host from `INTELIO_PWA_BIND`:
+
+```
+[Service]
+Environment=INTELIO_FILLER_URL=https://intelio-vps.tail9c1007.ts.net:8643
+```
+
+Then `systemctl --user daemon-reload` and `systemctl --user restart hermes-gateway`. That restart is the one that loads the plugin. Restart `intelio-pwa.service` when the filler code changes. It does not register the tool.
+
+Optional per-profile browsers are `scripts/bot-desktop-chromium.sh` and `scripts/intelio-bot-desktop-chromium.service`. Nothing enables them. They launch Chromium for `prc` (`127.0.0.1:9224`), `alignment` (`9225`), and `hhp` (`9226`), each on the display in `bot-desktop/display`, with its own `--user-data-dir` at `bot-desktop/chromium`, and `--remote-debugging-address=127.0.0.1`. They write `bot-desktop/cdp.url` mode 600. Intelio stays on the shared `127.0.0.1:9223` browser. Debugging stays on loopback, the same rule as that browser. The script does not start the VPS broker and does not change its navigation policy: payment hosts and `/checkout`, `/payment`, and `/billing` stay ask-first in `desktop/src/intelio/safety.cjs`. To run them later, copy the unit into `~/.config/systemd/user/` and enable it yourself. This deploy does not enable it.
+
 ## Bops-mode (0.3.10)
 
 Remote mode Settings does not show the local Intelio profile, the local Hermes command, or a local pin check. That block is the VPS Hermes version from `/health` (`hermes-agent 0.21.5 · Cloud` when that is what the gateway reports). Windows labels say This PC: the screen pane, the SSH address, and the browser connector. macOS keeps Mac. Light theme paints the 2–4 screen grid with the light surface and a `#d5d5dc` border.
 
 Submit on a Secure Sign-in card calls the VPS filler. The filler attaches to that profile’s loopback CDP file, `~/.hermes/profiles/<profile>/bot-desktop/cdp.url`, and types into the selectors on the card. Save login is optional. A password or one-time code is not written into the task, the transcript, or the tool result. See 0.3.11 for the per-profile file, the shared-browser opt-in, and the host check.
 
-`fill_saved_login(site)` is the Hermes plugin in `plugins/intelio-vault/` (not a Hermes core edit). It POSTs the site to `http://127.0.0.1:8643/api/vault/fill`. The filler reads that profile’s vault and types the secret. The tool result is domain and username only.
+`fill_saved_login(site)` is the Hermes plugin in `plugins/intelio-vault/` (not a Hermes core edit). It POSTs the site to the phone client’s `/api/vault/fill`. On this VPS that is `https://<tailnet-host>:8643` from `~/.config/intelio/pwa.env`, or `INTELIO_FILLER_URL` in the `hermes-gateway` drop-in. The filler reads that profile’s vault and types the secret. The tool result is domain and username only.
 
 Install, on the VPS as the desktop user:
 
@@ -182,10 +202,15 @@ Install, on the VPS as the desktop user:
 mkdir -p ~/.hermes/plugins
 rm -rf ~/.hermes/plugins/intelio-vault
 cp -a plugins/intelio-vault ~/.hermes/plugins/intelio-vault
+mkdir -p ~/.config/systemd/user/hermes-gateway.service.d
+cp scripts/intelio-filler.conf ~/.config/systemd/user/hermes-gateway.service.d/intelio-filler.conf
+systemctl --user daemon-reload
 systemctl --user restart hermes-gateway
 systemctl --user restart intelio-pwa.service
 hermes plugins list
 ```
+
+The copied drop-in is commented. Uncomment `Environment=INTELIO_FILLER_URL=` and set the host from `INTELIO_PWA_BIND` when you want to pin it (`https://intelio-vps.tail9c1007.ts.net:8643` on this VPS, because `pwa.env` has both a cert and a key). Leaving it commented lets the plugin read `~/.config/intelio/pwa.env`.
 
 A gateway restart is required. Hermes loads plugins when the gateway process starts, so `fill_saved_login` is absent until `hermes-gateway` restarts. Restarting the phone service picks up the filler. It does not register the tool.
 
@@ -205,7 +230,7 @@ User unit drop-in:
 LoadCredentialEncrypted=vault.key.hhp:/etc/credstore.encrypted/intelio-vault-hhp
 ```
 
-Bot Desktop maximize reads `~/.hermes/profiles/<profile>/bot-desktop/display` and sets `XAUTHORITY` to that profile’s `bot-desktop/Xauthority`. It walks only X sockets that exist, uses wmctrl when it is installed, and does not print success when xdotool fails. The watcher is a user unit:
+Bot Desktop maximize reads `~/.hermes/profiles/<profile>/bot-desktop/display` (`20` or `:20`) and sets `XAUTHORITY` to that profile’s `bot-desktop/Xauthority`. It walks only X sockets that exist, uses wmctrl when `wmctrl -m` sees a window manager, and uses xdotool when it does not (`:99`). It does not print success when xdotool fails. The watcher is a user unit:
 
 ```sh
 mkdir -p ~/.config/systemd/user

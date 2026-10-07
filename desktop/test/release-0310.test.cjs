@@ -191,7 +191,7 @@ test('maximize sets XAUTHORITY, skips missing displays, and hides a failed xdoto
   fs.mkdirSync(x11);
   fs.mkdirSync(bin);
   fs.mkdirSync(path.join(profiles, 'prc', 'bot-desktop'), { recursive: true });
-  fs.writeFileSync(path.join(profiles, 'prc', 'bot-desktop', 'display'), ':20\n');
+  fs.writeFileSync(path.join(profiles, 'prc', 'bot-desktop', 'display'), '20\n');
   fs.writeFileSync(path.join(profiles, 'prc', 'bot-desktop', 'Xauthority'), 'auth-bytes');
   const log = path.join(root, 'log');
   fs.writeFileSync(path.join(bin, 'xdotool'), `#!/bin/sh\necho "XAUTHORITY=\${XAUTHORITY-unset}" >> ${JSON.stringify(log)}\necho "DISPLAY=$DISPLAY" >> ${JSON.stringify(log)}\nexit 1\n`);
@@ -223,6 +223,21 @@ test('maximize sets XAUTHORITY, skips missing displays, and hides a failed xdoto
   const ok = spawnSync('sh', [script, ':20'], { env, encoding: 'utf8' });
   assert.equal(ok.status, 0, ok.stderr);
   assert.match(ok.stdout, /Maximized Chromium on :20/);
+  const noWm = path.join(root, 'nowm');
+  const noWmLog = path.join(root, 'nowm-log');
+  fs.mkdirSync(noWm);
+  fs.writeFileSync(path.join(noWm, 'wmctrl'), '#!/bin/sh\nif [ "$1" = "-m" ]; then echo "no window manager" >&2; exit 1; fi\necho "listed" >&2; exit 1\n');
+  fs.writeFileSync(path.join(noWm, 'xdotool'), `#!/bin/sh\necho "xdotool DISPLAY=$DISPLAY" >> ${JSON.stringify(noWmLog)}\nexit 0\n`);
+  fs.chmodSync(path.join(noWm, 'wmctrl'), 0o755);
+  fs.chmodSync(path.join(noWm, 'xdotool'), 0o755);
+  const bare = spawnSync('sh', [script, '20'], {
+    env: { ...env, PATH: `${noWm}:/usr/bin:/bin` },
+    encoding: 'utf8',
+  });
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.match(bare.stdout, /Maximized Chromium on :20/);
+  assert.equal(bare.stderr.includes('No Chromium window'), false);
+  assert.match(fs.readFileSync(noWmLog, 'utf8'), /DISPLAY=:20/);
   const unit = fs.readFileSync(path.join(__dirname, '../../scripts/intelio-bot-desktop-maximize.service'), 'utf8');
   assert.match(unit, /--watch/);
   assert.match(unit, /WantedBy=default.target/);
@@ -507,4 +522,103 @@ test('vault login and fill refuse to type when the tab host does not match', asy
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
   }
+});
+
+test('the filler URL follows pwa.env TLS and does not default to loopback', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-filler-url-'));
+  const envDir = path.join(home, '.config', 'intelio');
+  fs.mkdirSync(envDir, { recursive: true });
+  const envFile = path.join(envDir, 'pwa.env');
+  fs.writeFileSync(envFile, [
+    'INTELIO_PWA_BIND=intelio-vps.tail9c1007.ts.net',
+    'INTELIO_PWA_PORT=8643',
+    'INTELIO_PWA_CERT=/tmp/intelio-host.crt',
+    'INTELIO_PWA_KEY=/tmp/intelio-host.key',
+    '',
+  ].join('\n'));
+  const profile = path.join(home, '.hermes', 'profiles', 'prc');
+  fs.mkdirSync(profile, { recursive: true });
+  fs.writeFileSync(path.join(profile, '.env'), 'API_SERVER_KEY=prc-only-key\n', { mode: 0o600 });
+  const script = `
+import importlib.util, json, os, sys, types
+spec = importlib.util.spec_from_file_location("intelio_fill_url", ${JSON.stringify(path.join(__dirname, '../../plugins/intelio-vault/fill.py'))})
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(mod.filler_origin())
+os.environ["INTELIO_PWA_CERT"] = ""
+os.environ["INTELIO_PWA_KEY"] = ""
+# File still has the cert. Clear the file and use bind only.
+open(${JSON.stringify(envFile)}, "w").write("INTELIO_PWA_BIND=intelio-vps.tail9c1007.ts.net\\nINTELIO_PWA_PORT=8643\\n")
+print(mod.filler_origin())
+open(${JSON.stringify(envFile)}, "w").write("")
+hc = types.ModuleType("hermes_constants")
+hc.get_hermes_home_override = lambda: ${JSON.stringify(profile)}
+sys.modules["hermes_constants"] = hc
+print(mod.fill_saved_login({"site": "portal.example"}))
+`;
+  const result = spawnSync('python3', ['-c', script], {
+    env: { HOME: home, PATH: process.env.PATH, PYTHONPATH: '' },
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const lines = result.stdout.trim().split('\n');
+  assert.equal(lines[0], 'https://intelio-vps.tail9c1007.ts.net:8643');
+  assert.equal(lines[1], 'http://intelio-vps.tail9c1007.ts.net:8643');
+  assert.deepEqual(JSON.parse(lines[2]), { ok: false, filled: false, domain: '', username: '', error: 'Filler URL is not configured.' });
+  assert.equal(lines.join('\n').includes('127.0.0.1:8643'), false);
+  const source = fs.readFileSync(path.join(__dirname, '../../plugins/intelio-vault/fill.py'), 'utf8');
+  assert.equal(source.includes('http://127.0.0.1:8643'), false);
+  const dropIn = fs.readFileSync(path.join(__dirname, '../../scripts/intelio-filler.conf'), 'utf8');
+  assert.match(dropIn, /INTELIO_FILLER_URL/);
+  assert.match(dropIn, /hermes-gateway|pwa.env/);
+});
+
+test('the optional profile browsers write loopback cdp.url and are not enabled', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-profile-browser-'));
+  const profiles = path.join(root, 'profiles');
+  const x11 = path.join(root, 'x11');
+  const log = path.join(root, 'chromium-log');
+  fs.mkdirSync(x11);
+  const displays = { prc: '20', alignment: '21', hhp: '22' };
+  for (const [name, num] of Object.entries(displays)) {
+    const desktop = path.join(profiles, name, 'bot-desktop');
+    fs.mkdirSync(desktop, { recursive: true });
+    fs.writeFileSync(path.join(desktop, 'display'), `${num}\n`);
+    fs.writeFileSync(path.join(desktop, 'Xauthority'), `auth-${name}`);
+    const py = spawnSync('python3', ['-c', `import socket; s=socket.socket(socket.AF_UNIX); s.bind(${JSON.stringify(path.join(x11, `X${num}`))}); s.listen(1)`], { encoding: 'utf8' });
+    assert.equal(py.status, 0, py.stderr);
+  }
+  const fake = path.join(root, 'chromium');
+  fs.writeFileSync(fake, `#!/bin/sh\necho "$*" >> "$INTELIO_TEST_LOG"\necho "DISPLAY=$DISPLAY" >> "$INTELIO_TEST_LOG"\necho "XAUTHORITY=$XAUTHORITY" >> "$INTELIO_TEST_LOG"\nexit 0\n`);
+  fs.chmodSync(fake, 0o755);
+  const script = path.join(__dirname, '../../scripts/bot-desktop-chromium.sh');
+  const launched = spawnSync('sh', [script], {
+    env: {
+      PATH: '/usr/bin:/bin',
+      HOME: root,
+      HERMES_PROFILES: profiles,
+      INTELIO_X11_DIR: x11,
+      INTELIO_CHROMIUM: fake,
+      INTELIO_TEST_LOG: log,
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(launched.status, 0, launched.stderr);
+  const record = fs.readFileSync(log, 'utf8');
+  assert.match(record, /--remote-debugging-address=127\.0\.0\.1/);
+  assert.equal(record.includes('0.0.0.0'), false);
+  assert.match(record, /--remote-debugging-port=9224/);
+  assert.match(record, /--remote-debugging-port=9225/);
+  assert.match(record, /--remote-debugging-port=9226/);
+  assert.match(record, /DISPLAY=:20/);
+  assert.match(record, /Xauthority/);
+  for (const [name, port] of [['prc', '9224'], ['alignment', '9225'], ['hhp', '9226']]) {
+    const file = path.join(profiles, name, 'bot-desktop', 'cdp.url');
+    assert.equal(fs.readFileSync(file, 'utf8').trim(), `http://127.0.0.1:${port}`);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  }
+  const unit = fs.readFileSync(path.join(__dirname, '../../scripts/intelio-bot-desktop-chromium.service'), 'utf8');
+  assert.match(unit, /bot-desktop-chromium\.sh/);
+  const docs = fs.readFileSync(path.join(__dirname, '../../docs/intelio-windows-and-mobile.md'), 'utf8');
+  assert.match(docs, /does not enable it/);
 });
