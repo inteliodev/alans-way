@@ -23,10 +23,30 @@ below. Each one is deliberate; re-apply it after a fresh export.
   The user chose the lowercase brand; commit `5b62c20` (0.3.15) made the change
   and `tests/test_intelio_harness.py` and the vendored `tests/test_loader.py`
   expect `intelio`.
+- `pin/hermes.yaml` pins the Hermes build the server runs, the
+  `inteliodev/hermes-agent` fork, not the export's
+  `NousResearch/hermes-agent@5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662`. See the
+  pin section below.
+- `src/intelio_harness/loader.py` accepts `repository:
+  https://github.com/inteliodev/hermes-agent` as well as the NousResearch URL,
+  so that pin loads. `upstream` must still be `NousResearch/hermes-agent`.
+- `tests/test_loader.py` expects that commit, repository, and date.
 
-The pin is the file from that commit. Upstream is `NousResearch/hermes-agent`
-at `5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662`, verified on 2026-10-03. There is
-no `sync_status` field.
+## Hermes pin
+
+The pin is the server's current build: `inteliodev/hermes-agent`, branch
+`intelio/pinned`, commit `d9ef91e9d5a00c185fabc47d332994ab2280480a`, verified on
+2026-10-07 with `git ls-remote https://github.com/inteliodev/hermes-agent
+intelio/pinned`. That fork carries local commits on top of upstream
+`NousResearch/hermes-agent` main at `7dab93b06e2bb3757dc18229169efcee1b5b47a3`.
+The upstream base is recorded only as a comment in `pin/hermes.yaml` (the loader
+schema allows `upstream`, `repository`, `commit`, and `verified_on` and nothing
+else). Do not move the pin to a newer fork or upstream commit until the server
+runs it. There is no `sync_status` field.
+
+The Hermes API routes the desktop and phone use are unchanged at that upstream
+base. `GET /api/memory` was never a Hermes API route; the desktop no longer
+requests it.
 
 ## What Alan's Way adds
 
@@ -40,7 +60,10 @@ sidecar.
 the sidecar and the `hermes --version` probe. A short `upstream <sha>` token or
 `+N.g<sha>` describe suffix is compared to the full pin by prefix. A different
 short SHA is `differs` (`installed <sha> vs pin <8 hex>`), not an unverified
-probe. It does not reimplement pin or profile parsing. The VPS browser broker loads the same `alans-way.yaml` (or the strict defaults) and calls `desktop/src/intelio/safety.cjs` before an agent navigation. The desktop app runs `python -m alans_way <profile_dir>` with
+probe. A fork checkout prints `upstream <origin/main> · local <HEAD> (+N
+carried commits)`; then only the `local` head is compared, because `upstream`
+is whatever origin/main is on that host. A host running the pinned fork commit
+is a `commit` match; a host on the plain upstream base is `differs`. It does not reimplement pin or profile parsing. The VPS browser broker loads the same `alans-way.yaml` (or the strict defaults) and calls `desktop/src/intelio/safety.cjs` before an agent navigation. The desktop app runs `python -m alans_way <profile_dir>` with
 `PYTHONPATH` set to both `intelio/python` and
 `intelio/vendor/intelio-harness/src`. The raw contract check is:
 

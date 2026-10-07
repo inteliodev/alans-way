@@ -59,8 +59,8 @@ test('the example profile loads through the Python loader and does not echo .env
     assert.equal(session.public.safety.yolo, false);
     assert.equal(session.public.safety.consequential, 'ask');
     assert.deepEqual(session.public.launchArgv, ['hermes', '-p', 'example']);
-    assert.equal(session.public.hermes.pinCommit, '5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662');
-    assert.equal(session.public.pinVerifiedOn, '2026-10-03');
+    assert.equal(session.public.hermes.pinCommit, 'd9ef91e9d5a00c185fabc47d332994ab2280480a');
+    assert.equal(session.public.pinVerifiedOn, '2026-10-07');
     if (session.public.hermes.commandOk) assert.ok(['commit', 'differs', 'unverified'].includes(session.public.hermes.match));
     else {
       assert.equal(session.public.hermes.match, 'unavailable');

@@ -23,7 +23,8 @@ from alans_way.safety import classify_url, enforce, navigation_allowed, redact  
 from intelio_harness.loader import HarnessRefused, load_profile  # noqa: E402
 
 EXAMPLE = ROOT / "intelio" / "profiles" / "example"
-PIN = "5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662"
+PIN = "d9ef91e9d5a00c185fabc47d332994ab2280480a"
+UPSTREAM_BASE = "7dab93b06e2bb3757dc18229169efcee1b5b47a3"
 SENTINEL = "super-secret-vault-value"
 
 
@@ -50,7 +51,7 @@ class RealLoaderTests(unittest.TestCase):
         self.assertEqual(profile.name, "Example")
         self.assertEqual(profile.allowed_folders, ("files",))
         self.assertEqual(pin.commit, PIN)
-        self.assertEqual(pin.verified_on, "2026-10-03")
+        self.assertEqual(pin.verified_on, "2026-10-07")
         self.assertEqual((HARNESS / "SOURCE_COMMIT.txt").read_text(encoding="utf-8").strip(),
                          "996267ba526254310a029e3c63825561e470c654")
         self.assertNotIn("sync_status", (HARNESS / "pin" / "hermes.yaml").read_text(encoding="utf-8"))
@@ -120,7 +121,7 @@ class ForkReportTests(unittest.TestCase):
         self.assertEqual(report["brand"]["window_title"], "intelio")
         self.assertEqual(report["brand"]["tokens"]["font"], "Geist")
         self.assertEqual(report["pin"]["commit"], PIN)
-        self.assertEqual(report["pin"]["verified_on"], "2026-10-03")
+        self.assertEqual(report["pin"]["verified_on"], "2026-10-07")
         self.assertNotIn("sync_status", report["pin"])
         self.assertIn("Alex Hansen", report["attribution"])
         self.assertIn("Nous Research", report["attribution"])
@@ -143,6 +144,28 @@ class ForkReportTests(unittest.TestCase):
             with self.assertRaises(ForkRefusal) as raised:
                 load_report(profile, pin_path=HARNESS / "pin" / "hermes.yaml", environ=_empty_env(Path(tmp)))
         self.assertIn("YOLO is not allowed", str(raised.exception))
+
+
+class PinnedHeadTests(unittest.TestCase):
+    """Pure parsing; runs on every OS (the PinCheckTests stubs need /bin/sh)."""
+
+    def test_server_fork_build_matches_the_pin(self):
+        from alans_way.probe import pinned_head
+
+        # Fork checkout whose origin/main is upstream: HEAD is `local`.
+        fork = f"Hermes Agent v0.22.0+12.g{PIN[:7]} (2026.10.7) · upstream {UPSTREAM_BASE[:8]} · local {PIN[:8]} (+12 carried commits)"
+        self.assertEqual(pinned_head(fork, PIN), PIN[:8])
+        # Fork checkout whose origin/main is the fork itself: only `upstream` is printed.
+        self.assertEqual(pinned_head(f"Hermes Agent v0.22.0 (2026.10.7) · upstream {PIN[:8]}", PIN), PIN[:8])
+        self.assertEqual(pinned_head(f"Hermes Agent v0.22.0+12.g{PIN[:7]}", PIN), PIN[:7])
+
+    def test_upstream_base_or_another_head_is_not_the_pin(self):
+        from alans_way.probe import pinned_head
+
+        self.assertIsNone(pinned_head(f"Hermes Agent · upstream {UPSTREAM_BASE[:8]}", PIN))
+        # A host on a newer fork commit whose origin/main is still the pin is not the pinned build.
+        self.assertIsNone(pinned_head(f"Hermes Agent · upstream {PIN[:8]} · local 0123abcd (+3 carried commits)", PIN))
+        self.assertIsNone(pinned_head("", PIN))
 
 
 class PinCheckTests(unittest.TestCase):
@@ -201,7 +224,7 @@ class PinCheckTests(unittest.TestCase):
         self.assertTrue(hermes["command_ok"])
         self.assertEqual(hermes["match"], "differs")
         self.assertEqual(hermes["commit"], "7b362884")
-        self.assertEqual(hermes["summary"], "installed 7b362884 vs pin 5d3c0597")
+        self.assertEqual(hermes["summary"], f"installed 7b362884 vs pin {PIN[:8]}")
         self.assertNotIn("no commit", hermes["summary"])
 
     def test_short_prefix_of_the_pin_matches(self):
@@ -215,6 +238,27 @@ class PinCheckTests(unittest.TestCase):
         self.assertEqual(report["hermes"]["match"], "commit")
         self.assertEqual(report["hermes"]["commit"], PIN)
         self.assertEqual(report["hermes"]["summary"], "installed commit matches the pin")
+
+    def test_server_running_the_pinned_fork_commit_matches(self):
+        # The server shape: inteliodev fork d9ef91e carried on upstream 7dab93b.
+        version = (
+            f"Hermes Agent v0.22.0+12.g{PIN[:7]} (2026.10.7) · upstream {UPSTREAM_BASE[:8]}"
+            f" · local {PIN[:8]} (+12 carried commits)"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._stub(Path(tmp), "echo '" + version + "'\nexit 0\n")
+            report = load_report(EXAMPLE, pin_path=HARNESS / "pin" / "hermes.yaml", environ=env)
+        hermes = report["hermes"]
+        self.assertEqual(hermes["match"], "commit")
+        self.assertEqual(hermes["commit"], PIN)
+        self.assertEqual(hermes["summary"], "installed commit matches the pin")
+
+    def test_plain_upstream_base_differs_from_the_fork_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._stub(Path(tmp), f"echo 'Hermes Agent v0.22.0 · upstream {UPSTREAM_BASE[:8]}'\nexit 0\n")
+            report = load_report(EXAMPLE, pin_path=HARNESS / "pin" / "hermes.yaml", environ=env)
+        self.assertEqual(report["hermes"]["match"], "differs")
+        self.assertEqual(report["hermes"]["summary"], f"installed {UPSTREAM_BASE[:8]} vs pin {PIN[:8]}")
 
     def test_success_without_a_commit_is_unverified(self):
         with tempfile.TemporaryDirectory() as tmp:
