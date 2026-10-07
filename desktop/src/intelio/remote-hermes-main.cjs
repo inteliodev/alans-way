@@ -7,6 +7,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeRemoteConfig, createRemoteHermesClient, redactKey, PROFILE_RE } = require('./remote-hermes.cjs');
+const { vaultOrigin, postProfileVault } = require('./remote-vault.cjs');
 const { createRemoteMain } = require('./remote-main-data.cjs');
 const { checkTailscale, assertInstallUrl, installUrl } = require('./tailscale.cjs');
 const { normalizeConnectionMode, chooseConnection, labelWithMode, allowedSignInUrl, CLOUD_PARTITION } = require('./cloud-connection.cjs');
@@ -471,6 +472,45 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return chatWindow;
   }
 
+  async function vault(action, value = {}) {
+    const cfg = await config();
+    const profile = String(value.profile || cfg.profile || 'intelio');
+    const key = await getKey(profile);
+    if (!key) throw new Error(`No API key saved for Hermes profile "${profile}".`);
+    const origin = vaultOrigin({ ...cfg, vaultOrigin: getPrefs().remoteHermes?.vaultOrigin, vaultPort: getPrefs().remoteHermes?.vaultPort });
+    const paths = { login: '/api/vault/login', logins: '/api/vault/logins', delete: '/api/vault/logins', fill: '/api/vault/fill' };
+    const method = action === 'logins' ? 'GET' : action === 'delete' ? 'DELETE' : 'POST';
+    let body;
+    if (action === 'login') {
+      body = {
+        profile,
+        domain: value.domain || '',
+        username: value.username || '',
+        password: value.password || '',
+        otp: value.otp || '',
+        save: value.save === true,
+        selectors: value.selectors || null,
+      };
+    } else if (action === 'delete') body = { profile, domain: value.domain || '' };
+    else if (action === 'fill') body = { profile, site: value.site || value.domain || '' };
+    return postProfileVault({
+      origin,
+      profile,
+      key,
+      method,
+      path: paths[action] || '/api/vault/fill',
+      body,
+      fetchImpl: selectVaultFetch(cfg),
+    });
+  }
+  function selectVaultFetch(cfg) {
+    if (cfg.partition && sessionFor) {
+      const ses = sessionFor(cfg.partition);
+      if (ses && typeof ses.fetch === 'function') return (url, init = {}) => ses.fetch(url, init);
+    }
+    return globalThis.fetch;
+  }
+
   async function vncPassword() {
     const stored = readKeys()[VNC_KEY];
     if (!stored) return '';
@@ -482,7 +522,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
-  return { register, command, open, publicState, watchVersion, viewerUrl, vncPassword, startupNotice: () => startupNotice };
+  return { register, command, open, publicState, watchVersion, viewerUrl, vncPassword, vault, startupNotice: () => startupNotice };
 }
 
 module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, keysFromImport, profileNames, secureDelete, VNC_KEY };

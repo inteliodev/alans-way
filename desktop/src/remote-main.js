@@ -424,6 +424,7 @@
       password: effect.password || '',
       otp: effect.otp || '',
       save: effect.save === true,
+      selectors: effect.selectors || null,
       taskId: effect.taskId || '',
     };
     const send = root.workspace?.command

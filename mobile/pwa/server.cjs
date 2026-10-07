@@ -17,6 +17,7 @@ const { resolveRepoRoot } = require('../../desktop/src/intelio/paths.cjs');
 const { readBrandPng, scalePng } = require('../../desktop/src/intelio/png-icon.cjs');
 const { createVoiceRuntime } = require('./voice.cjs');
 const { createVaultStore } = require('../../desktop/src/intelio/vault.cjs');
+const { fillLogin } = require('../../desktop/src/intelio/cdp-fill.cjs');
 const { normalizeIp, parseAllowlist, profileKeyPath, readProfileKey, createIdentity } = require('./identity.cjs');
 const { renderOrbPng } = require('./orbs.cjs');
 const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
@@ -176,6 +177,7 @@ function createPwaServer({
   accessVerify = null,
   accessMode = process.env.INTELIO_PWA_ACCESS === '1',
   vaultRoot = process.env.INTELIO_VAULT_ROOT || '',
+  filler = null,
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
@@ -183,7 +185,12 @@ function createPwaServer({
   const normalized = normalizeRemoteConfig({ host: '127.0.0.1', port: 8642, profile });
   const profileName = normalized.profile;
   const sessions = new Map();
-  const vault = createVaultStore({ root: vaultRoot || path.join(profileHome || os.homedir(), '.hermes', 'profiles') });
+  const vaultRootPath = vaultRoot || path.join(profileHome || os.homedir(), '.hermes', 'profiles');
+  let listedProfilesForVault = [];
+  const vault = createVaultStore({
+    root: vaultRootPath,
+    profiles: () => [profileName, ...listedProfilesForVault],
+  });
   const authFor = new WeakMap();
   const pendingCookies = new WeakMap();
   const iconBytes = icons();
@@ -324,6 +331,56 @@ function createPwaServer({
   function mutationOk(req) {
     if (!req.headers.origin) return false;
     return originOk(req);
+  }
+  function profileKeyMatches(req, profileId) {
+    const header = String(req.headers.authorization || '');
+    const match = /^Bearer\s+(\S+)$/.exec(header);
+    if (!match) return false;
+    let expected = '';
+    try { expected = bearerKey(profileId); } catch { return false; }
+    const left = Buffer.from(match[1]);
+    const right = Buffer.from(expected);
+    if (left.length !== right.length || left.length === 0) return false;
+    return crypto.timingSafeEqual(left, right);
+  }
+  async function refreshVaultProfiles() {
+    try {
+      const rows = await listProfiles({ home: profileHome, run: profileRun });
+      listedProfilesForVault = rows.map((row) => row.id);
+    } catch {
+      listedProfilesForVault = [];
+    }
+  }
+  async function runFiller(profileId, body, saved) {
+    const values = saved || {
+      domain: body.domain,
+      username: body.username,
+      password: body.password,
+      otp: body.otp,
+      selectors: body.selectors,
+    };
+    const run = filler || fillLogin;
+    try {
+      return await run({
+        profile: profileId,
+        root: vaultRootPath,
+        domain: values.domain || body.domain || body.site,
+        selectors: body.selectors || values.selectors,
+        values: { username: values.username, password: values.password, otp: values.otp },
+      });
+    } catch {
+      return { ok: false, filled: false };
+    }
+  }
+  function publicVault(result, extra = {}) {
+    return {
+      ok: result?.ok === true || extra.saved === true,
+      filled: result?.filled === true,
+      saved: extra.saved === true,
+      domain: String(result?.domain || extra.domain || ''),
+      ...(extra.username ? { username: String(extra.username) } : {}),
+      ...(extra.logins ? { logins: extra.logins } : {}),
+    };
   }
   function chosenProfile(req, body) {
     const raw = String((body && body.profile) || req.headers['x-intelio-profile'] || profileName || 'intelio').trim().toLowerCase();
@@ -514,28 +571,52 @@ function createPwaServer({
         await readRaw(req, 4096).catch(() => Buffer.alloc(0));
         return send(res, 405, { error: 'Sign-in uses Tailscale identity.' });
       }
+      if (url.pathname.startsWith('/api/vault/')) {
+        await refreshVaultProfiles();
+        const needsBody = req.method === 'POST' || req.method === 'DELETE';
+        const body = needsBody ? await readBody(req, 8192) : {};
+        const profileId = chosenProfile(req, body);
+        if (!profileKeyMatches(req, profileId)) {
+          const session = await authorize(req, res);
+          if (!session) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+        }
+        if (req.method === 'POST' && url.pathname === '/api/vault/login') {
+          try {
+            let saved = false;
+            if (body.save === true) {
+              vault.saveLogin(profileId, {
+                domain: body.domain,
+                username: body.username,
+                password: body.password,
+                otp: body.otp,
+                selectors: body.selectors,
+              });
+              saved = true;
+            }
+            const filled = await runFiller(profileId, body);
+            const pub = publicVault(filled, { saved, domain: body.domain || filled.domain || '' });
+            return send(res, 200, pub);
+          } catch {
+            return send(res, 400, { ok: false, filled: false, error: 'Could not save that login.' });
+          }
+        }
+        if (req.method === 'GET' && url.pathname === '/api/vault/logins') {
+          return send(res, 200, { ok: true, logins: vault.list(profileId) });
+        }
+        if (req.method === 'DELETE' && url.pathname === '/api/vault/logins') {
+          return send(res, 200, { ok: true, logins: vault.remove(profileId, body.domain) });
+        }
+        if (req.method === 'POST' && url.pathname === '/api/vault/fill') {
+          const hit = vault.fillerPayload(profileId, body.site);
+          if (!hit) return send(res, 200, { ok: false, filled: false });
+          const filled = await runFiller(profileId, { ...body, domain: hit.domain, selectors: body.selectors || hit.selectors }, hit);
+          const pub = publicVault(filled, { domain: hit.domain, username: hit.username || '' });
+          return send(res, 200, pub);
+        }
+        return send(res, 404, { error: 'Not found.' });
+      }
       const session = await authorize(req, res);
       if (!session) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
-      if (req.method === 'POST' && url.pathname === '/api/vault/login') {
-        const body = await readBody(req, 8192);
-        try {
-          if (body.save === true) vault.saveLogin(chosenProfile(req, body), { domain: body.domain, username: body.username, password: body.password, otp: body.otp });
-          return send(res, 200, { ok: true, saved: body.save === true });
-        } catch {
-          return send(res, 400, { ok: false, error: 'Could not save that login.' });
-        }
-      }
-      if (req.method === 'GET' && url.pathname === '/api/vault/logins') {
-        return send(res, 200, { logins: vault.list(chosenProfile(req, {})) });
-      }
-      if (req.method === 'DELETE' && url.pathname === '/api/vault/logins') {
-        const body = await readBody(req, 4096);
-        return send(res, 200, { logins: vault.remove(chosenProfile(req, body), body.domain) });
-      }
-      if (req.method === 'POST' && url.pathname === '/api/vault/fill') {
-        const body = await readBody(req, 4096);
-        return send(res, 200, vault.toolResult(chosenProfile(req, body), body.site));
-      }
       if (req.method === 'GET' && (url.pathname === '/session' || url.pathname === '/session/')) {
         return send(res, 200, { ok: true, login: session.login || '' });
       }

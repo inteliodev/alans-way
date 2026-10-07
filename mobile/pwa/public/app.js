@@ -1329,7 +1329,15 @@
         await fetch('/api/vault/login', {
           method: 'POST',
           headers: profileHeaders(state.bops?.profile, { 'content-type': 'application/json' }),
-          body: JSON.stringify({ profile: state.bops?.profile, domain: effect.domain, username: effect.username, password: effect.password, otp: effect.otp, save: effect.save === true }),
+          body: JSON.stringify({
+            profile: state.bops?.profile,
+            domain: effect.domain,
+            username: effect.username,
+            password: effect.password,
+            otp: effect.otp,
+            save: effect.save === true,
+            selectors: effect.selectors || null,
+          }),
         }).catch(() => {});
       }
       paintThread();

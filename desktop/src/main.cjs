@@ -27,6 +27,7 @@ const { agents, agentsSetup } = require('./intelio/forks.cjs');
 const { setupRemoteHermes } = require('./intelio/remote-hermes-main.cjs');
 const { loadPreferences, initialDesktopTab } = require('./intelio/preferences.cjs');
 const { createVaultStore } = require('./intelio/vault.cjs');
+const { usesRemoteVault } = require('./intelio/remote-vault.cjs');
 const { buildFill, publicFill, fieldValue } = require('./intelio/login-fill.cjs');
 const { normalizeTheme } = require('./intelio/theme.cjs');
 const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
@@ -455,16 +456,25 @@ function loginVaultStore() {
   if (!loginVault) loginVault = createVaultStore({ root: process.env.INTELIO_VAULT_ROOT || path.join(app.getPath('home'), '.hermes', 'profiles') });
   return loginVault;
 }
-function rememberLogin(value) {
+function vaultProfile(value) {
+  return value?.profile || prefs.remoteHermes?.profile || 'intelio';
+}
+async function remoteVault(action, value) {
+  if (typeof remoteHermes?.vault !== 'function') return { ok: false, filled: false, error: 'Remote vault is not connected.' };
+  return remoteHermes.vault(action, value || {});
+}
+async function rememberLogin(value) {
+  if (usesRemoteVault(prefs)) return remoteVault('login', value);
   try {
     const instruction = buildFill(value || {});
     let saved = false;
     if (value?.save === true && fieldValue(instruction, 'password') && instruction.domain) {
-      loginVaultStore().saveLogin(value.profile || prefs.remoteHermes?.profile || 'intelio', {
+      loginVaultStore().saveLogin(vaultProfile(value), {
         domain: instruction.domain,
         username: fieldValue(instruction, 'username'),
         password: fieldValue(instruction, 'password'),
         otp: fieldValue(instruction, 'otp'),
+        selectors: value.selectors,
       });
       saved = true;
     }
@@ -618,9 +628,15 @@ function registerIpc() {
         break;
       }
       case 'fill-login': return rememberLogin(value);
-      case 'vault-list': return { logins: loginVaultStore().list(value.profile || prefs.remoteHermes?.profile || 'intelio') };
-      case 'vault-delete': return { logins: loginVaultStore().remove(value.profile || prefs.remoteHermes?.profile || 'intelio', value.domain) };
-      case 'fill-saved-login': return loginVaultStore().toolResult(value.profile || prefs.remoteHermes?.profile || 'intelio', value.site);
+      case 'vault-list':
+        if (usesRemoteVault(prefs)) return remoteVault('logins', value);
+        return { logins: loginVaultStore().list(vaultProfile(value)) };
+      case 'vault-delete':
+        if (usesRemoteVault(prefs)) return remoteVault('delete', value);
+        return { logins: loginVaultStore().remove(vaultProfile(value), value.domain) };
+      case 'fill-saved-login':
+        if (usesRemoteVault(prefs)) return remoteVault('fill', value);
+        return loginVaultStore().toolResult(vaultProfile(value), value.site);
       case 'settings':
         if (typeof value.macSshHost === 'string' && value.macSshHost.trim() && !isSshTarget(value.macSshHost.trim())) throw new Error('Enter the Mac SSH address as user@host or host, with no spaces or symbols.');
         if (value.vpsBrowser && typeof value.vpsBrowser === 'object') { prefs.vpsBrowser={sshHost:String(value.vpsBrowser.sshHost || '').trim(),scriptPath:String(value.vpsBrowser.scriptPath || '').trim(),sudo:value.vpsBrowser.sudo===true}; vpsBrowserStatus='connecting'; refreshVpsTabs(); }

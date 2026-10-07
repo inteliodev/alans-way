@@ -52,10 +52,15 @@ test('Cloudflare Access signs the phone in without Tailscale whois', async () =>
   const os = require('node:os');
   const fs = require('node:fs');
   const path = require('node:path');
+  const secret = 'access-vault-secret';
   const vaultRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-pwa-vault-'));
   const app = createPwaServer({
     bind: '127.0.0.1', port: 0, upstream: 'http://127.0.0.1:9', fetchImpl: globalThis.fetch,
     profileKey: KEY, vaultRoot,
+    filler: async ({ values }) => {
+      assert.equal(values.password, secret);
+      return { ok: true, filled: true, domain: 'portal.example', password: values.password };
+    },
     identify: async () => { throw new Error('whois should not run'); },
     accessVerify: async (token) => (token === 'good-assertion' ? { ok: true, login: 'hayden@intelio.co' } : { ok: false }),
   });
@@ -68,7 +73,6 @@ test('Cloudflare Access signs the phone in without Tailscale whois', async () =>
     assert.equal(allowed.status, 200);
     assert.match(allowed.body, /hayden@intelio\.co/);
     const cookie = allowed.headers['set-cookie'][0].split(';')[0];
-    const secret = 'access-vault-secret';
     const access = { 'cf-access-jwt-assertion': 'good-assertion', 'x-intelio-profile': 'intelio' };
     const saved = await request(address.port, 'POST', '/api/vault/login', {
       cookie,
@@ -76,6 +80,7 @@ test('Cloudflare Access signs the phone in without Tailscale whois', async () =>
       body: JSON.stringify({ domain: 'portal.example', username: 'ada', password: secret, save: true, profile: 'intelio' }),
     });
     assert.equal(saved.status, 200);
+    assert.match(saved.body, /"filled":true/);
     assert.equal(saved.body.includes(secret), false);
     const list = await request(address.port, 'GET', '/api/vault/logins', { cookie, headers: access });
     assert.match(list.body, /portal\.example/);

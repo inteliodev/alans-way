@@ -101,6 +101,7 @@ test('login is a write-only secure sign-in', () => {
   run = bops.applyTaskResult(run, 'task-1', { ok: false, error: 'login wall https://portal.example.com/login' });
   const view = bops.viewModel(run);
   assert.equal(view.signIn.domain, 'portal.example.com');
+  assert.match(view.signIn.selectors.password, /input\[type="password"\]/);
   assert.deepEqual(view.signIn.actions.map((action) => action.label), ['Submit', 'Do it on screen']);
   assert.ok(view.signIn.fields.filter((field) => field.id !== 'username').every((field) => field.type === 'password'));
   const secret = 'hunter2-secret-value';
@@ -109,6 +110,7 @@ test('login is a write-only secure sign-in', () => {
   assert.equal(submitted.effect.writeOnly, true);
   assert.equal(submitted.effect.moneyMove, false);
   assert.equal(submitted.effect.password, secret);
+  assert.equal(submitted.effect.selectors.password, view.signIn.selectors.password);
   assert.equal(JSON.stringify(submitted.run).includes(secret), false);
   assert.equal(JSON.stringify(bops.executionPlan(submitted.run)).includes(secret), false);
   assert.equal(JSON.stringify(bops.viewModel(submitted.run)).includes(secret), false);

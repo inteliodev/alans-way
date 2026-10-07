@@ -2,8 +2,10 @@
 /**
  * Per-profile encrypted login vault. Intelio harness only.
  * Ciphertext lives at <root>/<profile>/vault (mode 0600). The key is a
- * separate 32-byte file, <root>/<profile>/vault.key, also mode 0600.
- * Point that key file at systemd-creds or the OS keyring on the VPS.
+ * separate 32-byte file. systemd user credentials win: when
+ * CREDENTIALS_DIRECTORY is set, the key is vault.key.<profile> in that
+ * directory (LoadCredentialEncrypted=vault.key.<profile>:...). Otherwise the
+ * key is <root>/<profile>/vault.key, mode 0600.
  * AES-256-GCM uses the profile id as additional data, so a copied vault
  * does not open under another profile's key.
  * list() and toolResult() never include a password or one-time code.
@@ -12,7 +14,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const PROFILES = new Set(['intelio', 'prc', 'alignment', 'hhp']);
+const SLUG = /^[a-z0-9](?:[a-z0-9_-]{0,30}[a-z0-9])?$/;
 
 const FILL_SAVED_LOGIN_TOOL = {
   name: 'fill_saved_login',
@@ -20,9 +22,39 @@ const FILL_SAVED_LOGIN_TOOL = {
   parameters: { type: 'object', properties: { site: { type: 'string' } }, required: ['site'] },
 };
 
-function assertProfile(id) {
+function profileSlug(id) {
   const name = String(id || '').trim().toLowerCase();
-  if (!PROFILES.has(name)) throw new Error('Unknown profile.');
+  if (!name || name === 'default' || !SLUG.test(name)) throw new Error('Unknown profile.');
+  return name;
+}
+
+function profileIdsFromList(stdout) {
+  const found = [];
+  for (const line of String(stdout || '').split(/\r?\n/)) {
+    const token = line.replace(/[*★]/g, ' ').trim().split(/\s+/)[0] || '';
+    const slug = token.toLowerCase();
+    if (!slug || slug === 'default' || !SLUG.test(slug) || found.includes(slug)) continue;
+    found.push(slug);
+  }
+  return found;
+}
+
+function directoryProfiles(root, fsImpl = fs) {
+  const found = [];
+  try {
+    for (const entry of fsImpl.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      const slug = entry.name.toLowerCase();
+      if (slug === 'default' || !SLUG.test(slug)) continue;
+      found.push(slug);
+    }
+  } catch { /* no profile directory yet */ }
+  return found;
+}
+
+function assertProfile(id, known) {
+  const name = profileSlug(id);
+  if (known && !known.has(name)) throw new Error('Unknown profile.');
   return name;
 }
 
@@ -42,25 +74,41 @@ function writePrivate(file, data) {
   try { fs.chmodSync(file, 0o600); } catch { /* Windows may ignore the mode bit */ }
 }
 
-function createVaultStore({ root }) {
+function createVaultStore({ root, profiles, credentialsDir, fsImpl = fs } = {}) {
   if (!root) throw new Error('Vault root is required.');
 
+  function knownIds() {
+    const ids = new Set(directoryProfiles(root, fsImpl));
+    const extra = typeof profiles === 'function' ? profiles() : profiles || [];
+    for (const id of extra) {
+      try { ids.add(profileSlug(id)); } catch { /* ignore a bad name from the lister */ }
+    }
+    return ids;
+  }
   function dir(profile) {
-    return path.join(root, assertProfile(profile));
+    return path.join(root, assertProfile(profile, knownIds()));
+  }
+  function credentialKeyFile(profile) {
+    const creds = credentialsDir || process.env.CREDENTIALS_DIRECTORY || '';
+    if (!creds) return '';
+    const file = path.join(creds, `vault.key.${profile}`);
+    return fsImpl.existsSync(file) ? file : '';
   }
   function keyFile(profile) {
-    return path.join(dir(profile), 'vault.key');
+    return credentialKeyFile(profile) || path.join(dir(profile), 'vault.key');
   }
   function dataFile(profile) {
     return path.join(dir(profile), 'vault');
   }
   function loadKey(profile) {
-    const file = keyFile(profile);
-    if (fs.existsSync(file)) {
-      const key = fs.readFileSync(file);
+    const fromCreds = credentialKeyFile(profile);
+    const file = fromCreds || path.join(dir(profile), 'vault.key');
+    if (fsImpl.existsSync(file)) {
+      const key = fsImpl.readFileSync(file);
       if (key.length !== 32) throw new Error('Vault key is unusable.');
       return key;
     }
+    if (fromCreds) throw new Error('Vault key is unusable.');
     const key = crypto.randomBytes(32);
     writePrivate(file, key);
     return key;
@@ -73,7 +121,7 @@ function createVaultStore({ root }) {
     const tag = raw.subarray(12, 28);
     const body = raw.subarray(28);
     const decipher = crypto.createDecipheriv('aes-256-gcm', loadKey(profile), iv);
-    decipher.setAAD(Buffer.from(assertProfile(profile)));
+    decipher.setAAD(Buffer.from(assertProfile(profile, knownIds())));
     decipher.setAuthTag(tag);
     const json = Buffer.concat([decipher.update(body), decipher.final()]).toString('utf8');
     const parsed = JSON.parse(json);
@@ -82,7 +130,7 @@ function createVaultStore({ root }) {
   function save(profile, data) {
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', loadKey(profile), iv);
-    cipher.setAAD(Buffer.from(assertProfile(profile)));
+    cipher.setAAD(Buffer.from(assertProfile(profile, knownIds())));
     const body = Buffer.concat([cipher.update(JSON.stringify({ logins: data.logins }), 'utf8'), cipher.final()]);
     writePrivate(dataFile(profile), Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64'));
   }
@@ -93,8 +141,8 @@ function createVaultStore({ root }) {
   }
 
   return {
-    saveLogin(profile, { domain, username, password, otp } = {}) {
-      const id = assertProfile(profile);
+    saveLogin(profile, { domain, username, password, otp, selectors } = {}) {
+      const id = assertProfile(profile, knownIds());
       const host = normalizeDomain(domain);
       const data = open(id);
       const next = {
@@ -102,6 +150,11 @@ function createVaultStore({ root }) {
         username: String(username || '').slice(0, 200),
         password: String(password || ''),
         otp: String(otp || ''),
+        selectors: selectors && typeof selectors === 'object' ? {
+          username: String(selectors.username || '').slice(0, 300),
+          password: String(selectors.password || '').slice(0, 300),
+          otp: String(selectors.otp || '').slice(0, 300),
+        } : undefined,
       };
       data.logins = data.logins.filter((item) => item.domain !== host);
       data.logins.push(next);
@@ -116,7 +169,7 @@ function createVaultStore({ root }) {
       }
     },
     remove(profile, domain) {
-      const id = assertProfile(profile);
+      const id = assertProfile(profile, knownIds());
       const host = normalizeDomain(domain);
       const data = open(id);
       data.logins = data.logins.filter((item) => item.domain !== host);
@@ -135,9 +188,26 @@ function createVaultStore({ root }) {
     fillerPayload(profile, site) {
       const hit = match(profile, site);
       if (!hit) return null;
-      return { domain: hit.domain, username: hit.username || '', password: hit.password || '', otp: hit.otp || '' };
+      return {
+        domain: hit.domain,
+        username: hit.username || '',
+        password: hit.password || '',
+        otp: hit.otp || '',
+        selectors: hit.selectors || null,
+      };
+    },
+    knownProfiles() {
+      return [...knownIds()].sort();
     },
   };
 }
 
-module.exports = { PROFILES, FILL_SAVED_LOGIN_TOOL, createVaultStore, normalizeDomain, assertProfile };
+module.exports = {
+  FILL_SAVED_LOGIN_TOOL,
+  createVaultStore,
+  normalizeDomain,
+  assertProfile,
+  profileSlug,
+  profileIdsFromList,
+  directoryProfiles,
+};

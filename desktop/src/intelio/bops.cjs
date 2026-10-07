@@ -117,6 +117,26 @@
     return match[1].toLowerCase().replace(/^www\./, '').replace(/[.:]+$/, '');
   }
 
+  function cleanSelector(value) {
+    const text = String(value || '').trim();
+    if (!text || text.length > 300 || /[\r\n]/.test(text)) return '';
+    return text;
+  }
+
+  function selectorsFrom(signal) {
+    const raw = signal?.selectors && typeof signal.selectors === 'object' ? signal.selectors : {};
+    const defaults = {
+      username: 'input[autocomplete="username"], input[type="email"], input[name="username"], input[name="email"]',
+      password: 'input[autocomplete="current-password"], input[name="password"], input[type="password"]:not([autocomplete="one-time-code"])',
+      otp: 'input[autocomplete="one-time-code"], input[name="otp"], input[name="code"]',
+    };
+    return {
+      username: cleanSelector(raw.username) || defaults.username,
+      password: cleanSelector(raw.password) || defaults.password,
+      otp: cleanSelector(raw.otp) || defaults.otp,
+    };
+  }
+
   function classifyBlocker(signal) {
     const text = `${signal?.code || ''} ${signal?.error || ''} ${signal?.message || ''} ${signal?.tool || ''} ${signal?.title || ''}`.toLowerCase();
     if (!text.trim()) return null;
@@ -124,7 +144,7 @@
       return { kind: 'payment', statusLine: 'Payment paused. Intelio does not submit payments.', moneyMove: false };
     }
     if (/login|sign in|signin|password|credential|otp/.test(text)) {
-      return { kind: 'login', domain: domainFrom(signal), moneyMove: false };
+      return { kind: 'login', domain: domainFrom(signal), selectors: selectorsFrom(signal), moneyMove: false };
     }
     if (/human_has_control|approval_required|missing credential|blocked/.test(text)) {
       return { kind: 'pause', statusLine: 'Paused.', moneyMove: false };
@@ -156,7 +176,7 @@
             status: 'blocked',
             dismissed: false,
             note: '',
-            blocker: { kind: 'login', domain: blocker.domain || '' },
+            blocker: { kind: 'login', domain: blocker.domain || '', selectors: blocker.selectors },
           };
         }
         return {
@@ -192,6 +212,7 @@
         { id: 'otp', label: 'One-time code', type: 'password', autocomplete: 'one-time-code' },
       ],
       saveLabel: 'Save login',
+      selectors: task.blocker.selectors || selectorsFrom(task.blocker),
       actions: [
         { id: 'submit', label: 'Submit' },
         { id: 'on-screen', label: 'Do it on screen' },
@@ -225,6 +246,7 @@
         password: String(values.password || ''),
         otp: String(values.otp || ''),
         save: values.save === true,
+        selectors: task.blocker.selectors || selectorsFrom(task.blocker),
         moneyMove: false,
       },
     };

@@ -46,6 +46,8 @@ test('a call pill counts up and keeps the ending length', () => {
 
 test('saved logins are profile-isolated and the tool result hides the secret', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-vault-'));
+  fs.mkdirSync(path.join(root, 'hhp'));
+  fs.mkdirSync(path.join(root, 'prc'));
   const store = createVaultStore({ root });
   const secret = 'hhp-only-secret-value';
   store.saveLogin('hhp', { domain: 'bank.example', username: 'hhp-user', password: secret, otp: '998877' });
@@ -71,7 +73,8 @@ test('saved logins are profile-isolated and the tool result hides the secret', (
 test('the maximize script is harness-side and names the display', () => {
   const script = fs.readFileSync(path.join(__dirname, '../../scripts/bot-desktop-maximize.sh'), 'utf8');
   assert.match(script, /wmctrl/);
+  assert.match(script, /Xauthority/);
   assert.match(script, /:20/);
-  assert.match(script, /window-position=0,0/);
+  assert.match(script, /--watch/);
   assert.equal(script.includes('hermes/hermes'), false);
 });
