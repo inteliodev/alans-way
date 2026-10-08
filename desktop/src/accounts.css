@@ -1,0 +1,77 @@
+/* Accounts page and Settings > Activity. Colours come from theme variables so light, dark and
+   Blue all work: desktop sets --bg/--panel/--text/--muted/--line, the phone sets --card/--fill.
+   Status colour is green only. */
+.acct-pane { display: flex; flex-direction: column; gap: 10px; color: inherit; }
+.acct-body { display: flex; flex-direction: column; gap: 10px; }
+.acct-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.acct-lede { margin: 0; font-size: 12px; }
+.acct-group h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.acct-hint { margin: 4px 0 0; font-size: 12px; opacity: 0.85; }
+.acct-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 0 2px; border-top: 1px solid var(--line, rgba(127, 127, 140, 0.25)); margin-top: 8px; }
+.acct-group-head + .acct-row, .acct-hint + .acct-row { border-top: 0; margin-top: 2px; }
+.acct-main { min-width: 0; flex: 1; }
+.acct-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: 14px; }
+.acct-name { font-weight: 550; }
+.acct-who { opacity: 0.9; overflow-wrap: anywhere; }
+.acct-plan, .acct-tag { font-size: 11px; line-height: 1; padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line, rgba(127, 127, 140, 0.35)); white-space: nowrap; }
+.acct-detail { margin: 4px 0 0; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; color: var(--muted, #8e8e98); }
+.acct-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; font-size: 12px; }
+.acct-used { font-size: 12px; white-space: nowrap; color: var(--muted, #8e8e98); }
+.acct-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: transparent; border: 1px solid var(--muted, #8e8e98); display: inline-block; }
+.acct-dot.on { background: #34c77b; border-color: #34c77b; }
+.acct-dot.attention { background: #ff6b5e; border-color: #ff6b5e; }
+.acct-btn, .acct-link, .acct-primary, .acct-close { font: inherit; cursor: pointer; color: inherit; }
+.acct-btn { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: transparent; border: 1px solid var(--line, rgba(127, 127, 140, 0.35)); }
+.acct-btn:disabled { opacity: 0.5; cursor: default; }
+.acct-link { background: transparent; border: 0; padding: 0; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; opacity: 0.9; }
+.acct-note { margin: 0; font-size: 12px; }
+.acct-foot { margin: 4px 0 0; font-size: 11px; color: var(--muted, #8e8e98); }
+
+/* Phone: the page is not inside the desktop agent-card styles. */
+.acct-phone .acct-group { background: var(--card, var(--panel, transparent)); border: 1px solid var(--line, rgba(127, 127, 140, 0.25)); border-radius: 14px; padding: 12px 14px; }
+.acct-phone .acct-group-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.acct-phone .acct-side { max-width: 40%; }
+.acct-phone .acct-row { flex-wrap: wrap; }
+
+/* Sign-in modal: its own layer so it never touches the app's shared modal. */
+.acct-modal { position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, 0.45); }
+.acct-modal-card { width: min(460px, 100%); max-height: calc(100vh - 40px); overflow: auto; box-sizing: border-box; padding: 18px 20px 20px; border-radius: 16px; background: var(--panel, var(--card, #151517)); color: var(--text, #f4f4f8); border: 1px solid var(--line, rgba(127, 127, 140, 0.3)); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35); }
+.acct-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.acct-modal-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.acct-close { background: transparent; border: 0; font-size: 22px; line-height: 1; padding: 2px 6px; opacity: 0.8; }
+.acct-modal-text { margin: 6px 0 12px; font-size: 13px; line-height: 1.5; }
+.acct-ok::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #34c77b; margin-right: 8px; vertical-align: middle; }
+.acct-form { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.acct-label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted, #8e8e98); }
+.acct-input, .acct-select { font: inherit; font-size: 14px; color: var(--text, inherit); background: var(--bg, transparent); border: 1px solid var(--line, rgba(127, 127, 140, 0.35)); border-radius: 10px; padding: 9px 11px; min-width: 0; }
+.acct-primary { align-self: flex-start; border: 0; border-radius: 999px; padding: 8px 16px; font-size: 13px; font-weight: 550; background: var(--text, #f4f4f8); color: var(--bg, #09090a); }
+.acct-primary:disabled { opacity: 0.6; cursor: default; }
+.acct-step { margin: 12px 0 6px; font-size: 13px; font-weight: 550; }
+.acct-copy-row { display: flex; align-items: center; gap: 8px; }
+.acct-url { flex: 1; min-width: 0; font-size: 12px; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: underline; }
+.acct-code { font: 600 20px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line, rgba(127, 127, 140, 0.35)); }
+.acct-error { margin: 6px 0; font-size: 12px; color: #ff6b5e; }
+.acct-wait { margin: 14px 0 8px; font-size: 12px; }
+.acct-modal-card .acct-hint { color: var(--muted, #8e8e98); }
+
+/* Settings > Activity: quiet, collapsed until asked for. */
+.acct-activity { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.acct-activity > .acct-btn { align-self: flex-start; }
+.acct-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.acct-filters .acct-search { flex: 1; min-width: 120px; }
+.acct-filters[hidden], .acct-log[hidden] { display: none; }
+.acct-log { display: flex; flex-direction: column; max-height: 360px; overflow: auto; border: 1px solid var(--line, rgba(127, 127, 140, 0.25)); border-radius: 10px; }
+.acct-log-row { padding: 8px 10px; border-top: 1px solid var(--line, rgba(127, 127, 140, 0.2)); }
+.acct-log-row:first-child { border-top: 0; }
+.acct-log-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; color: var(--muted, #8e8e98); margin-bottom: 3px; }
+.acct-log-agent { font-weight: 600; color: var(--text, inherit); }
+.acct-log-src { font-style: italic; }
+.acct-log-text { display: block; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; background: transparent; padding: 0; border: 0; color: inherit; }
+html[data-theme="blue"] .acct-dot.on, html[data-theme="blue"] .acct-ok::before { background: #5ee2a0; border-color: #5ee2a0; }
+html[data-theme="blue"] .acct-modal-card { background: var(--panel, #1414ee); }
+html[data-theme="blue"] .acct-log-text, html[data-theme="blue"] .acct-code { background: transparent; color: inherit; }
+
+/* Phone: the agent sheet now has five tabs; keep them on one line and let the row scroll on narrow screens. */
+.profile-subtabs { overflow-x: auto; scrollbar-width: none; }
+.profile-subtabs::-webkit-scrollbar { display: none; }
+.profile-subtab { flex: 0 0 auto; white-space: nowrap; }

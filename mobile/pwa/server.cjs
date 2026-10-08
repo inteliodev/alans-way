@@ -33,6 +33,7 @@ const { harnessId, excludedAgent, buildCard, readProfileFiles, writePaused, writ
 const picker = require('../../desktop/src/intelio/model-picker.cjs');
 const { preview: previewTranscript } = require('../../desktop/src/intelio/transcript.cjs');
 const { createSkillInstaller } = require('./skills-install.cjs');
+const { createAccountsApi } = require('./accounts-routes.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
 const STATIC = {
@@ -230,6 +231,8 @@ function createPwaServer({
   // A new agent is checked on its own /p/<name>/ route before the create call answers.
   readyTries = 6,
   readyDelayMs = 1000,
+  accounts = null,
+  activityFile = undefined,
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
@@ -249,6 +252,16 @@ function createPwaServer({
     root: vaultRootPath,
     home: vaultHome || (vaultRoot ? `${path.resolve(vaultRoot)}.intelio-home` : (profileHome || os.homedir())),
     profiles: () => [profileName, ...listedProfilesForVault],
+  });
+  // Accounts page and Settings > Activity (mobile/pwa/accounts-routes.cjs). Same auth as /api.
+  const accountsApi = createAccountsApi({
+    sample,
+    home: profileHome || os.homedir(),
+    profilesRoot: vaultRootPath,
+    vaultCount: (id) => vault.list(id).length,
+    accounts,
+    activityFile,
+    now,
   });
   const authFor = new WeakMap();
   const pendingCookies = new WeakMap();
@@ -867,10 +880,10 @@ function createPwaServer({
       "img-src 'self' data: blob: crx:",
     );
     html = html.replace(/(href|src)="(?!\/|https?:|data:)([^"]+)"/g, '$1="/ui/$2"');
-    html = html.replace('</head>', '<script src="/desktop-boot.js?v=27"></script></head>');
+    html = html.replace('</head>', '<script src="/desktop-boot.js?v=28"></script></head>');
     html = html.replace(
       '<script src="/ui/renderer.js"></script>',
-      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=27"></script><script src="/ui/renderer.js"></script>',
+      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=28"></script><script src="/ui/renderer.js"></script>',
     );
     return html;
   }
@@ -1379,6 +1392,9 @@ function createPwaServer({
       }
       if (req.method === 'GET' && url.pathname === '/api/browser/site') {
         return send(res, 200, { domain: await browserDomain(chosenProfile(req)) });
+      }
+      if (url.pathname === '/api/accounts' || url.pathname.startsWith('/api/accounts/') || url.pathname === '/api/activity') {
+        return await accountsApi.handle(req, res, url, { send, readBody, chosenProfile, presentedBearer, mutationOk });
       }
       if (url.pathname === '/api/agent/card' || url.pathname === '/api/agent/thinking' || url.pathname === '/api/agent/pause') {
         const writing = req.method === 'POST';
