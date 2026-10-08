@@ -42,16 +42,16 @@
 
   /** The clients, in sidebar order. `account` is the default sign-in hint; Settings can change it. */
   const CLIENTS = [
-    { id: 'intelio', name: 'intelio', suite: GOOGLE, account: 'hayden@intelio.co', extra: [] },
+    { id: 'intelio', name: 'intelio', suite: MICROSOFT, account: 'hayden@intelio.co', extra: [] },
     { id: 'prc', name: 'PRC Equity', short: 'PRC', suite: GOOGLE, account: '', extra: [
       { id: 'box', label: 'Box', icon: 'box', url: 'https://app.box.com/', primary: true },
       { id: 'center', label: 'The Center', icon: 'dashboard', url: 'https://the-center-prc.vercel.app/' },
     ] },
-    { id: 'alignment', name: 'Alignment', suite: MICROSOFT, account: '', extra: [
+    { id: 'alignment', name: 'Alignment', suite: MICROSOFT, account: 'hashley@alignmentpa.com', extra: [
       { id: 'platform', label: 'Alignment platform', icon: 'dashboard', url: 'https://app.alignmentpa.com/', primary: true },
     ] },
     { id: 'hhp', name: 'HHP', suite: MICROSOFT, account: 'hayden@hhpasset.com', extra: [] },
-    { id: 'arlp', name: 'ARLP', suite: MICROSOFT, account: '', extra: [] },
+    { id: 'arlp', name: 'ARLP', suite: MICROSOFT, account: 'hayden.ashley2@arlp.com', extra: [] },
   ];
 
   const SUITE_LABEL = { [GOOGLE]: 'Google Workspace', [MICROSOFT]: 'Microsoft 365' };

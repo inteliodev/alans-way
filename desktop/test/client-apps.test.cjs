@@ -3,9 +3,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const apps = require('../src/intelio/client-apps.cjs');
 
-test('every client has its suite: Google for intelio and PRC, Microsoft 365 for Alignment, HHP and ARLP', () => {
+test('every client has its suite: Google for PRC, Microsoft 365 for intelio, Alignment, HHP and ARLP', () => {
   const suites = Object.fromEntries(apps.CLIENTS.map((client) => [client.id, client.suite]));
-  assert.deepEqual(suites, { intelio: 'google', prc: 'google', alignment: 'microsoft', hhp: 'microsoft', arlp: 'microsoft' });
+  assert.deepEqual(suites, { intelio: 'microsoft', prc: 'google', alignment: 'microsoft', hhp: 'microsoft', arlp: 'microsoft' });
   for (const client of apps.CLIENTS) {
     const ids = apps.appsFor(client.id).filter((app) => app.primary).map((app) => app.id);
     assert.ok(ids.includes('mail') && ids.includes('calendar'), client.id);
@@ -25,13 +25,17 @@ test('each client gets its own browser partition, and unknown clients are refuse
 });
 
 test('the account hint picks the right login on each suite, and only valid emails are used', () => {
-  const google = new URL(apps.urlFor('intelio', 'mail', 'hayden@intelio.co'));
+  const google = new URL(apps.urlFor('prc', 'mail', 'me@prcequity.com'));
   assert.equal(google.hostname, 'mail.google.com');
-  assert.equal(google.searchParams.get('authuser'), 'hayden@intelio.co');
+  assert.equal(google.searchParams.get('authuser'), 'me@prcequity.com');
+  const accounts = Object.fromEntries(apps.CLIENTS.map((client) => [client.id, client.account]));
+  assert.deepEqual(accounts, { intelio: 'hayden@intelio.co', prc: '', alignment: 'hashley@alignmentpa.com', hhp: 'hayden@hhpasset.com', arlp: 'hayden.ashley2@arlp.com' });
+  assert.equal(new URL(apps.urlFor('intelio', 'mail')).searchParams.get('login_hint'), 'hayden@intelio.co');
   const microsoft = new URL(apps.urlFor('hhp', 'calendar', 'hayden@hhpasset.com'));
   assert.equal(microsoft.hostname, 'outlook.office.com');
   assert.equal(microsoft.searchParams.get('login_hint'), 'hayden@hhpasset.com');
   assert.equal(new URL(apps.urlFor('arlp', 'mail', 'not an email')).search, '');
+  assert.equal(new URL(apps.urlFor('arlp', 'mail')).searchParams.get('login_hint'), 'hayden.ashley2@arlp.com');
   assert.equal(new URL(apps.urlFor('alignment', 'platform', 'me@alignmentpa.com')).search, '', 'client sites open as they are');
   assert.equal(new URL(apps.urlFor('hhp', 'mail')).searchParams.get('login_hint'), 'hayden@hhpasset.com', 'catalog default');
   assert.equal(new URL(apps.urlFor('hhp', 'mail', '')).search, '', 'cleared account means no hint');
