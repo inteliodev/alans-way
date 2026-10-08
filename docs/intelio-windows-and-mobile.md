@@ -387,6 +387,20 @@ The Sessions tab has a client row: All, intelio, PRC, Alignment, HHP and ARLP. P
 
 Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
 
+## 0.3.28
+
+Themes come in three, in this order: Light, Blue and Dark. The bottom-left button cycles light → blue → dark and Settings → Appearance lists Light / Blue / Dark, on desktop and phone. Blue is white on electric blue (`#0000e8`) with pale-blue accents (`#cfdcff`). The Watching section is gone from the Agents sidebar; screens stay on the top-right grid.
+
+Sessions has one agent dropdown (All agents, then each agent) in place of the colored chips. The choice is remembered. The selected thread in the agent sidebar is now a dark row in dark mode (it was a light-grey fill under white text).
+
+Saved logins: when an agent reaches a sign-in page, the chat shows a card with username, masked password, Remember for this agent, Cancel and Sign in. The vault lives at `~/.local/share/intelio/vault/<profile>.vault` with a per-agent key. Settings lists saved logins (site, username, agent, last use) for every agent. The `intelio-vault` Hermes plugin adds `request_login`; copy `plugins/intelio-vault` into `~/.hermes/plugins/intelio-vault` and each profile's `plugins/intelio-vault`, then restart `hermes-gateway` once when Hermes is idle.
+
+Home, missions and the Ctrl/Cmd+K command bar (and install a skill from a link). Ctrl/Cmd+K is taken only when focus is in intelio itself; a page in an agent browser tab keeps its own shortcut. Skill installs write only under `~/.hermes/profiles/<profile>/skills/`.
+
+Accounts page per agent and Settings › Activity log.
+
+Phone client `intelio-pwa-26`. Service worker cache `intelio-pwa-30`. Asset query `?v=29`. On the VPS: check out the release, run `mobile/deploy/install-on-vps.sh --with-voice` (restarts `intelio-pwa`).
+
 ## 0.3.27
 
 New agents work right away. `/intelio/bootstrap` returns the key for every profile the VPS lists, not just intelio, prc, alignment and hhp, so an agent made after the first sign-in (arlp) gets its key. It is still Access sign-in only. The app fetches keys again in the background on start, after creating an agent, and when an agent without a key is picked; that fetch uses the cloud sign-in even when the app is on Tailscale. A new profile copies the template's `base_url`, and `POST /api/profiles` checks it on its own `/p/<name>/v1/capabilities` route instead of saying "Ready after the next agent restart".
