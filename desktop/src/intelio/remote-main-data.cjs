@@ -15,6 +15,9 @@ const NAMED_AGENTS = [
   { id: 'hhp', name: 'HHP' },
 ];
 
+/** Display names for agents that are not one of the four named ones. */
+const KNOWN_NAMES = { arlp: 'ARLP' };
+
 function sourceLabel(source) {
   const value = String(source || '').trim().toLowerCase();
   if (value === 'photon' || value === 'imessage' || value === 'photon/imessage') return 'photon/iMessage';
@@ -109,9 +112,12 @@ function parseProfiles(json) {
 }
 
 function agentsFromKeys(names, profile = 'intelio') {
-  const stored = [...new Set((names || []).map((name) => String(name || '').trim().toLowerCase()).filter((name) => name && !excludedAgent(name)))];
+  const stored = [...new Set((names || []).map((name) => String(name || '').trim().toLowerCase()).filter((name) => name && name !== 'vnc' && name !== 'default' && PROFILE_RE.test(name) && !excludedAgent(name)))];
   const named = NAMED_AGENTS.filter((agent) => stored.includes(agent.id)).map(decorate);
-  if (named.length) return named;
+  // Agents made after the first four (arlp, ...) are listed from their saved keys too,
+  // so the Tailscale route (no /api/home on the Hermes port) does not hide them.
+  const extra = stored.filter((id) => !HARNESS_IDS.has(id)).sort().map((id) => decorate({ id, name: KNOWN_NAMES[id] || titleCase(id) }));
+  if (named.length || extra.length) return [...named, ...extra];
   const fallback = String(profile || 'intelio').trim().toLowerCase() || 'intelio';
   if (excludedAgent(fallback)) return [decorate(NAMED_AGENTS[0])];
   const row = NAMED_AGENTS.find((agent) => agent.id === fallback) || { id: fallback, name: titleCase(fallback) };
