@@ -30,6 +30,7 @@ const { assertSlug, displayName, listProfiles, createProfile, restartGateway } =
 const { resolveVncUpstream, readVncPassword, bridgeVnc } = require('./vnc-proxy.cjs');
 const { nodesEnabled, createNodesRelay } = require('./nodes-mcp.cjs');
 const { handleComputersApi } = require('./nodes-human.cjs');
+const { createCloudTerminal, terminalEnabled } = require('./nodes-terminal.cjs');
 const { refuseUpgrade } = require('../../desktop/src/intelio/node/ws.cjs');
 const { resolveCdpUrl } = require('../../desktop/src/intelio/cdp-fill.cjs');
 const { harnessId, excludedAgent, buildCard, readProfileFiles, writePaused, writeReasoning, writeProfile, cleanColor, backupFile } = require('../../desktop/src/intelio/agent-card.cjs');
@@ -1127,7 +1128,8 @@ function createPwaServer({
   // rest of the app: Access JWT on the Access listener (no profile bearer keys),
   // allowed Tailscale login on the tailnet listener. Device secret is checked by the hub.
   const nodeRelay = nodes ? createNodesRelay({ log, ...nodes }) : null;
-  const computersExtra = null; // stage 2 adds the cloud terminal routes here
+  // The person's own VPS terminal (the app's Terminal window, "cloud" tab), behind the same person-only checks.
+  const computersExtra = nodeRelay && terminalEnabled(process.env) ? createCloudTerminal({ log }) : null;
   async function acceptNode(req, socket, head, accessListener) {
     if (!nodeRelay) { refuseUpgrade(socket, 404); return; }
     const res = { writeHead() {}, end() {}, setHeader() {} };
@@ -1839,6 +1841,7 @@ function createPwaServer({
     const finish = typeof done === 'function' ? done : () => {};
     loginWatch.stop();
     if (nodeRelay) nodeRelay.close();
+    if (computersExtra) computersExtra.close();
     for (const socket of [...liveSockets]) {
       try { socket.destroy(); } catch { /* already closed */ }
     }

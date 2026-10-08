@@ -28,8 +28,20 @@ async function main() {
     const msg = JSON.parse(text);
     if (msg.type !== 'call') return;
     if (msg.tool === 'run_command') ws.send(JSON.stringify(protocol.frames.ok(msg.id, protocol.textContent({ ran: msg.args.command, push_approval: Boolean(msg.args.push_approval) }))));
+    else if (msg.tool === 'send_input') ws.send(JSON.stringify(protocol.frames.ok(msg.id, protocol.textContent({ typed: msg.args.text, push_approval: Boolean(msg.args.push_approval) }))));
     else if (msg.tool === 'computer_info') ws.send(JSON.stringify(protocol.frames.ok(msg.id, protocol.textContent({ hostname: 'PY-TEST-PC', os: 'Fixture OS', user: 'tester' }))));
-    else ws.send(JSON.stringify(protocol.frames.fail(msg.id, `fixture does not run ${msg.tool}`)));
+    else if (msg.tool === 'start_session') {
+      // Stage 2 terminal sessions: a canned session that has printed a banner.
+      ws.send(JSON.stringify(protocol.frames.ok(msg.id, protocol.textContent({ session_id: 's_0123456789ab', pid: 4242, pty: true, command: msg.args.command || '(login shell)', cwd: msg.args.cwd || '/home/tester' }))));
+    } else if (msg.tool === 'read_output' && msg.args.session_id === 's_0123456789ab') {
+      const text = 'Welcome to Claude Code\n> ';
+      const since = Number(msg.args.since || 0);
+      const out = text.slice(since);
+      ws.send(JSON.stringify(protocol.frames.ok(msg.id, [
+        { type: 'text', text: JSON.stringify({ session_id: msg.args.session_id, cursor: text.length, exited: false, exit_code: null, truncated: false, bytes: out.length, pty: true }) },
+        { type: 'text', text: out },
+      ])));
+    } else ws.send(JSON.stringify(protocol.frames.fail(msg.id, `fixture does not run ${msg.tool}`)));
   });
   const welcomed = new Promise((resolve) => ws.once('message', resolve));
   ws.send(JSON.stringify(protocol.frames.hello({ name: 'Py-Test-PC', os: 'Fixture OS', arch: 'x64', user: 'tester', version: 'test' })));

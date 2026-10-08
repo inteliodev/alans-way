@@ -78,13 +78,58 @@ class IntelioNodesMcpTest(unittest.TestCase):
                 missing = await session.call_tool("computer_info", {"computer": "nope"})
                 return init, tools, computers, info, missing
 
+    async def _terminal(self):
+        async with _client(self.url, self.token) as streams:
+            read, write = streams[0], streams[1]
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                started = await session.call_tool(
+                    "start_session", {"computer": "py-test-pc", "command": "claude", "cwd": "~/code"}
+                )
+                first = await session.call_tool(
+                    "read_output", {"computer": "py-test-pc", "session_id": "s_0123456789ab", "wait_ms": 1000}
+                )
+                later = await session.call_tool(
+                    "read_output", {"computer": "py-test-pc", "session_id": "s_0123456789ab", "since": 11, "wait_ms": 0}
+                )
+                return started, first, later
+
+    def test_terminal_session_tools_with_the_official_client(self):
+        started, first, later = asyncio.run(asyncio.wait_for(self._terminal(), timeout=60))
+        self.assertFalse(getattr(started, "is_error", getattr(started, "isError", None)))
+        meta = json.loads(started.content[0].text)
+        self.assertEqual(meta["session_id"], "s_0123456789ab")
+        self.assertTrue(meta["pty"])
+        self.assertEqual(meta["command"], "claude")
+        self.assertFalse(getattr(first, "is_error", getattr(first, "isError", None)))
+        self.assertEqual(len(first.content), 2)
+        read_meta = json.loads(first.content[0].text)
+        self.assertEqual(read_meta["cursor"], len("Welcome to Claude Code\n> "))
+        self.assertFalse(read_meta["exited"])
+        self.assertIn("Welcome to Claude Code", first.content[1].text)
+        self.assertEqual(later.content[1].text, "Claude Code\n> ")
+
     def test_list_and_call_with_the_official_client(self):
         init, tools, computers, info, missing = asyncio.run(self._session(self.token))
         self.assertEqual(init.server_info.name if hasattr(init, "server_info") else init.serverInfo.name, "intelio-computers")
         names = [tool.name for tool in tools.tools]
         self.assertEqual(
             names,
-            ["list_computers", "computer_info", "list_dir", "read_file", "write_file", "search_files", "run_command", "screenshot"],
+            [
+                "list_computers",
+                "computer_info",
+                "list_dir",
+                "read_file",
+                "write_file",
+                "search_files",
+                "run_command",
+                "screenshot",
+                "start_session",
+                "send_input",
+                "read_output",
+                "stop_session",
+                "list_sessions",
+            ],
         )
         listed = json.loads(computers.content[0].text)["computers"]
         self.assertEqual([c["name"] for c in listed], ["Py-Test-PC"])
@@ -94,7 +139,7 @@ class IntelioNodesMcpTest(unittest.TestCase):
         self.assertTrue(getattr(missing, "is_error", getattr(missing, "isError", None)))
         self.assertIn("No computer named nope", missing.content[0].text)
 
-    async def _push(self, command, answer):
+    async def _push(self, command, answer, tool="run_command", args=None):
         """run_command through a client whose elicitation callback answers `answer` (None: no callback)."""
         from mcp import types
 
@@ -108,7 +153,8 @@ class IntelioNodesMcpTest(unittest.TestCase):
             kwargs = {"elicitation_callback": on_elicit} if answer else {}
             async with ClientSession(streams[0], streams[1], **kwargs) as session:
                 await session.initialize()
-                result = await session.call_tool("run_command", {"computer": "py-test-pc", "command": command, "cwd": "~/code/app"})
+                call_args = args or {"command": command, "cwd": "~/code/app"}
+                result = await session.call_tool(tool, {"computer": "py-test-pc", **call_args})
         return asked, result
 
     def _is_error(self, result):
@@ -121,6 +167,14 @@ class IntelioNodesMcpTest(unittest.TestCase):
         self.assertIn("git push origin main", asked[0])
         self.assertFalse(self._is_error(result))
         self.assertEqual(json.loads(result.content[0].text), {"ran": "git push origin main", "push_approval": True})
+
+    def test_push_typed_into_a_terminal_session_asks_too(self):
+        args = {"session_id": "s_0123456789ab", "text": "git push --force-with-lease"}
+        asked, result = asyncio.run(asyncio.wait_for(self._push(None, "accept", "send_input", args), timeout=60))
+        self.assertEqual(len(asked), 1)
+        self.assertIn("typed into terminal session s_0123456789ab", asked[0])
+        self.assertFalse(self._is_error(result))
+        self.assertEqual(json.loads(result.content[0].text), {"typed": "git push --force-with-lease", "push_approval": True})
 
     def test_push_declined_never_reaches_the_computer(self):
         asked, result = asyncio.run(asyncio.wait_for(self._push("gh pr merge 7 --squash", "decline"), timeout=60))

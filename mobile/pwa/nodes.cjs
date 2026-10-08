@@ -382,7 +382,11 @@ function createNodeHub({
   function setPaused(ref, paused) {
     const hit = resolveRef(ref);
     if (!hit.device) throw new Error(hit.error);
-    if (hit.device.local) registry.setLocalPaused(hit.device.id, paused);
+    if (hit.device.local) {
+      registry.setLocalPaused(hit.device.id, paused);
+      const local = locals.find((l) => l.device.id === hit.device.id);
+      try { if (local && typeof local.onPaused === 'function') local.onPaused(Boolean(paused)); } catch { /* best effort */ }
+    }
     else registry.setPaused(hit.device.id, paused);
     log(`intelio-nodes ${paused ? 'paused' : 'resumed'} id=${hit.device.id} name=${hit.device.name}`);
     appendAudit({ time: new Date(now()).toISOString(), computer: hit.device.name, tool: paused ? 'kill_switch_off' : 'kill_switch_on', ok: true, by: 'person' });

@@ -247,3 +247,41 @@ test('push approvals reach the intelio activity log when activity-log.cjs is pre
     summary: 'Push on hayden-mac: git push (Hayden did not allow it)',
   }]);
 });
+
+test('terminal sessions: a push needs the stamp, even typed in pieces; approved pushes get the grant', { skip: !posix, timeout: 60000 }, async (t) => {
+  const home = tempHome();
+  const grants = [];
+  const ex = createExecutors({
+    home,
+    env: { PATH: process.env.PATH, HOME: home, SHELL: '/bin/sh' },
+    sessionOptions: { loadPty: () => ({ error: 'pipes for the test' }), scriptBin: '' },
+    approvedPushEnv: ({ pushes }) => { grants.push(pushes); return { INTELIO_PUSH_GRANT: 'f'.repeat(32) }; },
+  });
+  t.after(() => { ex.closeSessions(); fs.rmSync(home, { recursive: true, force: true }); });
+  const started = await ex.run('start_session', { command: 'git push origin main' });
+  assert.equal(started.ok, false);
+  assert.match(started.error, /A push needs Hayden's approval/);
+  const shell = await ex.run('start_session', { cwd: '~/code' });
+  assert.equal(shell.ok, true, shell.error);
+  const id = JSON.parse(shell.content[0].text).session_id;
+  assert.equal((await ex.run('send_input', { session_id: id, text: 'git pu', enter: false })).ok, true);
+  const split = await ex.run('send_input', { session_id: id, text: 'sh origin main' });
+  assert.equal(split.ok, false, 'the line so far is a push');
+  const stamped = await ex.run('send_input', { session_id: id, text: 'sh origin main', push_approval: STAMP });
+  assert.equal(stamped.ok, false, 'even approved, a push must be typed whole');
+  assert.match(stamped.error, /whole push command/);
+  assert.equal((await ex.run('send_input', { session_id: id, keys: ['Control+U'] })).ok, true);
+  assert.equal((await ex.run('send_input', { session_id: id, text: 'echo fine' })).ok, true, 'ctrl-u cleared the line');
+  const plain = await ex.run('send_input', { session_id: id, text: 'git push origin main' });
+  assert.equal(plain.ok, false);
+  const ok = await ex.run('send_input', { session_id: id, text: 'git push 2>/dev/null; echo "grant=$INTELIO_PUSH_GRANT"', push_approval: STAMP });
+  assert.equal(ok.ok, true, ok.error);
+  assert.deepEqual(grants, [['git push']]);
+  let out = '';
+  for (let i = 0; i < 40 && !/grant=f{32}/.test(out); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const read = await ex.run('read_output', { session_id: id, wait_ms: 500, since: 0 });
+    out = read.content[1].text;
+  }
+  assert.match(out, /grant=f{32}/);
+});

@@ -90,7 +90,9 @@ function createCloudComputer({ env = process.env, home = os.homedir(), name = St
     device,
     executors,
     run: (tool, args, ctx) => executors.run(tool, args, ctx),
-    close() {},
+    /** Kill switch: turning cloud off for agents also ends the agents' terminal sessions here. */
+    onPaused(paused) { if (paused && typeof executors.closeSessions === 'function') executors.closeSessions(); },
+    close() { if (typeof executors.closeSessions === 'function') executors.closeSessions(); },
   };
 }
 

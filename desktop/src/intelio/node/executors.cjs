@@ -8,9 +8,9 @@
  * Every handler returns MCP content ([{ type: 'text', text }] or image items)
  * plus a small `meta` for the audit line. Errors throw with a readable message.
  *
- * Stage 2 extension point (docs/intelio-node.md): persistent terminal sessions
- * (start_session, send_input, read_output, stop_session) are added as more
- * handlers on the object createExecutors returns, backed by a session map.
+ * Stage 2 (docs/intelio-node.md): persistent terminal sessions
+ * (start_session, send_input, read_output, stop_session, list_sessions) are
+ * handlers backed by the session manager in sessions.cjs.
  */
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -20,9 +20,34 @@ const { spawn, spawnSync } = require('node:child_process');
 const { LIMITS } = require('./protocol.cjs');
 const { detectElevation, shellElevates } = require('./elevation.cjs');
 const { runSearch, globToRegExp, compilePattern: compileSearchPattern } = require('./search.cjs');
+const { createSessionManager } = require('./sessions.cjs');
 const policy = require('./policy.cjs');
 
 class ToolError extends Error {}
+
+/**
+ * Where Claude Code and Codex live, without running anything: the app's PATH
+ * plus the usual install folders (a Finder-launched Mac app has a short PATH).
+ */
+function findCodingTools({ platform = process.platform, home = os.homedir(), env = process.env, exists = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } } } = {}) {
+  const sep = platform === 'win32' ? ';' : ':';
+  const dirs = String(env.PATH || env.Path || '').split(sep).filter(Boolean);
+  const extra = platform === 'win32'
+    ? [path.join(env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'npm'), path.join(home, '.local', 'bin'), path.join(home, '.bun', 'bin'), path.join(env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Programs', 'claude')]
+    : [path.join(home, '.local', 'bin'), path.join(home, '.claude', 'local'), path.join(home, '.npm-global', 'bin'), path.join(home, '.bun', 'bin'), path.join(home, '.volta', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin'];
+  const exts = platform === 'win32' ? ['.cmd', '.exe', '.ps1', ''] : [''];
+  const found = {};
+  for (const name of ['claude', 'codex']) {
+    found[name] = null;
+    outer: for (const dir of [...new Set([...dirs, ...extra])]) {
+      for (const ext of exts) {
+        const candidate = path.join(dir, `${name}${ext}`);
+        if (exists(candidate)) { found[name] = candidate; break outer; }
+      }
+    }
+  }
+  return found;
+}
 
 function json(value) {
   return { type: 'text', text: JSON.stringify(value, null, 2) };
@@ -68,6 +93,7 @@ function createExecutors({
   confirmElevation = async () => false,
   screenshot = null,
   computerName = () => os.hostname(),
+  sessionOptions = {},
   // Secrets are never read or written (policy.cjs). Tests may pass their own.
   protector = policy.createProtector({ home, platform, env }),
   // Extra environment for a command the relay stamped as an approved push (the
@@ -75,6 +101,19 @@ function createExecutors({
   approvedPushEnv = null,
 } = {}) {
   const caseless = platform === 'win32' || platform === 'darwin';
+  const sessions = createSessionManager({ platform, home, env, limits, ...sessionOptions });
+  const typedLines = new Map(); // session_id -> text typed since the last Enter (push check)
+
+  /** Same native-confirm flow for run_command, start_session and send_input. */
+  async function requireApproval(text) {
+    const elevation = detectElevation(text);
+    if (!elevation.elevates) return;
+    let approved = false;
+    try { approved = await confirmElevation({ command: text, reason: elevation.reason }); } catch { approved = false; }
+    if (!approved) {
+      throw new ToolError(`Refused: ${elevation.reason}. intelio never elevates on its own; the person at ${computerName()} did not approve it. Ask them to run it themselves, or to approve it when the prompt appears on that computer.`);
+    }
+  }
 
   /** Refuses a protected path, checking the path as given and where it really points (symlinks). */
   async function guardPath(target, op) {
@@ -212,6 +251,8 @@ function createExecutors({
         cpus: os.cpus().length,
         memory_bytes: os.totalmem(),
         uptime_s: Math.round(os.uptime()),
+        coding_tools: findCodingTools({ platform, home, env }),
+        sessions: { ...sessions.ptyStatus(), hint: 'Run claude or codex with start_session (it uses the login shell, so PATH matches the person\'s terminal), then send_input / read_output.' },
       };
       return { content: [json(info)] };
     },
@@ -331,14 +372,7 @@ function createExecutors({
       if (!command.trim()) throw new ToolError('command is required.');
       const shell = shellFor(args.shell);
       const pushes = guardCommand('run_command', args, args.cwd ? resolvePath(args.cwd, 'cwd') : home);
-      const elevation = detectElevation(command);
-      if (elevation.elevates) {
-        let approved = false;
-        try { approved = await confirmElevation({ command, reason: elevation.reason }); } catch { approved = false; }
-        if (!approved) {
-          throw new ToolError(`Refused: ${elevation.reason}. intelio never elevates on its own; the person at ${computerName()} did not approve it. Ask them to run it themselves, or to approve it when the prompt appears on that computer.`);
-        }
-      }
+      await requireApproval(command);
       const cwd = args.cwd ? resolvePath(args.cwd, 'cwd') : home;
       const timeoutS = intArg(args.timeout_s, { min: 1, max: limits.runMaxS, fallback: limits.runDefaultS });
       const { file, args: argv, verbatim } = spawnArgs(shell, command);
@@ -403,6 +437,59 @@ function createExecutors({
         meta: { bytes: png.length },
       };
     },
+
+    async start_session(args) {
+      const command = args.command == null ? '' : String(args.command);
+      const cwd = args.cwd ? resolvePath(args.cwd, 'cwd') : home;
+      const pushes = guardCommand('start_session', args, cwd);
+      if (command.trim()) await requireApproval(command);
+      const extraEnv = pushes.length && typeof approvedPushEnv === 'function' ? approvedPushEnv({ command, pushes }) : null;
+      const started = sessions.start({ command, cwd, cols: args.cols, rows: args.rows, env: extraEnv ? { ...(args.env || {}), ...extraEnv } : args.env });
+      const hint = started.pty ? '' : ' No terminal (pipes only): full-screen programs may misbehave.';
+      return {
+        content: [json({ ...started, hint: `Read with read_output (session_id ${started.session_id}); type with send_input.${hint}` })],
+        meta: { session_id: started.session_id, pty: started.pty },
+      };
+    },
+
+    async send_input(args) {
+      let text = args.text == null ? '' : String(args.text);
+      const id = String(args.session_id || '');
+      // A push typed in pieces ("git pu" then "sh") is still a push: check the line so far.
+      const line = `${typedLines.get(id) || ''}${text}`;
+      const pushes = guardCommand('send_input', { ...args, text: line }, home);
+      if (text.trim()) await requireApproval(text);
+      if (pushes.length && typedLines.get(id)) {
+        throw new Error('Refused: type the whole push command in one send_input (this one continues a line typed earlier). Clear the line first (keys ["ctrl-u"]).');
+      }
+      const keys = Array.isArray(args.keys) ? args.keys.map((k) => String(k).trim().toLowerCase().replace(/[+_ ]/g, '-').replace(/^(?:control|c)-/, 'ctrl-')) : [];
+      const ends = /[\r\n]/.test(text) || (args.enter !== undefined ? Boolean(args.enter) : Boolean(text)) || keys.some((k) => ['enter', 'ctrl-c', 'ctrl-u', 'ctrl-d', 'ctrl-m', 'ctrl-j'].includes(k));
+      if (ends) typedLines.delete(id); else typedLines.set(id, line.slice(-4096));
+      if (pushes.length && typeof approvedPushEnv === 'function') {
+        // The shell already runs: hand it the one-time grant for this command (cloud / VPS push guard).
+        const extra = approvedPushEnv({ command: line, pushes });
+        const prefix = Object.entries(extra || {}).map(([k, v]) => `export ${k}=${String(v).replace(/[^A-Za-z0-9_-]/g, '')}; `).join('');
+        if (prefix) text = `${prefix}${text}`;
+      }
+      const sent = sessions.send(args.session_id, { text, enter: args.enter, keys: args.keys });
+      return { content: [json(sent)], meta: { session_id: sent.session_id } };
+    },
+
+    async read_output(args, ctx = {}) {
+      const result = await sessions.read(args.session_id, args, { signal: ctx.signal });
+      const { output, ...meta } = result;
+      return { content: [json(meta), { type: 'text', text: output }], meta: { bytes: result.bytes, session_id: result.session_id, ...(result.exited ? { exit_code: result.exit_code } : {}) } };
+    },
+
+    async stop_session(args) {
+      const stopped = await sessions.stop(args.session_id, { force: Boolean(args.force) });
+      return { content: [json(stopped)], meta: { session_id: stopped.session_id, exit_code: stopped.exit_code } };
+    },
+
+    async list_sessions() {
+      const rows = sessions.list();
+      return { content: [json({ sessions: rows, max: limits.sessionMax || 8 })], meta: { count: rows.length } };
+    },
   };
 
   /** Runs one tool. Returns { ok: true, content, meta } or { ok: false, error, meta }. */
@@ -417,7 +504,17 @@ function createExecutors({
     }
   }
 
-  return { run, handlers, resolvePath, guardPath, guardCommand, tools: Object.keys(handlers) };
+  return {
+    run,
+    handlers,
+    resolvePath,
+    guardPath,
+    guardCommand,
+    tools: Object.keys(handlers),
+    sessions,
+    /** Kill every terminal session (kill switch off, revoke, app quit). */
+    closeSessions: () => sessions.closeAll(),
+  };
 }
 
-module.exports = { createExecutors, killTree, globToRegExp, compilePattern, osLabel, ToolError };
+module.exports = { findCodingTools, createExecutors, killTree, globToRegExp, compilePattern, osLabel, ToolError };

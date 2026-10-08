@@ -26,9 +26,20 @@ const LIMITS = Object.freeze({
   runDefaultS: 120,
   runMaxS: 1800,
   runOutputBytes: 200 * 1024,
+  // Stage 2: persistent terminal sessions (sessions.cjs).
+  sessionMax: 8,
+  sessionIdleMs: 2 * 60 * 60 * 1000,
+  sessionBufferBytes: 1024 * 1024,
+  sessionReadDefaultBytes: 64 * 1024,
+  sessionReadMaxBytes: 1024 * 1024,
+  sessionWaitDefaultMs: 2000,
+  sessionWaitMaxMs: 30000,
+  sessionInputChars: 64 * 1024,
 });
 
 const computerArg = { type: 'string', description: 'Computer name or id (case-insensitive). See list_computers.' };
+const sessionArg = { type: 'string', description: 'session_id from start_session (see list_sessions).' };
+const KEY_NAMES = ['ctrl-c', 'ctrl-d', 'esc', 'tab', 'up', 'down', 'left', 'right', 'enter', 'backspace'];
 
 const TOOLS = Object.freeze([
   {
@@ -121,13 +132,82 @@ const TOOLS = Object.freeze([
       required: ['computer'],
     },
   },
+  {
+    name: 'start_session',
+    description: 'Start a persistent interactive terminal session on a computer (a real PTY when available) that keeps running across calls: Claude Code (command "claude"), Codex ("codex"), a REPL, or the login shell when command is omitted (Windows: PowerShell; macOS/Linux: $SHELL). Runs as the signed-in user; elevation is refused unless the person there approves. Max 8 sessions per computer; sessions idle for 2 h are killed. For one-shot work prefer run_command with `claude -p "..."` or `codex exec "..."`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        computer: computerArg,
+        command: { type: 'string', description: 'Program and arguments, run through the shell. Omit for the login shell.' },
+        cwd: { type: 'string', description: 'Absolute or ~ path (default: home).' },
+        cols: { type: 'integer', minimum: 20, maximum: 500, description: 'Terminal width (default 120).' },
+        rows: { type: 'integer', minimum: 5, maximum: 200, description: 'Terminal height (default 40).' },
+        env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Extra environment variables.' },
+      },
+      required: ['computer'],
+    },
+  },
+  {
+    name: 'send_input',
+    description: 'Type into a terminal session: text first, then the named keys, then Enter (enter defaults to true when text is given, false for keys-only calls). Keys: ctrl-c, ctrl-d, esc, tab, up, down, left, right, enter, backspace (and ctrl-a to ctrl-z). Follow with read_output.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        computer: computerArg,
+        session_id: sessionArg,
+        text: { type: 'string' },
+        enter: { type: 'boolean' },
+        keys: { type: 'array', items: { type: 'string' }, description: `Named keys: ${KEY_NAMES.join(', ')}.` },
+      },
+      required: ['computer', 'session_id'],
+    },
+  },
+  {
+    name: 'read_output',
+    description: 'Read new terminal output. Waits up to wait_ms (default 2000, max 30000) and returns as soon as output arrives. Pass the returned cursor back as since to continue (omitted since continues after the last read). ANSI-stripped unless raw is true; max_bytes default 64 KB. Returns JSON (cursor, exited, exit_code, truncated, more) followed by the output text.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        computer: computerArg,
+        session_id: sessionArg,
+        since: { type: 'integer', minimum: 0, description: 'Cursor from a previous read_output (bytes into the session output).' },
+        wait_ms: { type: 'integer', minimum: 0, maximum: LIMITS.sessionWaitMaxMs },
+        max_bytes: { type: 'integer', minimum: 1, maximum: LIMITS.sessionReadMaxBytes },
+        raw: { type: 'boolean', description: 'Keep terminal escape sequences.' },
+      },
+      required: ['computer', 'session_id'],
+    },
+  },
+  {
+    name: 'stop_session',
+    description: 'Stop a terminal session (hang up, then kill after 3 s; force kills at once) and forget it. Returns exit_code.',
+    inputSchema: {
+      type: 'object',
+      properties: { computer: computerArg, session_id: sessionArg, force: { type: 'boolean' } },
+      required: ['computer', 'session_id'],
+    },
+  },
+  {
+    name: 'list_sessions',
+    description: 'List the terminal sessions on a computer: id, command, cwd, started, idle_s, exited.',
+    inputSchema: { type: 'object', properties: { computer: computerArg }, required: ['computer'] },
+  },
 ]);
 
 const TOOL_NAMES = Object.freeze(TOOLS.map((tool) => tool.name));
 const NODE_TOOLS = Object.freeze(TOOL_NAMES.filter((name) => name !== 'list_computers'));
 
-/** Relay-side timeout for one call: timeout_s (run_command, default 120) + 10 s. */
+/**
+ * Relay-side timeout for one call: timeout_s (run_command, default 120) + 10 s;
+ * read_output: wait_ms (default 2 s, max 30 s) + 10 s.
+ */
 function callTimeoutMs(tool, args = {}) {
+  if (tool === 'read_output') {
+    const wait = Number(args && args.wait_ms);
+    const ms = Number.isFinite(wait) && wait >= 0 ? Math.min(wait, LIMITS.sessionWaitMaxMs) : LIMITS.sessionWaitDefaultMs;
+    return Math.floor(ms) + 10000;
+  }
   let seconds = LIMITS.runDefaultS;
   const asked = Number(args && args.timeout_s);
   if (tool === 'run_command' && Number.isFinite(asked) && asked > 0) seconds = Math.min(asked, LIMITS.runMaxS);
@@ -198,6 +278,26 @@ function contentSize(content) {
 }
 
 /**
+ * Masks secret-looking tokens (API keys, bearer tokens, password=..., long
+ * random strings) before a preview of typed text reaches an audit line.
+ */
+function maskSecrets(text) {
+  return String(text == null ? '' : text)
+    .replace(/(\bBearer\s+)\S+/gi, '$1***')
+    .replace(/((?:password|passwd|pwd|secret|token|api[_-]?key|apikey|auth|credential)s?\s*[=:]\s*)("[^"]*"|'[^']*'|\S+)/gi, '$1***')
+    .replace(/(--?(?:password|passwd|token|secret|api[_-]?key|auth)[= ])("[^"]*"|'[^']*'|\S+)/gi, '$1***')
+    .replace(/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/g, (m) => `${m.slice(0, 3)}***`)
+    .replace(/\b(?:ghp|gho|ghu|ghs|ghr|github_pat|glpat|xox[abprs]|AKIA|ASIA|AIza|ya29)[A-Za-z0-9_.-]{8,}/g, (m) => `${m.slice(0, 4)}***`)
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_.-]+/g, 'eyJ***')
+    .replace(/[A-Za-z0-9+/_=-]{24,}/g, (m) => (/[0-9]/.test(m) && /[A-Za-z]/.test(m) ? '***' : m));
+}
+
+/** First 80 characters of typed text, secrets masked, control characters shown as spaces. */
+function inputPreview(text) {
+  return maskSecrets(String(text == null ? '' : text).replace(/[\u0000-\u001f\u007f]/g, ' ')).slice(0, 80);
+}
+
+/**
  * Audit summary of arguments: never file contents, never full commands on the relay.
  * scope 'node' keeps the command (truncated) in the computer's own audit file;
  * scope 'relay' keeps only the program name and the command length.
@@ -205,7 +305,7 @@ function contentSize(content) {
 function summarizeArgs(tool, args = {}, scope = 'relay') {
   const a = args && typeof args === 'object' ? args : {};
   const out = {};
-  for (const key of ['path', 'root', 'cwd', 'name_glob', 'encoding', 'mode', 'display', 'offset', 'limit', 'max_results', 'timeout_s', 'shell', 'show_hidden', 'make_dirs']) {
+  for (const key of ['path', 'root', 'cwd', 'name_glob', 'encoding', 'mode', 'display', 'offset', 'limit', 'max_results', 'timeout_s', 'shell', 'show_hidden', 'make_dirs', 'session_id', 'cols', 'rows', 'since', 'wait_ms', 'max_bytes', 'raw', 'enter', 'force']) {
     if (a[key] !== undefined && a[key] !== null && a[key] !== '') out[key] = typeof a[key] === 'string' ? a[key].slice(0, 300) : a[key];
   }
   if (typeof a.pattern === 'string') out.pattern = a.pattern.slice(0, 120);
@@ -216,6 +316,19 @@ function summarizeArgs(tool, args = {}, scope = 'relay') {
       out.program = (a.command.trim().split(/\s+/)[0] || '').replace(/[^\w.\-\\/:]/g, '').slice(0, 60);
       out.command_chars = a.command.length;
     }
+  }
+  if (tool === 'start_session' && typeof a.command === 'string' && a.command.trim()) {
+    out.program = (a.command.trim().split(/\s+/)[0] || '').replace(/[^\w.\-\\/:]/g, '').slice(0, 60);
+    out.command_chars = a.command.length;
+    if (scope === 'node') out.command_preview = inputPreview(a.command);
+  }
+  if (tool === 'start_session' && a.env && typeof a.env === 'object') out.env_keys = Object.keys(a.env).slice(0, 64).map((k) => String(k).slice(0, 64));
+  if (tool === 'send_input') {
+    if (typeof a.text === 'string') {
+      out.text_chars = a.text.length;
+      if (scope === 'node' && a.text) out.text_preview = inputPreview(a.text);
+    }
+    if (Array.isArray(a.keys)) out.keys = a.keys.slice(0, 16).map((k) => String(k).slice(0, 20));
   }
   return out;
 }
@@ -238,4 +351,6 @@ module.exports = {
   textContent,
   contentSize,
   summarizeArgs,
+  maskSecrets,
+  inputPreview,
 };

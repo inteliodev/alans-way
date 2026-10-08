@@ -181,7 +181,10 @@
         view.textContent = 'Hide activity';
       } catch (e) { status.textContent = e.message; }
     };
-    body.append(held, clearedField, allowField, nameField, status, save, view, activity,
+    const terminal = element('button', 'secondary-button', 'Open Terminal');
+    terminal.title = 'Your own terminal on this computer and on the VPS (cloud)';
+    terminal.onclick = () => command('open-terminal', { target: 'local' }).catch((e) => { status.textContent = e.message; });
+    body.append(held, clearedField, allowField, nameField, status, save, view, terminal, activity,
       element('p', 'settings-note', 'When this is on, your intelio agents on the VPS can work with files and the terminal on this computer as you (and Claude Code or Codex through the terminal if they are installed), search, and take screenshots. They never get administrator rights: a command that asks for them shows a prompt here first. A notice with a Stop button shows at the top of the screen while an agent is working here. Every request is logged; View activity shows the log. Turning this off disconnects immediately.'),
       element('hr', 'section-divider'));
     appendComputers(body, { element, command, toast });

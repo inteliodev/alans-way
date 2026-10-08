@@ -195,7 +195,7 @@ function findPushes(command, depth = 0) {
 function commandTextFor(tool, args = {}) {
   if (!args || typeof args !== 'object') return '';
   if (tool === 'run_command' || tool === 'start_session') return String(args.command || '');
-  if (tool === 'send_input') return String(args.data ?? args.input ?? args.text ?? '');
+  if (tool === 'send_input') return String(args.text ?? args.data ?? args.input ?? '');
   return '';
 }
 
