@@ -1557,6 +1557,11 @@
     state.approvals.push({ sessionId, profile, data, outcome: '', busy: false });
     if (state.approvals.length > 20) state.approvals.splice(0, state.approvals.length - 20);
     paintThread();
+    // The thread's own scroll may not move the page (the stage scrolls on phones): bring the
+    // question into view so it is never hidden under the composer.
+    const rows = document.querySelectorAll('#thread .approval-row');
+    const row = rows[rows.length - 1];
+    if (row) { try { row.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch { /* old browser */ } }
   }
 
   function settleApprovals(sessionId) {
