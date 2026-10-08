@@ -157,8 +157,8 @@ test('the integrated relay adds no public listener: MCP and the Access listener 
 });
 
 test('tool catalogue', () => {
-  assert.equal(protocol.TOOL_NAMES.length, 8);
-  assert.deepEqual([...protocol.TOOL_NAMES].sort(), ['computer_info', 'list_computers', 'list_dir', 'read_file', 'run_command', 'screenshot', 'search_files', 'write_file']);
+  assert.equal(protocol.TOOL_NAMES.length, 13);
+  assert.deepEqual([...protocol.TOOL_NAMES].sort(), ['computer_info', 'list_computers', 'list_dir', 'list_sessions', 'read_file', 'read_output', 'run_command', 'screenshot', 'search_files', 'send_input', 'start_session', 'stop_session', 'write_file']);
 });
 
 test('token file must be hex, 32+ bytes and (on POSIX) mode 600', { skip: process.platform === 'win32' && 'file modes are POSIX-only' }, () => {
@@ -356,6 +356,120 @@ test('per-call timeout and disconnect mid-call give readable errors', async () =
     assert.equal(dropped.isError, true);
     assert.match(dropped.content[0].text, /disconnected during the call/);
     assert.ok(logs.some((l) => /tool=run_command .*"program":"x","command_chars":1/.test(l)));
+  } finally {
+    hub.close();
+    server.close();
+  }
+});
+
+test('terminal sessions end to end through the relay: start, send, read (long poll), list, stop', async (t) => {
+  const r = await startRelay(t);
+  // A fake node with a tiny in-memory terminal: echoes typed lines after a delay.
+  const sessions = new Map();
+  const calls = [];
+  let n = 0;
+  const handler = async (msg) => {
+    calls.push(msg);
+    const a = msg.args;
+    const reply = (value) => protocol.frames.ok(msg.id, protocol.textContent(value));
+    if (msg.tool === 'start_session') {
+      const id = `s_${String(++n).padStart(12, '0')}`;
+      sessions.set(id, { out: 'PS C:\\> ', exited: false, code: null, command: a.command || '(login shell)', waiters: [] });
+      return reply({ session_id: id, pid: 4242, pty: true, command: a.command || '(login shell)', cwd: a.cwd || 'C:\\Users\\hayden' });
+    }
+    if (msg.tool === 'list_sessions') return reply({ sessions: [...sessions].map(([id, x]) => ({ id, command: x.command, cwd: '~', started: new Date().toISOString(), idle_s: 0, exited: x.exited })) });
+    const s = sessions.get(a.session_id);
+    if (!s) return protocol.frames.fail(msg.id, `No session ${a.session_id} on this computer.`);
+    if (msg.tool === 'send_input') {
+      setTimeout(() => {
+        s.out += `${a.text}\nyou said: ${a.text}\n`;
+        if (a.text === 'exit') { s.exited = true; s.code = 0; }
+        for (const w of s.waiters.splice(0)) w();
+      }, 200);
+      return reply({ ok: true, session_id: a.session_id, chars: String(a.text || '').length, keys: (a.keys || []).length, enter: a.enter !== false });
+    }
+    if (msg.tool === 'read_output') {
+      const since = a.since ?? 0;
+      if (s.out.length <= since && !s.exited) await new Promise((resolve) => { s.waiters.push(resolve); setTimeout(resolve, a.wait_ms ?? 2000); });
+      const text = s.out.slice(since);
+      return protocol.frames.ok(msg.id, [
+        { type: 'text', text: JSON.stringify({ session_id: a.session_id, cursor: s.out.length, exited: s.exited, exit_code: s.code, truncated: false, bytes: text.length, pty: true }) },
+        { type: 'text', text },
+      ]);
+    }
+    if (msg.tool === 'stop_session') { sessions.delete(a.session_id); return reply({ session_id: a.session_id, exit_code: s.code ?? 0, stopped: !s.exited }); }
+    return protocol.frames.fail(msg.id, 'nope');
+  };
+  const node = await fakeNode(r.tailnetUrl, { name: 'Laptop', handler });
+  assert.equal(node.first.type, 'welcome');
+  t.after(() => node.ws.close());
+
+  const list = await rpc(r.mcpPort, 'tools/list');
+  const names = list.result.tools.map((x) => x.name);
+  for (const tool of ['start_session', 'send_input', 'read_output', 'stop_session', 'list_sessions']) assert.ok(names.includes(tool), tool);
+  const readSchema = list.result.tools.find((x) => x.name === 'read_output').inputSchema;
+  assert.deepEqual(readSchema.required, ['computer', 'session_id']);
+  assert.equal(readSchema.properties.wait_ms.maximum, 30000);
+
+  const started = await callTool(r.mcpPort, 'start_session', { computer: 'laptop', command: 'claude', cwd: '~/code', cols: 120, rows: 40 });
+  assert.equal(started.isError, false);
+  const { session_id: id, pty } = JSON.parse(started.content[0].text);
+  assert.equal(pty, true);
+  const startCall = calls.find((c) => c.tool === 'start_session');
+  assert.deepEqual(startCall.args, { command: 'claude', cwd: '~/code', cols: 120, rows: 40 }, 'computer is consumed by the relay');
+
+  const first = await callTool(r.mcpPort, 'read_output', { computer: 'Laptop', session_id: id, wait_ms: 0 });
+  const meta = JSON.parse(first.content[0].text);
+  assert.equal(first.content[1].text, 'PS C:\\> ');
+
+  const SECRET_TYPED = 'my-secret-prompt-text';
+  const sent = await callTool(r.mcpPort, 'send_input', { computer: 'Laptop', session_id: id, text: SECRET_TYPED, keys: ['tab'] });
+  assert.equal(sent.isError, false);
+  // The long poll waits on the node and returns as soon as output arrives (well under wait_ms).
+  const t0 = Date.now();
+  const second = await callTool(r.mcpPort, 'read_output', { computer: 'Laptop', session_id: id, since: meta.cursor, wait_ms: 20000 });
+  assert.ok(Date.now() - t0 < 5000);
+  assert.match(second.content[1].text, /you said: my-secret-prompt-text/);
+
+  const listed = JSON.parse((await callTool(r.mcpPort, 'list_sessions', { computer: 'Laptop' })).content[0].text);
+  assert.deepEqual(listed.sessions.map((x) => x.id), [id]);
+  await callTool(r.mcpPort, 'send_input', { computer: 'Laptop', session_id: id, text: 'exit' });
+  const last = JSON.parse((await callTool(r.mcpPort, 'read_output', { computer: 'Laptop', session_id: id, since: JSON.parse(second.content[0].text).cursor, wait_ms: 5000 })).content[0].text);
+  assert.equal(last.exited, true);
+  assert.equal(last.exit_code, 0);
+  const stopped = await callTool(r.mcpPort, 'stop_session', { computer: 'Laptop', session_id: id, force: true });
+  assert.equal(JSON.parse(stopped.content[0].text).exit_code, 0);
+  assert.deepEqual(calls.find((c) => c.tool === 'stop_session').args, { session_id: id, force: true });
+  const missing = await callTool(r.mcpPort, 'read_output', { computer: 'Laptop', session_id: id });
+  assert.equal(missing.isError, true);
+  assert.match(missing.content[0].text, /No session/);
+
+  // Relay audit: one line per call, typed text and output never logged.
+  const lines = r.logs.filter((l) => l.startsWith('intelio-nodes call'));
+  for (const tool of ['start_session', 'send_input', 'read_output', 'list_sessions', 'stop_session']) assert.ok(lines.some((l) => l.includes(`tool=${tool} `)), tool);
+  assert.ok(lines.some((l) => /tool=send_input .*"text_chars":21,"keys":\["tab"\]/.test(l)), lines.join('\n'));
+  assert.ok(lines.some((l) => /tool=start_session .*"program":"claude","command_chars":6/.test(l)));
+  for (const line of r.logs) {
+    assert.ok(!line.includes(SECRET_TYPED), line);
+    assert.ok(!line.includes('you said'), line);
+  }
+});
+
+test('read_output relay timeout is wait_ms + 10 s, so a long poll is never cut short', async () => {
+  const dir = tmpdir('intelio-hub-');
+  const registry = createNodeRegistry({ file: path.join(dir, 'nodes.json') });
+  const hub = createNodeHub({ registry, log: () => {} });
+  const server = http.createServer();
+  server.on('upgrade', (req, socket, head) => hub.accept(req, socket, head, { login: 'test' }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const url = `ws://127.0.0.1:${server.address().port}/node/connect`;
+    // The node answers read_output only after 1.2 s (a long poll that found output late).
+    const node = await fakeNode(url, { name: 'Poll', handler: (msg) => new Promise((resolve) => setTimeout(() => resolve(protocol.frames.ok(msg.id, protocol.textContent({ cursor: 1 }))), 1200)) });
+    assert.equal(node.first.type, 'welcome');
+    const ok = await hub.call('Poll', 'read_output', { computer: 'Poll', session_id: 's_1', wait_ms: 1000 });
+    assert.equal(ok.isError, false, 'wait_ms 1000 gets 11 s at the relay');
+    node.ws.close();
   } finally {
     hub.close();
     server.close();

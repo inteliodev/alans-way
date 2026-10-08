@@ -58,7 +58,7 @@ function keySequence(name) {
 }
 
 // A complete escape sequence at the start of a string.
-const ESC_COMPLETE = /^\x1b(?:\[[0-?]*[ -/]*[@-~]|\][\s\S]*?(?:\x07|\x1b\\)|[P^_X][\s\S]*?\x1b\\|[ -/]*[0-~])/;
+const ESC_COMPLETE = /^\x1b(?:\[[0-?]*[ -/]*[@-~]|\][\s\S]*?(?:\x07|\x1b\\)|[P^_X][\s\S]*?\x1b\\|(?![[\]P^_X])[ -/]*[0-~])/;
 
 /**
  * Terminal output → plain text. Cursor-forward becomes spaces, cursor
@@ -73,7 +73,8 @@ function stripAnsi(text) {
   out = out.replace(/\x1b\[(\d*)C/g, (_, n) => ' '.repeat(Math.min(200, Number(n || 1))));
   out = out.replace(/\x1b\[[0-9;]*[Hf]/g, '\n');
   out = out.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
-  out = out.replace(/\x1b[ -/]*[0-~]/g, '');
+  out = out.replace(/\x1b(?![[\]P^_X])[ -/]*[0-~]/g, '');
+  out = out.replace(/\x1b/g, ''); // a lone or unfinished escape
   out = out.replace(/\r+\n/g, '\n').replace(/\r/g, '\n');
   // Backspace erases the character before it.
   for (let i = 0; i < 64 && /[^\n\x08]\x08/.test(out); i += 1) out = out.replace(/[^\n\x08]\x08/g, '');
