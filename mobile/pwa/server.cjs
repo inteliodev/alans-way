@@ -191,6 +191,11 @@ function createPwaServer({
   probeTimeoutMs = 1000,
   profileTtlMs = 60000,
   screensTtlMs = 15000,
+  // /v1/skills is optional and some gateway builds answer it with a 500 on every call.
+  // Remember the answer per profile so a polled /api/home does not re-ask (and re-log a
+  // traceback on the gateway) every refresh: a good list for a minute, an HTTP error for 15.
+  skillsTtlMs = 60000,
+  skillsErrorTtlMs = 15 * 60000,
   sample = process.env.INTELIO_PWA_SAMPLE === '1',
   voice = null,
   profileKey = '',
@@ -241,6 +246,7 @@ function createPwaServer({
   let featuresKnown = false;
   const profileCache = { at: 0, rows: null, pending: null, generation: 0 };
   const screenCache = { at: 0, rows: null, pending: null };
+  const skillsCache = new Map();
   const denialLogAt = new Map();
   const certCache = { at: 0, keys: null };
   const NOVNC = path.resolve(__dirname, '../../desktop/node_modules/@novnc/novnc');
@@ -1099,13 +1105,27 @@ function createPwaServer({
       const response = timeoutMs ? await withTimeout(request, timeoutMs + 100, null) : await request;
       if (!response) return { ok: false, list: [] };
       const text = await response.text();
-      if (!response.ok) return { ok: false, list: [] };
+      if (!response.ok) return { ok: false, list: [], status: response.status };
       let json = [];
       try { json = JSON.parse(text); } catch { json = []; }
-      return { ok: true, list: normalize(json) };
+      return { ok: true, list: normalize(json), status: response.status };
     } catch {
       return { ok: false, list: [] };
     }
+  }
+
+  // Skills per profile, cached. Only real answers are cached: a timeout or a dropped
+  // connection says nothing about the route, so the next call asks again.
+  async function cachedSkills(profileId, timeoutMs = 0) {
+    const hit = skillsCache.get(profileId);
+    if (hit) {
+      const ttl = hit.result.ok ? skillsTtlMs : skillsErrorTtlMs;
+      if (now() - hit.at < ttl) return hit.result;
+      skillsCache.delete(profileId);
+    }
+    const result = await optionalList(profileId, '/v1/skills', normalizeSkills, timeoutMs);
+    if (result.status) skillsCache.set(profileId, { at: now(), result });
+    return result;
   }
 
   function hermesDesktopPath(pathname) {
@@ -1333,9 +1353,10 @@ function createPwaServer({
         await withTimeout(learnFeatures(), probeTimeoutMs, null);
         const home = await realHome();
         const primary = home.profiles[0]?.id || profileName;
-        // /v1/skills can 500 on the gateway; skills are then left out (skillsOk false).
+        // /v1/skills can 500 on the gateway; skills are then left out (skillsOk false) and the
+        // failure is remembered for skillsErrorTtlMs so polling /api/home does not hammer it.
         const [skills, jobs] = await Promise.all([
-          optionalList(primary, '/v1/skills', normalizeSkills, probeTimeoutMs),
+          cachedSkills(primary, probeTimeoutMs),
           optionalList(primary, '/api/jobs', normalizeJobs, probeTimeoutMs),
         ]);
         home.skills = skills.list;
@@ -1346,7 +1367,7 @@ function createPwaServer({
       }
       if (req.method === 'GET' && url.pathname === '/api/skills') {
         if (sample) return send(res, 200, { data: SAMPLE_HOME.skills, sample: true, label: 'SAMPLE DATA' });
-        const skills = await optionalList(chosenProfile(req), '/v1/skills', normalizeSkills);
+        const skills = await cachedSkills(chosenProfile(req));
         if (!skills.ok) return send(res, 404, { error: 'This Hermes has no skills list.' });
         return send(res, 200, { data: skills.list });
       }
