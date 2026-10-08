@@ -342,7 +342,7 @@
     card.replaceChildren();
     const orb = el('span', 'lead-orb');
     const canvas = el('canvas');
-    mountOrb(canvas, lead.id, lead.orb, 72, true, lead.color);
+    mountOrb(canvas, lead.id, lead.orb, 56, true, lead.color);
     const badge = el('span', 'lead-badge');
     orb.append(canvas, badge);
     const count = workCount();
