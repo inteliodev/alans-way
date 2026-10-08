@@ -907,7 +907,30 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
-  return { register, command, open, publicState, watchVersion, viewerUrl, vncPassword, vault, startupNotice: () => startupNotice };
+  /**
+   * Where the intelio node (desktop/src/intelio/node) dials. Uses the connection
+   * already chosen (never opens a sign-in window itself): cloud → origin plus the
+   * Access cookies from the cloud session; Tailscale → the configured host.
+   */
+  async function nodeTarget() {
+    if (!resolved) return null;
+    if (resolved.mode === 'cloud') {
+      if (needsSignIn) return null;
+      const ses = sessionFor(resolved.partition || CLOUD_PARTITION);
+      if (!ses || !ses.cookies) return null;
+      let cookies = [];
+      try { cookies = await ses.cookies.get({ url: resolved.origin }); } catch { return null; }
+      const cookie = mergeAccessCookies('', cookies);
+      if (!/(?:^|; )CF_Authorization=/.test(cookie)) return null;
+      return { mode: 'cloud', origin: resolved.origin, cookie };
+    }
+    let cfg;
+    try { cfg = await baseConfig(); } catch { return null; }
+    if (!cfg.host) return null;
+    return { mode: 'tailscale', host: cfg.host };
+  }
+
+  return { register, command, open, publicState, watchVersion, viewerUrl, vncPassword, vault, nodeTarget, startupNotice: () => startupNotice };
 }
 
 module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, keysFromImport, profileNames, secureDelete, attachCloudSessionCookies, cloudCookieFilter, VNC_KEY };
