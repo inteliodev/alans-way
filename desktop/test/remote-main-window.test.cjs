@@ -177,13 +177,12 @@ test('threads for the selected agent sit under the agents, and the sessions list
 
   search.value = '';
   search.dispatch('input', { target: search });
-  const filter = byId('session-agent');
-  filter.value = 'hhp';
-  filter.dispatch('change', { target: filter });
+  const chip = (agent) => byId('session-agents').children.find((node) => node.dataset.agent === agent);
+  assert.deepEqual(byId('session-agents').children.map((node) => node.dataset.agent), ['', 'intelio', 'prc', 'alignment', 'hhp']);
+  chip('hhp').onclick();
   assert.deepEqual(sessionItems(byId).map((row) => row.dataset.profile), ['hhp']);
 
-  filter.value = '';
-  filter.dispatch('change', { target: filter });
+  chip('').onclick();
   const prc = sessionItems(byId).find((row) => row.dataset.profile === 'prc');
   await prc.onclick();
   const opened = calls.find((call) => call.name === 'messages' && call.profile === 'prc');
@@ -196,5 +195,62 @@ test('threads for the selected agent sit under the agents, and the sessions list
   assert.equal(byId('bot-list').children.length, 3);
   assert.equal(byId('all-sessions').classList.hidden, true);
   assert.equal(saved.at(-1).value.sidebarTab, 'agents');
+});
+
+test('the Sessions tab groups by date, pins first, and renames, pins, archives and deletes through Hermes', async () => {
+  delete require.cache[require.resolve('../src/remote-main.js')];
+  const { byId } = installDom();
+  const now = Date.now();
+  const iso = (msAgo) => new Date(now - msAgo).toISOString();
+  const rows = [
+    { id: 's-today', profileId: 'prc', title: 'Today work', preview: 'p1', updated_at: iso(60 * 1000) },
+    { id: 's-old', profileId: 'hhp', title: 'Old one', preview: 'p2', updated_at: iso(60 * 86400000) },
+    { id: 's-pinned', profileId: 'intelio', title: 'Pinned plan', preview: 'p3', pinned: true, updated_at: iso(90 * 86400000) },
+    { id: 's-archived', profileId: 'alignment', title: 'Shelved', preview: 'p4', archived: true, updated_at: iso(2 * 86400000) },
+  ];
+  const updates = [];
+  const original = globalThis.remoteHermes.request;
+  globalThis.remoteHermes.request = async (name, value) => {
+    if (name === 'all-sessions') return { data: rows.map((row) => ({ ...row })) };
+    if (name === 'session-update') { updates.push(value); return { ok: true }; }
+    if (name === 'session-delete') { updates.push({ deleted: value.id, profile: value.profile }); return { ok: true }; }
+    return original(name, value);
+  };
+  const api = require('../src/remote-main.js');
+  await api.sync({ remoteHermes: { enabled: true, host: '127.0.0.1', port: 9, profile: 'intelio', profilesWithKeys: ['intelio', 'prc', 'alignment', 'hhp'] } });
+  api.setSidebar('sessions');
+  const until = Date.now() + 1000;
+  while (Date.now() < until && sessionItems(byId).length < 3) await new Promise((resolve) => setTimeout(resolve, 10));
+  const groups = () => byId('all-sessions').children.filter((node) => node.className === 'session-group').map((node) => node.textContent);
+  assert.deepEqual(sessionItems(byId).map((row) => row.dataset.sessionId), ['s-pinned', 's-today', 's-old']);
+  assert.deepEqual(groups(), ['Pinned', 'Today', 'Older']);
+  assert.equal(byId('session-archived').textContent, 'Archived (1)');
+
+  const menuFor = (id) => {
+    const row = sessionItems(byId).find((node) => node.dataset.sessionId === id);
+    row.children.find((node) => node.className === 'session-more').onclick({ stopPropagation() {} });
+    const menu = row.children.find((node) => node.className === 'session-menu');
+    return (label) => menu.children.find((node) => node.textContent === label);
+  };
+  menuFor('s-today')('Pin to top').onclick({ stopPropagation() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(updates.at(-1), { profile: 'prc', id: 's-today', fields: { pinned: true } });
+  assert.deepEqual(sessionItems(byId).map((row) => row.dataset.sessionId).slice(0, 2).sort(), ['s-pinned', 's-today']);
+
+  menuFor('s-old')('Archive').onclick({ stopPropagation() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(updates.at(-1), { profile: 'hhp', id: 's-old', fields: { archived: true } });
+  assert.equal(sessionItems(byId).some((row) => row.dataset.sessionId === 's-old'), false);
+  byId('session-archived').dispatch('click', {});
+  assert.deepEqual(sessionItems(byId).map((row) => row.dataset.sessionId).sort(), ['s-archived', 's-old']);
+  byId('session-archived').dispatch('click', {});
+
+  const del = menuFor('s-today')('Delete');
+  del.onclick({ stopPropagation() {} });
+  assert.equal(updates.some((entry) => entry.deleted), false, 'the first click only arms Delete');
+  del.onclick({ stopPropagation() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(updates.at(-1), { deleted: 's-today', profile: 'prc' });
+  assert.equal(sessionItems(byId).some((row) => row.dataset.sessionId === 's-today'), false);
 });
 });

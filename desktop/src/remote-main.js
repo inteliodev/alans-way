@@ -1128,62 +1128,284 @@
     if (currentView(seq, id)) loadModelOptions().catch(() => {});
   }
 
+  /** Sessions tab rows: archived ones only on the Archived view, pinned first, then newest. */
   function sessionRows() {
     const needle = String(ui.sessionQuery || '').trim().toLowerCase();
     return ui.allSessions.filter((session) => {
+      if (Boolean(session.archived) !== Boolean(ui.showArchived)) return false;
       if (ui.sessionAgent && session.profileId !== ui.sessionAgent) return false;
       if (!needle) return true;
       const name = ui.agents.find((agent) => agent.id === session.profileId)?.name || session.profileId || '';
       return `${name} ${session.title || ''} ${session.preview || ''} ${session.sourceLabel || ''} ${session.source || ''}`.toLowerCase().includes(needle);
-    }).slice().sort((a, b) => sessionAt(b) - sessionAt(a));
+    }).slice().sort((a, b) => (Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))) || (sessionAt(b) - sessionAt(a)));
   }
 
-  function paintAgentFilter() {
-    const select = $('session-agent');
-    if (!select) return;
-    const current = ui.sessionAgent;
-    select.replaceChildren();
-    const all = el('option', '', 'All agents');
-    all.value = '';
-    select.append(all);
-    for (const agent of ui.agents) {
-      const option = el('option', '', shownAgent(agent.id, agent.name));
-      option.value = agent.id;
-      select.append(option);
-    }
-    const known = ui.agents.some((agent) => agent.id === current);
-    select.value = known ? current : '';
-    ui.sessionAgent = select.value || '';
+  const DAY_MS = 86400000;
+  function startOfToday(now) {
+    const day = new Date(now);
+    day.setHours(0, 0, 0, 0);
+    return day.getTime();
+  }
+
+  /** Date buckets like the Hermes desktop sidebar. */
+  function sessionGroup(session, now) {
+    if (session.pinned && !ui.showArchived) return 'Pinned';
+    const at = sessionAt(session);
+    if (!at) return 'Older';
+    const today = startOfToday(now);
+    if (at >= today) return 'Today';
+    if (at >= today - DAY_MS) return 'Yesterday';
+    if (at >= today - 6 * DAY_MS) return 'Previous 7 days';
+    if (at >= today - 29 * DAY_MS) return 'Previous 30 days';
+    return 'Older';
+  }
+
+  function sessionStamp(session, now) {
+    const at = sessionAt(session);
+    if (!at) return sessionWhen(session);
+    const when = new Date(at);
+    const time = when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const today = startOfToday(now);
+    if (at >= today) return time;
+    if (at >= today - 6 * DAY_MS) return `${when.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
+    return when.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  /** Agent filter chips: All plus one per agent, each with its orb colour. */
+  function paintAgentChips() {
+    const host = $('session-agents');
+    if (!ui.agents.some((agent) => agent.id === ui.sessionAgent)) ui.sessionAgent = '';
+    if (!host) return;
+    host.replaceChildren();
+    const chip = (id, label, agent) => {
+      const button = el('button', 'session-chip');
+      button.type = 'button';
+      button.dataset.agent = id;
+      button.setAttribute('aria-pressed', String(ui.sessionAgent === id));
+      if (agent) {
+        const dot = el('span', 'session-chip-dot');
+        dot.style.background = agent.color || accentOf(agent.id);
+        button.append(dot);
+      }
+      button.append(el('span', '', label));
+      button.onclick = () => { ui.sessionAgent = id; paintAllSessions(); };
+      host.append(button);
+    };
+    chip('', 'All');
+    for (const agent of ui.agents) chip(agent.id, shownAgent(agent.id, agent.name), agent);
+  }
+
+  function sessionItem(session, now) {
+    const agent = ui.agents.find((item) => item.id === session.profileId);
+    const name = shownAgent(session.profileId, agent?.name);
+    const active = session.id === ui.sessionId && session.profileId === ui.selected;
+    const item = el('li', `all-session${active ? ' active' : ''}${session.pinned ? ' pinned' : ''}`);
+    item.dataset.profile = session.profileId || '';
+    item.dataset.sessionId = session.id || '';
+    item.tabIndex = 0;
+    item.setAttribute('role', 'button');
+    item.setAttribute('aria-current', String(active));
+    const title = session.title || 'Untitled session';
+    item.setAttribute('aria-label', `${title}, ${name}`);
+    const avatar = el('span', 'avatar');
+    const canvas = el('canvas');
+    mountOrb(canvas, session.profileId || name, agent?.orb || signatureOf(session.profileId), 28, true);
+    avatar.append(canvas);
+    const copy = el('span', 'all-session-copy');
+    const top = el('span', 'all-session-top');
+    top.append(el('span', 'session-title', title));
+    const when = sessionStamp(session, now);
+    if (when) top.append(el('span', 'session-time', when));
+    const meta = el('div', 'session-meta');
+    meta.append(el('span', 'agent-name', name));
+    if (session.preview) meta.append(el('span', 'session-preview', session.preview));
+    copy.append(top, meta);
+    const more = el('button', 'session-more', '⋯');
+    more.type = 'button';
+    more.title = 'Session actions';
+    more.setAttribute('aria-label', `Actions for ${title}`);
+    more.setAttribute('aria-haspopup', 'menu');
+    more.onclick = (event) => {
+      event?.stopPropagation?.();
+      if (ui.sessionMenuFor === session.id) { closeSessionMenu(); return; }
+      openSessionMenu(item, session);
+    };
+    item.append(avatar, copy, more);
+    item.onclick = () => openListed(session);
+    item.addEventListener('keydown', (event) => {
+      if (event.target !== item) return;
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault?.(); openListed(session); }
+    });
+    return item;
   }
 
   function paintAllSessions() {
     const list = $('all-sessions');
     if (!list) return;
-    paintAgentFilter();
+    closeSessionMenu();
+    paintAgentChips();
     const rows = sessionRows();
+    const now = Date.now();
     list.replaceChildren();
+    let group = '';
     for (const session of rows) {
-      const agent = ui.agents.find((item) => item.id === session.profileId);
-      const name = shownAgent(session.profileId, agent?.name);
-      const item = el('li', `all-session${session.id === ui.sessionId && session.profileId === ui.selected ? ' active' : ''}`);
-      item.dataset.profile = session.profileId || '';
-      item.dataset.sessionId = session.id || '';
-      const avatar = el('span', 'avatar');
-      const canvas = el('canvas');
-      mountOrb(canvas, session.profileId || name, agent?.orb || signatureOf(session.profileId), 28, true);
-      avatar.append(canvas);
-      const copy = el('span', 'all-session-copy');
-      const top = el('span', 'all-session-top');
-      top.append(el('span', 'agent-name', name));
-      const when = sessionWhen(session);
-      if (when) top.append(el('span', 'session-time', when));
-      copy.append(top, el('div', 'session-title', session.title || session.id));
-      if (session.preview) copy.append(el('div', 'session-preview', session.preview));
-      item.append(avatar, copy);
-      item.onclick = () => openListed(session);
-      list.append(item);
+      const next = sessionGroup(session, now);
+      if (next !== group) {
+        group = next;
+        list.append(el('li', 'session-group', group));
+      }
+      list.append(sessionItem(session, now));
     }
-    if (!rows.length) list.append(el('li', 'session-empty', ui.allSessions.length ? 'No sessions match.' : 'No sessions yet.'));
+    if (!rows.length) {
+      const empty = ui.showArchived ? 'No archived sessions.' : (ui.allSessions.length ? 'No sessions match.' : 'No sessions yet. Start one with New chat.');
+      list.append(el('li', 'session-empty', empty));
+    }
+    const archived = ui.allSessions.filter((session) => session.archived).length;
+    const toggle = $('session-archived');
+    if (toggle) {
+      toggle.textContent = ui.showArchived ? '← Back to sessions' : `Archived (${archived})`;
+      toggle.classList.toggle('hidden', ui.sidebar !== 'sessions' || (!ui.showArchived && !archived));
+    }
+  }
+
+  function closeSessionMenu() {
+    if (ui.sessionMenu) ui.sessionMenu.remove?.();
+    ui.sessionMenu = null;
+    ui.sessionMenuFor = '';
+    if (ui.sessionMenuOff) { ui.sessionMenuOff(); ui.sessionMenuOff = null; }
+  }
+
+  function openSessionMenu(anchor, session) {
+    closeSessionMenu();
+    const menu = el('div', 'session-menu');
+    menu.setAttribute('role', 'menu');
+    const action = (label, run, extra = '') => {
+      const button = el('button', `session-menu-item${extra ? ` ${extra}` : ''}`, label);
+      button.type = 'button';
+      button.setAttribute('role', 'menuitem');
+      button.onclick = (event) => { event?.stopPropagation?.(); run(button); };
+      menu.append(button);
+      return button;
+    };
+    action('Rename', () => { closeSessionMenu(); startRename(anchor, session); });
+    action(session.pinned ? 'Unpin' : 'Pin to top', () => { closeSessionMenu(); updateSession(session, { pinned: !session.pinned }); });
+    action(session.archived ? 'Unarchive' : 'Archive', () => { closeSessionMenu(); updateSession(session, { archived: !session.archived }); });
+    action('Delete', (button) => {
+      if (button.dataset.armed) { closeSessionMenu(); deleteSession(session); return; }
+      button.dataset.armed = '1';
+      button.textContent = 'Click again to delete';
+    }, 'danger');
+    menu.addEventListener('click', (event) => event?.stopPropagation?.());
+    anchor.append(menu);
+    ui.sessionMenu = menu;
+    ui.sessionMenuFor = session.id;
+    const doc = root.document;
+    const outside = (event) => {
+      if (menu.contains?.(event.target) || event.target?.closest?.('.session-more')) return;
+      closeSessionMenu();
+    };
+    const escape = (event) => { if (event.key === 'Escape') closeSessionMenu(); };
+    doc.addEventListener?.('pointerdown', outside, true);
+    doc.addEventListener?.('keydown', escape, true);
+    ui.sessionMenuOff = () => {
+      doc.removeEventListener?.('pointerdown', outside, true);
+      doc.removeEventListener?.('keydown', escape, true);
+    };
+    menu.querySelector?.('button')?.focus?.();
+  }
+
+  function startRename(item, session) {
+    const title = item.querySelector?.('.session-title');
+    if (!title) return;
+    const input = el('input', 'session-rename');
+    input.value = session.title || '';
+    input.maxLength = 200;
+    input.setAttribute('aria-label', 'Session name');
+    title.replaceWith(input);
+    input.focus?.();
+    input.select?.();
+    let done = false;
+    const finish = (save) => {
+      if (done) return;
+      done = true;
+      const next = String(input.value || '').trim();
+      input.replaceWith(title);
+      if (save && next && next !== session.title) updateSession(session, { title: next });
+    };
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation?.();
+      if (event.key === 'Enter') finish(true);
+      if (event.key === 'Escape') finish(false);
+    });
+    input.addEventListener('click', (event) => event.stopPropagation?.());
+    input.addEventListener('blur', () => finish(true));
+  }
+
+  function notify(text) {
+    const toast = $('toast');
+    if (!toast) { setStatus(text); return; }
+    toast.textContent = text;
+    toast.classList.toggle('hidden', false);
+    clearTimeout(ui.toastTimer);
+    ui.toastTimer = setTimeout(() => toast.classList.toggle('hidden', true), 5000);
+  }
+
+  function sessionError(error, verb) {
+    const status = Number(error?.status) || Number(String(error?.message || '').match(/HTTP (\d{3})/)?.[1]) || 0;
+    if (status === 405) return `Can't ${verb} from cloud mode yet: update the intelio server on the VPS.`;
+    if (/unsupported_session_field|Unsupported session fields/i.test(String(error?.message || ''))) return `This Hermes version on the VPS can't ${verb} sessions yet.`;
+    return `Couldn't ${verb} the session: ${String(error?.message || error).slice(0, 160)}`;
+  }
+
+  /** Apply the same change to every cached copy of a session (Sessions tab and agent threads). */
+  function patchCached(id, fields) {
+    for (const list of [ui.allSessions, ui.sessions]) {
+      for (const row of list || []) if (row.id === id) Object.assign(row, fields);
+    }
+  }
+
+  async function updateSession(session, fields) {
+    const before = {};
+    for (const key of Object.keys(fields)) before[key] = session[key];
+    patchCached(session.id, fields);
+    paintAllSessions();
+    paintSessions();
+    const verb = 'title' in fields ? 'rename' : 'pinned' in fields ? 'pin' : 'archive';
+    try {
+      await root.remoteHermes.request('session-update', { profile: session.profileId || ui.selected, id: session.id, fields });
+    } catch (error) {
+      patchCached(session.id, before);
+      paintAllSessions();
+      paintSessions();
+      notify(sessionError(error, verb));
+    }
+  }
+
+  async function deleteSession(session) {
+    try {
+      await root.remoteHermes.request('session-delete', { profile: session.profileId || ui.selected, id: session.id });
+    } catch (error) {
+      notify(sessionError(error, 'delete'));
+      return;
+    }
+    ui.allSessions = ui.allSessions.filter((row) => row.id !== session.id);
+    ui.sessions = ui.sessions.filter((row) => row.id !== session.id);
+    if (ui.sessionId === session.id) {
+      ui.sessionId = '';
+      ui.messages = [];
+      paintMessages();
+    }
+    paintAllSessions();
+    paintSessions();
+  }
+
+  /** New chat: the filtered agent, else the selected one. The thread is created on first send. */
+  async function newChat(agentId) {
+    const id = agentId || ui.sessionAgent || ui.selected || ui.agents[0]?.id;
+    if (!id) return;
+    await selectAgent(id);
+    paintAllSessions();
+    $('remote-input')?.focus?.();
   }
 
   function setSidebar(tab, { persist = true, remember = true } = {}) {
@@ -1196,6 +1418,10 @@
     $('agent-caption-actions')?.classList.toggle('hidden', !agentsOn);
     $('session-tools')?.classList.toggle('hidden', agentsOn);
     $('all-sessions')?.classList.toggle('hidden', agentsOn);
+    // The agent's own threads belong to the Agents view; the Sessions tab lists every agent's.
+    $('sidebar-threads-wrap')?.classList.toggle('hidden', !agentsOn);
+    if (agentsOn && ui.showArchived) ui.showArchived = false;
+    $('session-archived')?.classList.toggle('hidden', true);
     if (!agentsOn) $('bot-search')?.classList.toggle('hidden', true);
     paintAgents();
     if (!agentsOn) paintAllSessions();
@@ -1392,7 +1618,9 @@
     $('tab-agents')?.addEventListener('click', () => setSidebar('agents'));
     $('tab-sessions')?.addEventListener('click', () => setSidebar('sessions'));
     $('session-search')?.addEventListener('input', (event) => { ui.sessionQuery = event.target.value || ''; paintAllSessions(); });
-    $('session-agent')?.addEventListener('change', (event) => { ui.sessionAgent = event.target.value || ''; paintAllSessions(); });
+    $('session-new')?.addEventListener('click', () => { newChat(); });
+    $('threads-new')?.addEventListener('click', () => { newChat(ui.selected); });
+    $('session-archived')?.addEventListener('click', () => { ui.showArchived = !ui.showArchived; paintAllSessions(); });
     $('remote-input')?.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) send(event);
     });
@@ -1735,7 +1963,7 @@
     if (!root.document) return;
     wire();
     if (!ui.tabChosen) setSidebar('agents', { persist: false });
-    $('sidebar-threads-wrap')?.classList.remove('hidden');
+    $('sidebar-threads-wrap')?.classList.toggle('hidden', ui.sidebar !== 'agents');
     const remote = next?.remoteHermes || {};
     ui.keys = remote.profilesWithKeys || [];
     ui.keyless = ui.keys.length === 0;

@@ -1042,6 +1042,7 @@ function createPwaServer({
     }
     let target;
     let profileId = '';
+    let apiPath = '';
     if (url.pathname === '/health') {
       target = new URL(upstreamUrl.toString());
       target.pathname = '/health';
@@ -1050,13 +1051,16 @@ function createPwaServer({
       const match = url.pathname.match(/^\/p\/([a-z0-9][a-z0-9_-]{0,63})(\/(?:api|v1)\/.*)$/);
       if (!match) return send(res, 404, { error: 'Not found.' });
       profileId = match[1];
+      apiPath = match[2];
       const query = {};
       for (const [key, value] of url.searchParams) if (value) query[key] = value;
       target = hermesUrl(profileId, match[2], query);
     }
     const method = req.method || 'GET';
-    if (method !== 'GET' && method !== 'HEAD' && method !== 'POST') return send(res, 405, { error: 'Not found.' });
-    const raw = method === 'POST' ? await readRaw(req, 1024 * 1024) : null;
+    // PATCH/DELETE only for one session's sidebar metadata (rename, pin, archive, delete).
+    const sessionEdit = (method === 'PATCH' || method === 'DELETE') && /^\/api\/sessions\/[A-Za-z0-9_-]{1,80}$/.test(apiPath);
+    if (method !== 'GET' && method !== 'HEAD' && method !== 'POST' && !sessionEdit) return send(res, 405, { error: 'Not found.' });
+    const raw = method === 'POST' || method === 'PATCH' ? await readRaw(req, method === 'PATCH' ? 4096 : 1024 * 1024) : null;
     let key = '';
     if (profileId) {
       try { key = bearerKey(profileId); } catch { return send(res, 401, { error: 'Profile key is not available.' }); }
@@ -1455,6 +1459,19 @@ function createPwaServer({
         return await forward(req, res, `/api/sessions/${messages[1]}/messages`, { query: { inline_images: 'false' }, profileId: chosenProfile(req) });
       }
       const chat = url.pathname.match(/^\/api\/sessions\/([^/]+)\/chat$/);
+      const one = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
+      if ((req.method === 'PATCH' || req.method === 'DELETE') && one && ID_RE.test(one[1])) {
+        if (!mutationOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
+        if (sample) return send(res, 200, { ok: true, sample: true, label: 'SAMPLE DATA' });
+        if (req.method === 'DELETE') return await forward(req, res, `/api/sessions/${one[1]}`, { method: 'DELETE', profileId: chosenProfile(req) });
+        const body = await readBody(req, 4096);
+        // Only the sidebar fields the Sessions tab edits: rename, pin, archive.
+        const fields = {};
+        if (typeof body.title === 'string' && body.title.trim()) fields.title = body.title.trim().slice(0, 200);
+        for (const flag of ['pinned', 'archived']) if (typeof body[flag] === 'boolean') fields[flag] = body[flag];
+        if (!Object.keys(fields).length) return send(res, 400, { error: 'Nothing to change.' });
+        return await forward(req, res, `/api/sessions/${one[1]}`, { method: 'PATCH', body: fields, profileId: chosenProfile(req) });
+      }
       if (req.method === 'POST' && chat && ID_RE.test(chat[1])) {
         const body = await readBody(req, 200000);
         if (sample && messagesLookSample(chat[1])) {

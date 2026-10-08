@@ -305,6 +305,12 @@
       return { ...json, id, session: json.session || { id } };
     }
     if (name === 'send') return sendChat(value);
+    if (name === 'session-update') {
+      return fetchJson(`/api/sessions/${encodeURIComponent(value.id || '')}`, { method: 'PATCH', profile, body: value.fields || {} });
+    }
+    if (name === 'session-delete') {
+      return fetchJson(`/api/sessions/${encodeURIComponent(value.id || '')}`, { method: 'DELETE', profile });
+    }
     if (name === 'model-options') {
       const session = value.id ? `&session=${encodeURIComponent(value.id)}` : '';
       return fetchJson(`/api/models?profile=${encodeURIComponent(profile || 'intelio')}${session}`, { profile });

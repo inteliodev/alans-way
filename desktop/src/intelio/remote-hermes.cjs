@@ -248,6 +248,8 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
     getSession: (id, { profile } = {}) => request('GET', `/api/sessions/${encodeURIComponent(id)}`, { profile }),
     messages: (id, { profile } = {}) => request('GET', `/api/sessions/${encodeURIComponent(id)}/messages`, { query: { inline_images: 'false' }, profile }),
     createSession: (title, { profile } = {}) => request('POST', '/api/sessions', { body: title ? { title: String(title).slice(0, 200) } : {}, profile }),
+    updateSession: (id, fields, { profile } = {}) => request('PATCH', `/api/sessions/${encodeURIComponent(id)}`, { body: fields, profile }),
+    deleteSession: (id, { profile } = {}) => request('DELETE', `/api/sessions/${encodeURIComponent(id)}`, { profile }),
     optional(method, path, options) {
       return request(method, path, options).catch(() => null);
     },

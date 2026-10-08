@@ -599,6 +599,22 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return Object.assign(new Error("Voice isn't set up on the server yet"), { code: 'VOICE_OFF' });
   }
 
+  /** Session ids from the renderer, same shape the phone server accepts (ID_RE); refuse anything path-like. */
+  function sessionIdOf(raw) {
+    const id = String(raw || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) throw new Error('Unknown session.');
+    return id;
+  }
+
+  /** Only the sidebar fields the Sessions tab edits reach Hermes's PATCH /api/sessions/<id>. */
+  function sessionFields(raw = {}) {
+    const fields = {};
+    if (typeof raw.title === 'string' && raw.title.trim()) fields.title = raw.title.trim().slice(0, 200);
+    for (const flag of ['pinned', 'archived']) if (typeof raw[flag] === 'boolean') fields[flag] = raw[flag];
+    if (!Object.keys(fields).length) throw new Error('Nothing to change.');
+    return fields;
+  }
+
   async function voiceStatus(profile) {
     const response = await voiceRequest(profile, { pathname: '/api/voice' });
     if (!response?.ok) throw voiceOff();
@@ -781,6 +797,8 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
           }
           case 'messages': return await client.messages(String(value.id), { profile: value.profile });
           case 'create-session': return await client.createSession(value.title, { profile: value.profile });
+          case 'session-update': return await client.updateSession(sessionIdOf(value.id), sessionFields(value.fields), { profile: value.profile });
+          case 'session-delete': return await client.deleteSession(sessionIdOf(value.id), { profile: value.profile });
           case 'skills': return await client.skills();
           case 'create-agent': return await createAgent(value);
           case 'agent-card': return await agentCard(value.profile);

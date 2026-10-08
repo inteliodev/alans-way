@@ -15,19 +15,56 @@ body:not(.remote-main) #session-tools,
 body:not(.remote-main) #all-sessions { display: none !important; }
 body:not(.remote-main) #bot-list { display: block !important; }
 body:not(.remote-main) #agent-caption-actions { display: flex !important; }
-.side-switch { display: flex; gap: 8px; align-items: center; min-width: 0; }
-.side-tab { padding: 0; color: #6f6f78; font-size: 11px; font-weight: 650; letter-spacing: .06em; }
-.side-tab[aria-selected="true"] { color: #d7d7de; }
-.session-tools { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 8px; }
-.session-tools select { width: 100%; background: #17171b; color: inherit; border: 1px solid #2c2c32; border-radius: 8px; padding: 6px 8px; }
-.all-sessions { list-style: none; margin: 0; padding: 0 8px 8px; overflow: auto; flex: 1; min-height: 0; }
-.all-session { display: flex; gap: 8px; padding: 8px; border-radius: 10px; cursor: pointer; }
-.all-session.active { background: #1c1c22; }
-.all-session .avatar { width: 28px; height: 28px; flex: none; }
-.all-session-copy { min-width: 0; flex: 1; }
-.all-session-top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.all-session .agent-name { font-size: 11px; font-weight: 650; }
-.session-time { margin-left: auto; color: #8d8d98; font-size: 10px; }
+.side-switch { display: inline-flex; gap: 2px; align-items: center; min-width: 0; padding: 2px; border-radius: 999px; background: #18181c; }
+.side-tab { padding: 5px 9px; border-radius: 999px; color: #8d8d98; font-size: 10.5px; font-weight: 650; letter-spacing: .06em; line-height: 1; white-space: nowrap; transition: background .12s, color .12s; }
+.side-tab:hover { color: #e4e4ea; }
+.side-tab[aria-selected="true"] { color: #f4f4f8; background: #2a2a31; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+/* Sessions tab: every agent's sessions, grouped by date like the Hermes desktop sidebar. */
+.session-tools { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 6px; }
+.session-search-row { display: flex; gap: 6px; align-items: center; }
+.session-search-row .search-input { flex: 1; min-width: 0; margin: 0; width: auto; padding: 8px 11px; border-radius: 10px; }
+.session-new { display: inline-flex; align-items: center; gap: 4px; flex: none; height: 34px; padding: 0 11px 0 8px; border-radius: 10px; background: #f4f4f8; color: #111113; font-size: 12px; font-weight: 650; }
+.session-new svg { width: 15px; height: 15px; stroke-width: 2; }
+.session-new:hover { background: #fff; }
+.session-agents { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.session-agents::-webkit-scrollbar { display: none; }
+.session-chip { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid #2c2c33; color: #b9b9c4; font-size: 12px; font-weight: 550; white-space: nowrap; }
+.session-chip:hover { border-color: #45454f; color: #f4f4f8; }
+.session-chip[aria-pressed="true"] { background: #f4f4f8; border-color: #f4f4f8; color: #111113; }
+.session-chip-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.all-sessions { list-style: none; margin: 0; padding: 0 8px 8px; overflow: auto; flex: 1; min-height: 0; scrollbar-width: thin; }
+.session-group { padding: 14px 8px 6px; color: #75757f; font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+.session-group:first-child { padding-top: 4px; }
+.all-session { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 8px; border-radius: 12px; cursor: pointer; outline: none; }
+.all-session:hover { background: #1a1a1f; }
+.all-session:focus-visible { box-shadow: inset 0 0 0 2px #7a5cff; }
+.all-session.active { background: #22222a; }
+.all-session .avatar { width: 30px; height: 30px; flex: none; background: transparent; }
+.all-session .avatar canvas { width: 30px; height: 30px; }
+.all-session-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.all-session-top { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.all-session .session-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.all-session.pinned .session-title::before { content: "●"; margin-right: 5px; font-size: 7px; vertical-align: 2px; color: #7a5cff; }
+.all-session .session-meta { display: flex; gap: 6px; min-width: 0; margin: 0; font-size: 12px; }
+.all-session .agent-name { flex: none; font-size: 11.5px; font-weight: 650; color: #a8a8b4; }
+.all-session .session-preview { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #85858f; }
+.session-time { flex: none; margin-left: auto; color: #85858f; font-size: 11px; font-variant-numeric: tabular-nums; }
+.session-more { position: absolute; right: 6px; top: 7px; width: 26px; height: 26px; border-radius: 8px; background: inherit; color: #9b9ba6; font-size: 16px; line-height: 1; opacity: 0; }
+/* The actions button takes the timestamp's place on hover/focus, so titles keep their width. */
+.all-session:hover .session-more, .all-session:focus-within .session-more { opacity: 1; }
+.all-session:hover .session-time, .all-session:focus-within .session-time { visibility: hidden; }
+.session-more:hover { background: #2c2c34; color: #fff; }
+.session-menu { position: absolute; right: 6px; top: calc(100% - 4px); z-index: 30; display: flex; flex-direction: column; min-width: 170px; padding: 5px; border-radius: 12px; border: 1px solid #34343c; background: #1c1c21; box-shadow: 0 12px 32px rgba(0, 0, 0, .35); }
+.session-menu-item { padding: 8px 10px; border-radius: 8px; text-align: left; font-size: 13px; color: #e8e8ee; }
+.session-menu-item:hover, .session-menu-item:focus-visible { background: #2a2a31; outline: none; }
+.session-menu-item.danger { color: #ff7b72; }
+.session-rename { flex: 1; min-width: 0; height: 24px; padding: 0 6px; border-radius: 6px; border: 1px solid #7a5cff; background: #111114; color: inherit; font: inherit; font-size: 13px; font-weight: 550; outline: none; }
+.all-sessions .session-empty { padding: 18px 8px; text-align: center; }
+.session-archived { margin: 0 16px 10px; padding: 6px 0; text-align: left; color: #8d8d98; font-size: 12px; }
+.session-archived:hover { color: #f4f4f8; }
+.threads-new { width: 22px; height: 22px; margin-left: auto; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; color: #8d8d98; }
+.threads-new svg { width: 14px; height: 14px; stroke-width: 2; }
+.threads-new:hover { background: #2a2a31; color: #f4f4f8; }
 .remote-thread { display: flex; flex-direction: column; min-height: 0; }
 .remote-messages { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; align-items: flex-start; }
 .msg { max-width: min(640px, 88%); margin: 0 0 12px; padding: 8px 12px; border-radius: 14px; white-space: pre-wrap; line-height: 1.45; }
@@ -100,8 +137,10 @@ body:not(.remote-main) #agent-caption-actions { display: flex !important; }
 #chat-avatar canvas.orb { width: 28px; height: 28px; }
 body.remote-main #shell { grid-template-columns: 268px var(--chat-width) 5px minmax(280px, 1fr); }
 body.remote-main #shell.browser-hidden { grid-template-columns: 268px minmax(0, 1fr) 0 0 !important; }
-body.remote-main .side-switch { display: none !important; }
-body.remote-main .side-caption:not(.threads-caption):not(.watching-caption)::before { content: "AGENTS"; }
+body.remote-main .side-caption:not(.threads-caption):not(.watching-caption) { align-items: center; gap: 8px; padding: 18px 12px 10px 14px; }
+/* The tab switch and the agent actions share one 268px row: the bare agent count goes (the list shows them). */
+body.remote-main #bot-count { display: none; }
+body.remote-main #agent-caption-actions { gap: 2px; flex: none; }
 body.remote-main #bot-list { flex: 0 1 auto; max-height: 46%; }
 .sidebar-threads-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .threads-caption, .watching-caption { justify-content: flex-start; padding-top: 4px; padding-bottom: 6px; }

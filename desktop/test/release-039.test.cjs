@@ -21,8 +21,13 @@ test('threads caption does not repeat AGENTS and the theme control accepts a poi
   const style = fs.readFileSync(path.join(__dirname, '../src/style.css'), 'utf8');
   const renderer = fs.readFileSync(path.join(__dirname, '../src/renderer.js'), 'utf8');
   const main = fs.readFileSync(path.join(__dirname, '../src/main.cjs'), 'utf8');
-  assert.match(css, /\.side-caption:not\(\.threads-caption\):not\(\.watching-caption\)::before/);
-  assert.equal(css.includes('.side-caption::before { content: "AGENTS"; }'), false);
+  // The sidebar caption is a real AGENTS / SESSIONS tab switch; the threads caption never says AGENTS.
+  const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
+  assert.match(html, /id="tab-agents"[^>]*>AGENTS</);
+  assert.match(html, /id="tab-sessions"[^>]*>SESSIONS</);
+  assert.equal(css.includes('content: "AGENTS"'), false);
+  assert.equal(/body\.remote-main \.side-switch \{ display: none/.test(css), false);
+  assert.doesNotMatch(html.match(/threads-caption[^]*?<\/div>/)[0], /AGENTS/);
   assert.match(style, /\.theme-row\{[^}]*-webkit-app-region:no-drag/);
   assert.match(style, /\.theme-toggle\{[^}]*-webkit-app-region:no-drag/);
   assert.match(renderer, /pointerup/);
