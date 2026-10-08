@@ -1310,10 +1310,12 @@ function createWindow() {
 }
 if (process.argv.includes('--smoke-test')) {
   const { runPackagedSmoke } = require('./intelio/smoke.cjs');
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     let code = 1;
     try {
       code = runPackagedSmoke();
+      // --node-pty: prove terminal sessions get a real PTY in this packaged build (intelio/node/pty-smoke.cjs).
+      if (code === 0 && process.argv.includes('--node-pty')) code = await require('./intelio/node/pty-smoke.cjs').runPtySmoke();
       process.stdout.write(code === 0 ? 'smoke ok\n' : 'smoke failed\n');
     } catch (error) {
       process.stderr.write(`${error && error.stack || error}\n`);

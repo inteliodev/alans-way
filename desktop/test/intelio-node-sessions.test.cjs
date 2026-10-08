@@ -236,10 +236,13 @@ for (const mode of MODES) {
     const badEnv = await ex.run('start_session', { env: { 'BAD NAME': 'x' } });
     assert.equal(badEnv.ok, false);
 
-    const long = parse(await ex.run('start_session', { command: sh.sleep() }));
+    const long = parse(await ex.run('start_session', { command: mode.name === 'pty' && !WIN ? 'echo sleeping-now; sleep 600' : sh.sleep() }));
     assert.ok(alive(long.pid));
     if (mode.name === 'pty' && !WIN) {
-      // ctrl-c reaches the foreground program through the terminal.
+      // ctrl-c reaches the foreground program through the terminal. Wait until the shell is
+      // past its start-up (an interactive shell ignores SIGINT while it reads rc files).
+      await readUntil(ex, long.session_id, (text) => /sleeping-now/.test(text), 15000);
+      await new Promise((r) => setTimeout(r, 300));
       parse(await ex.run('send_input', { session_id: long.session_id, keys: ['ctrl-c'] }));
       const c = await readUntil(ex, long.session_id, (_, m) => m.exited, 15000);
       assert.equal(c.last.exited, true, 'ctrl-c did not stop sleep');
