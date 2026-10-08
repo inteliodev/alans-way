@@ -54,6 +54,13 @@ Offline computer -> tool result `isError: true` with text "<name> is offline (la
 | search_files | computer, root, pattern (regex for content) ?, name_glob?, max_results? (default 200) | matches: path, line, text |
 | run_command | computer, command, cwd?, timeout_s? (default 120, max 1800), shell? | exit_code, stdout, stderr (each max 200 KB, truncated flags), duration_ms |
 | screenshot | computer, display? | MCP image content (PNG) + text with display size |
+| start_session | computer, command?, cwd?, cols? (120), rows? (40), env? | session_id, pid, pty (bool), command, cwd |
+| send_input | computer, session_id, text?, enter?, keys? | ok |
+| read_output | computer, session_id, since?, wait_ms? (2000, max 30000), max_bytes? (64 KB), raw? | JSON: cursor, exited, exit_code, truncated, more; then the output text |
+| stop_session | computer, session_id, force? | exit_code |
+| list_sessions | computer | sessions: id, command, cwd, started, idle_s, exited |
+
+The last five are the stage 2 terminal sessions; see "Stage 2: persistent terminal sessions" below.
 
 Paths: absolute, or `~`-relative to the user's home. Shell: Windows = PowerShell
 (`powershell.exe -NoProfile -NonInteractive -Command`), macOS/Linux = `$SHELL -lc` (fallback /bin/zsh, /bin/bash).
@@ -93,7 +100,7 @@ Paths: absolute, or `~`-relative to the user's home. Shell: Windows = PowerShell
 # Implementation notes (stage 1)
 
 Everything above is the v1 contract and is implemented as written. The notes below
-describe how this repository implements it and what is left for stage 2.
+describe how this repository implements it. Stage 2 (terminal sessions) is described at the end.
 
 ## Files
 
@@ -101,7 +108,8 @@ describe how this repository implements it and what is left for stage 2.
 |---|---|
 | WebSocket (RFC 6455, stdlib) shared by node and relay | `desktop/src/intelio/node/ws.cjs` |
 | Tool catalogue, limits, frames, audit summary (shared) | `desktop/src/intelio/node/protocol.cjs` |
-| Node executors (files, search, commands, screenshot) | `desktop/src/intelio/node/executors.cjs` |
+| Node executors (files, search, commands, screenshot, session tools) | `desktop/src/intelio/node/executors.cjs` |
+| Terminal sessions (PTY / pipes, ring buffer, limits) | `desktop/src/intelio/node/sessions.cjs` |
 | Elevation detection | `desktop/src/intelio/node/elevation.cjs` |
 | Node client (dial out, enroll, backoff, ping, audit, kill switch) | `desktop/src/intelio/node/client.cjs` |
 | Electron glue (safeStorage, Settings, target URL, confirm dialog) | `desktop/src/intelio/node/electron.cjs` (started from `desktop/src/main.cjs`) |
@@ -124,7 +132,8 @@ requires `desktop/src/intelio/*.cjs`; the VPS runs from a full checkout.
   (`tailscale whois`), the same check as the phone app.
 - Device secrets: 32 random bytes (hex) issued once; stored as a salted scrypt hash in
   `~/.config/intelio/nodes.json` (mode 600, written to a temp file and renamed).
-- Per call: timeout `timeout_s` (run_command; default 120) + 10 s; an offline or
+- Per call: timeout `timeout_s` (run_command; default 120) + 10 s, `wait_ms` + 10 s for
+  read_output (default 2 s, max 30 s); an offline or
   disconnected computer gives `isError: true` with "<name> is offline (last seen …)".
 - Audit: one stderr line per call (`intelio-nodes call computer=… tool=… args=… ok=… bytes=… ms=…`)
   that never holds file contents, command text (only program name and length) or secrets.
@@ -182,28 +191,99 @@ A VPS-side rename pins the name; until then the name follows the computer's Sett
   Electron runs; `screenshot` needs a session `desktopCapturer` can read (and on macOS
   the Screen Recording permission).
 
-## Stage 2: persistent terminal sessions (extension point, not implemented)
+## Stage 2: persistent terminal sessions (implemented)
 
-Goal: let the VPS agent run long interactive programs (Claude Code, Codex, a REPL) on a
-computer and talk to them over several turns.
+Goal: let the VPS agent run long interactive programs (Claude Code, Codex, a REPL, a shell)
+on a computer and talk to them over several turns. Calls stay request/response on the
+existing wire protocol; `read_output` long-polls. No relay change beyond the tool list and
+the read_output timeout.
 
-Planned tools (relay forwards them like any node tool; names reserved):
+### Tools
 
 | tool | args | result |
 |---|---|---|
-| start_session | computer, command?, cwd?, cols?, rows? | session_id |
-| send_input | computer, session_id, text, enter? | ok |
-| read_output | computer, session_id, since?, wait_ms? | output (bounded), cursor, exited, exit_code |
-| stop_session | computer, session_id | exit_code |
+| start_session | computer, command?, cwd?, cols? (default 120), rows? (default 40), env? (NAME: value) | session_id, pid, pty, command, cwd, note? |
+| send_input | computer, session_id, text?, enter?, keys? | ok, chars, keys, enter |
+| read_output | computer, session_id, since?, wait_ms? (default 2000, max 30000), max_bytes? (default 64 KB, max 1 MB), raw? | text item 1: JSON session_id, cursor, exited, exit_code, truncated, more?, dropped_bytes?, bytes, pty; text item 2: the output |
+| stop_session | computer, session_id, force? | session_id, exit_code, signal?, stopped |
+| list_sessions | computer | sessions: id, command, cwd, started, idle_s, exited, exit_code, pty, pid, cursor |
 
-Where it plugs in:
+- `command` omitted: the login shell (Windows: `powershell.exe -NoLogo` with the user's
+  profile; macOS/Linux: `$SHELL -l`, fallback /bin/zsh, /bin/bash, /bin/sh). Given: it runs
+  through the shell (Windows: `powershell -NoProfile -EncodedCommand`; macOS/Linux:
+  `$SHELL -l -i -c` with a PTY so ~/.zshrc PATH changes such as nvm apply) and the session
+  ends when the program exits.
+- `send_input`: types `text` (newlines become Enter), then each named key, then Enter.
+  `enter` defaults to true when there is text and false for keys-only calls. Keys: `ctrl-c`,
+  `ctrl-d`, `esc`, `tab`, `up`, `down`, `left`, `right`, `enter`, `backspace`, plus
+  `ctrl-a` … `ctrl-z`.
+- `read_output`: the cursor is a byte offset into everything the session has printed; it
+  only grows. `since` omitted continues after the last read (any reader); `since: 0` replays
+  what is still buffered. Returns as soon as new text arrives (escape-only redraws do not
+  count), else after `wait_ms`. `truncated` is true when bytes were lost to the ring buffer
+  (`dropped_bytes`) or more is waiting (`more`: read again with the returned cursor).
+  `exited`/`exit_code` are reported once the reader has caught up with the final output.
+  Output is ANSI-stripped (colors, titles and modes dropped; cursor-forward becomes spaces,
+  cursor positioning becomes a line break); `raw: true` keeps the escapes. This is not a
+  terminal emulator: full-screen programs that redraw come out as a running log.
+- `stop_session`: hang-up (SIGHUP to the process group), then SIGKILL after 3 s; `force`
+  kills at once. Windows always ends the tree (`taskkill /T /F`). The session is forgotten.
+  Sessions that exit on their own stay listed (and readable) until stopped, reaped or
+  replaced.
 
-- `protocol.cjs`: add the four entries to `TOOLS` (they become node tools automatically;
-  `callTimeoutMs` should use `wait_ms` for `read_output`).
-- `executors.cjs`: the executor table is `createExecutors(...)`'s return object; add the
-  four handlers there, backed by a session map keyed by id (pty via `node-pty` or a piped
-  child process; output ring buffer with a cursor; sessions die on kill switch OFF,
-  disconnect timeout, or app quit).
-- Elevation checks and the audit apply to `start_session` and `send_input` text the same
-  way as run_command.
-- No wire-protocol change is needed: calls stay request/response; `read_output` long-polls.
+### Limits and lifetime
+
+- 1 MB output ring buffer per session; max 8 sessions per computer (a finished session is
+  forgotten to make room; 8 running sessions refuse a 9th).
+- A session with no send_input/read_output for 2 h is killed and forgotten.
+- Every session is killed when Settings → "Allow intelio agents to use this computer" is
+  turned OFF, when the computer is revoked on the VPS, and when the app quits. A network
+  disconnect does NOT kill sessions; the agent can reconnect and keep reading.
+- Elevation: the start `command` and every typed `text` go through the same check and
+  native confirm dialog as run_command; refused text never reaches the terminal. Programs
+  running in the session (for example Claude Code's own tools) are not inspected.
+- Audit: one line per call in `<userData>/intelio-node/audit.jsonl` with a preview of the
+  command / typed text (max 80 characters, secret-looking tokens such as `sk-…`, `ghp_…`,
+  bearer tokens, `password=…`, `--token …` and long random strings masked). Output is never
+  logged. The relay logs only the program name and text length (`text_chars`, `keys`).
+
+### PTY
+
+- `node-pty` 1.1.0 (Microsoft; N-API, so one binary works in Node and every Electron).
+  Prebuilt binaries ship for win32-x64/arm64 (ConPTY) and darwin-arm64/x64; Linux builds it
+  from source at `npm ci` (needs python3, make, g++).
+- Windows NSIS (electron-builder): `asarUnpack: node_modules/node-pty/**` and
+  `npmRebuild: false` (the N-API prebuild is used as is). sessions.cjs loads node-pty from
+  `app.asar.unpacked` so its native addons and the ConPTY worker script are real files.
+- macOS zip (electron-packager, `--no-asar`, built on Linux): only the darwin-arm64 prebuild
+  is kept (the Linux build dir and Windows prebuilds are ignored). node-pty 1.1.0 ships
+  `spawn-helper` without the execute bit, so `scripts/fix-node-pty.cjs` (prepackage) sets
+  it, `zip -y` keeps it, and sessions.cjs re-applies it at runtime if needed.
+- If node-pty fails to load or to spawn, the session runs as a piped child process and
+  reports `pty: false` with a `note`. There is no terminal then: prompts that need a TTY,
+  full-screen TUIs and line editing may misbehave or refuse to start; ctrl-c becomes SIGINT
+  and ctrl-d closes stdin.
+
+### Running Claude Code or Codex on a computer
+
+1. `start_session` with `command: "claude"` (or `"codex"`), `cwd` set to the project.
+2. `read_output` until the prompt shows. The first run on a computer may ask to sign in: the
+   CLI prints a URL / device code inside the session; the person at the computer (or on their
+   phone) approves it, then the agent continues reading. Trust-this-folder questions are
+   answered with `send_input` (`keys: ["enter"]` or the option number).
+3. `send_input` with the task text, then `read_output` with `wait_ms` up to 30000 in a loop,
+   passing back the cursor, until the answer is complete. `keys: ["esc"]` interrupts Claude
+   Code; `keys: ["ctrl-c"]` twice exits it.
+4. `stop_session` when done (or let the 2 h idle timeout reap it).
+
+For one-shot work, prefer `run_command` with `claude -p "…"` or `codex exec "…"`: no TUI, a
+clean exit code and stdout, and nothing left running.
+
+### Where it lives
+
+- `protocol.cjs`: the five `TOOLS` entries, `LIMITS.session*`, `callTimeoutMs` for
+  read_output, and the audit summary (`summarizeArgs`, `maskSecrets`).
+- `sessions.cjs`: session map, PTY/pipe spawning, ring buffer, long poll, ANSI stripping,
+  named keys, limits, idle sweep, `closeAll`.
+- `executors.cjs`: the handlers (elevation check, path resolution) and `closeSessions`.
+- `client.cjs`: kills all sessions on `stop()` (kill switch, app quit) and on revoke.
