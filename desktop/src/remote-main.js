@@ -249,7 +249,7 @@
     const raw = String(name || '').trim();
     if (raw.toLowerCase() === 'intelio') return 'intelio';
     if (raw && raw.toLowerCase() !== key) return raw;
-    const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+    const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP', arlp: 'ARLP' };
     if (known[key]) return known[key];
     return raw || 'Agent';
   }
@@ -1248,27 +1248,59 @@
     return rows;
   }
 
-  /** Client chips: All plus one per client. Picking one filters the sessions and shows its apps. */
+  const SESSION_AGENT_KEY = 'intelio-session-agent';
+  /** The saved Sessions filter ('' is All agents). Kept in this window's localStorage. */
+  function storedSessionAgent() {
+    try { return String(root.localStorage?.getItem(SESSION_AGENT_KEY) || '').trim().toLowerCase(); } catch { return ''; }
+  }
+  function storeSessionAgent(id) {
+    try {
+      if (id) root.localStorage?.setItem(SESSION_AGENT_KEY, id);
+      else root.localStorage?.removeItem(SESSION_AGENT_KEY);
+    } catch { /* the filter still applies for this window */ }
+  }
+  /** Pick the Sessions filter: '' for All agents, or one agent id. Remembered across launches. */
+  function setSessionAgent(id) {
+    ui.sessionAgent = String(id || '').trim().toLowerCase();
+    ui.sessionAgentPref = ui.sessionAgent;
+    storeSessionAgent(ui.sessionAgent);
+    paintAllSessions();
+  }
+
+  /** Sessions filter: one compact dropdown, All agents plus one entry per client/agent. No dots. */
   function paintAgentChips() {
     const host = $('session-agents');
     const rows = clientRows();
-    if (!rows.some((row) => row.id === ui.sessionAgent)) ui.sessionAgent = '';
+    if (ui.sessionAgentPref === undefined) ui.sessionAgentPref = storedSessionAgent();
+    // A saved choice waits for the agent list instead of being dropped while it loads.
+    const wanted = ui.sessionAgentPref || '';
+    ui.sessionAgent = wanted && rows.some((row) => row.id === wanted) ? wanted : '';
     if (!host) return;
-    host.replaceChildren();
-    const chip = (id, label, agent) => {
-      const button = el('button', 'session-chip');
-      button.type = 'button';
-      button.dataset.agent = id;
-      button.setAttribute('role', 'tab');
-      button.setAttribute('aria-selected', String(ui.sessionAgent === id));
-      button.setAttribute('aria-pressed', String(ui.sessionAgent === id));
-      if (agent) button.append(agentDot(agent, id));
-      button.append(el('span', '', label));
-      button.onclick = (event) => { event?.stopPropagation?.(); ui.sessionAgent = id; paintAllSessions(); };
-      host.append(button);
-    };
-    chip('', 'All');
-    for (const row of rows) chip(row.id, row.name, row.agent);
+    let select = host.children ? [...host.children].find((node) => node.tag === 'select' || node.tagName === 'SELECT') : null;
+    if (!select) {
+      host.replaceChildren();
+      select = el('select', 'session-agent-select');
+      select.id = 'session-agent-select';
+      select.setAttribute('aria-label', 'Show sessions for');
+      select.title = 'Show sessions for';
+      select.addEventListener('change', () => setSessionAgent(select.value));
+      select.addEventListener('click', (event) => event?.stopPropagation?.());
+      host.append(select);
+    }
+    const options = [{ id: '', name: 'All agents' }, ...rows.map((row) => ({ id: row.id, name: row.name }))];
+    const key = options.map((row) => `${row.id}:${row.name}`).join('|');
+    // Rebuild only when the list changes, so a background refresh does not close an open menu.
+    if (select.dataset.options !== key) {
+      select.dataset.options = key;
+      select.replaceChildren(...options.map((row) => {
+        const option = el('option', '', row.name);
+        option.value = row.id;
+        return option;
+      }));
+    }
+    for (const option of select.children || []) option.selected = option.value === ui.sessionAgent;
+    select.value = ui.sessionAgent;
+    select.dataset.agent = ui.sessionAgent;
     paintClientApps();
   }
 
