@@ -153,7 +153,7 @@
 
     const tabs = el('div', 'agent-subtabs');
     tabs.setAttribute('role', 'tablist');
-    for (const [id, label] of [['computer', 'Computer'], ['details', 'Details'], ['memory', 'Memory'], ['phone', card.phoneSoon ? 'Phone soon' : 'Phone']]) {
+    for (const [id, label] of [['computer', 'Computer'], ['details', 'Details'], ['memory', 'Memory'], ['phone', card.phoneSoon ? 'Phone soon' : 'Phone'], ['accounts', 'Accounts']]) {
       const button = el('button', 'agent-subtab', label);
       button.type = 'button';
       button.setAttribute('role', 'tab');
@@ -166,7 +166,8 @@
     }
     page.append(tabs);
 
-    if (tab === 'memory') page.append(memoryPane(card, actions));
+    if (tab === 'accounts') page.append(root.IntelioAccounts ? root.IntelioAccounts.pane(card.id) : el('p', 'agent-muted', 'Accounts are not available.'));
+    else if (tab === 'memory') page.append(memoryPane(card, actions));
     else if (tab === 'phone') page.append(phonePane(card, actions));
     else page.append(detailsPane(card, actions));
     if (actions.note) page.append(el('p', 'agent-note', actions.note));

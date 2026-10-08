@@ -791,6 +791,48 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return remote;
   }
 
+  /**
+   * Accounts page and Settings > Activity. Proxied to the phone server's /api/accounts and
+   * /api/activity routes (mobile/pwa/accounts-routes.cjs) with the profile's own key.
+   * A paste-back code is only ever in the request body; it is not kept or logged here.
+   */
+  async function accountsRequest(name, value = {}) {
+    const id = harnessId(value.profile) || 'intelio';
+    const signInId = encodeURIComponent(String(value.id || ''));
+    const query = new URLSearchParams();
+    if (name === 'activity') {
+      for (const key of ['agent', 'kind', 'q', 'limit']) if (value[key]) query.set(key, String(value[key]).slice(0, 120));
+    }
+    const routes = {
+      accounts: { pathname: `/api/accounts${value.fresh ? '?fresh=1' : ''}` },
+      'accounts-signin': { pathname: '/api/accounts/signin', body: { profile: id, tool: value.tool, name: value.name } },
+      'accounts-signin-state': { pathname: `/api/accounts/signin?id=${signInId}` },
+      'accounts-code': { pathname: '/api/accounts/signin/code', body: { profile: id, id: value.id, code: value.code } },
+      'accounts-cancel': { pathname: '/api/accounts/signin/cancel', body: { profile: id, id: value.id } },
+      'accounts-assign': { pathname: '/api/accounts/assign', body: { profile: id, tool: value.tool, account: value.account } },
+      activity: { pathname: `/api/activity${query.toString() ? `?${query}` : ''}` },
+    };
+    const route = routes[name];
+    if (!route) throw new Error('Unknown accounts request.');
+    let response;
+    try {
+      response = await voiceRequest(id, {
+        pathname: route.pathname,
+        method: route.body ? 'POST' : 'GET',
+        body: route.body ? JSON.stringify(route.body) : undefined,
+        contentType: route.body ? 'application/json' : undefined,
+        timeoutMs: 30000,
+      });
+    } catch (error) {
+      if (error?.code === 'VOICE_OFF') throw new Error('The VPS connection is not set up yet.');
+      throw new Error('Could not reach the VPS.');
+    }
+    let parsed = {};
+    try { parsed = await response.json(); } catch { parsed = {}; }
+    if (!response.ok) throw new Error(String(parsed.error || 'That did not work.').slice(0, 200));
+    return parsed;
+  }
+
   async function listRemoteScreens() {
     const key = await getKey('intelio').catch(() => '');
     const parsed = key ? await pullPwaCard('intelio', key, '/api/screens', null, false) : null;
@@ -882,6 +924,8 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
           case 'session-model': return await sessionModel(value.profile, value);
           case 'agent-model': return await agentModel(value.profile, value);
           case 'screens': return { data: await listRemoteScreens() };
+          case 'accounts': case 'accounts-signin': case 'accounts-signin-state': case 'accounts-code':
+          case 'accounts-cancel': case 'accounts-assign': case 'activity': return await accountsRequest(name, value);
           case 'send': {
             const id = String(value.id);
             const controller = new AbortController();
