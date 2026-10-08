@@ -176,6 +176,10 @@ function defaultLoadPty({ platform = process.platform, arch = process.arch } = {
   return { pty };
 }
 
+function shQuote(arg) {
+  return `'${String(arg).replace(/'/g, `'\\''`)}'`;
+}
+
 function killProcessTree(pid, platform, signal = 'SIGKILL') {
   if (!pid) return;
   if (platform === 'win32') {
@@ -191,6 +195,8 @@ function createSessionManager({
   env = process.env,
   limits = {},
   loadPty = () => defaultLoadPty({ platform }),
+  // Linux without node-pty (the VPS relay): util-linux `script` gives the program a real terminal.
+  scriptBin = platform === 'linux' ? ['/usr/bin/script', '/bin/script'].find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } }) || '' : '',
   now = () => Date.now(),
   sweepMs = 60000,
   onReap = () => {},
@@ -332,6 +338,7 @@ function createSessionManager({
       term: null,
       child: null,
       pty: false,
+      viaScript: false,
       note: '',
       pid: null,
     };
@@ -353,8 +360,19 @@ function createSessionManager({
       s.note = `${loaded.error || 'node-pty unavailable'}; using pipes.`;
     }
     if (!s.term) {
-      const { file, args } = argvFor(cmd, false);
-      const pipedEnv = { ...childEnv, COLUMNS: String(c), LINES: String(r) };
+      let { file, args } = argvFor(cmd, false);
+      let pipedEnv = { ...childEnv, COLUMNS: String(c), LINES: String(r) };
+      if (scriptBin) {
+        // script -qfec '<cmd>' /dev/null: the program gets a pty; we talk to script over pipes.
+        const inner = argvFor(cmd, true);
+        const line = `stty cols ${c} rows ${r} 2>/dev/null; exec ${[inner.file, ...inner.args].map(shQuote).join(' ')}`;
+        file = scriptBin;
+        args = ['-q', '-f', '-e', '-c', line, '/dev/null'];
+        pipedEnv = { ...childEnv, TERM: childEnv.TERM && childEnv.TERM !== 'dumb' ? childEnv.TERM : 'xterm-256color' };
+        s.viaScript = true;
+        s.pty = true;
+        s.note = s.note ? s.note.replace(/; using pipes\.$/, '; using script(1) for the terminal.') : '';
+      }
       let child;
       try {
         child = spawn(file, args, { cwd: workdir, env: pipedEnv, windowsHide: true, detached: platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
@@ -400,6 +418,18 @@ function createSessionManager({
     if (s.child && s.child.stdin.writable) s.child.stdin.write(data);
   }
 
+  /** Terminal size change (the person's Terminal window). Pipes and script(1) sessions keep their size. */
+  function resize(id, { cols, rows } = {}) {
+    const s = get(id);
+    const c = Math.min(500, Math.max(20, Math.floor(Number(cols) || s.cols)));
+    const r = Math.min(200, Math.max(5, Math.floor(Number(rows) || s.rows)));
+    if (!s.term || s.exited) return { session_id: s.id, resized: false, cols: s.cols, rows: s.rows };
+    try { s.term.resize(c, r); } catch { return { session_id: s.id, resized: false, cols: s.cols, rows: s.rows }; }
+    s.cols = c;
+    s.rows = r;
+    return { session_id: s.id, resized: true, cols: c, rows: r };
+  }
+
   function send(id, { text = '', enter, keys } = {}) {
     const s = get(id);
     s.lastActive = now();
@@ -412,11 +442,12 @@ function createSessionManager({
     // enter defaults to true when there is text, false for keys-only calls.
     const pressEnter = enter === undefined || enter === null ? body.length > 0 : Boolean(enter);
     if (!body && !sequences.length && !pressEnter) throw new SessionError('Give text, keys, or enter: true.');
-    const lineEnd = s.term ? '\r' : '\n';
-    if (body) write(s, s.term ? body.replace(/\r?\n/g, '\r') : body);
+    const tty = Boolean(s.term || s.viaScript);
+    const lineEnd = tty ? '\r' : '\n';
+    if (body) write(s, tty ? body.replace(/\r?\n/g, '\r') : body);
     for (let i = 0; i < sequences.length; i += 1) {
       const seq = sequences[i];
-      if (!s.term) {
+      if (!tty) {
         // Pipes have no terminal: ctrl-c becomes SIGINT, ctrl-d closes stdin.
         if (seq === '\x03' && s.child) { killProcessTree(s.child.pid, platform, 'SIGINT'); continue; }
         if (seq === '\x04' && s.child) { try { s.child.stdin.end(); } catch { /* closed */ } continue; }
@@ -575,7 +606,18 @@ function createSessionManager({
     return n;
   }
 
-  return { start, send, read, stop, list, closeAll, sweep, get size() { return sessions.size; }, ptyStatus: () => { const p = getPty(); return p.pty ? { pty: true } : { pty: false, error: p.error }; } };
+  /** Raw bytes typed in the person's Terminal window (no key names, no enter handling). */
+  function writeRaw(id, data) {
+    const s = get(id);
+    s.lastActive = now();
+    if (s.exited || s.exitSeen) throw new SessionError(`Session ${s.id} has exited.`);
+    const text = String(data || '');
+    if (text.length > L.sessionInputChars) throw new SessionError('Too much input at once.');
+    write(s, text);
+    return { ok: true };
+  }
+
+  return { start, send, read, stop, list, closeAll, sweep, resize, writeRaw, get size() { return sessions.size; }, ptyStatus: () => { const p = getPty(); return p.pty ? { pty: true } : scriptBin ? { pty: true, via: 'script' } : { pty: false, error: p.error }; } };
 }
 
-module.exports = { createSessionManager, defaultLoadPty, stripAnsi, keySequence, incompleteEscapeAt, utf8Boundary, Ring, KEYS, DEFAULTS, SessionError };
+module.exports = { createSessionManager, defaultLoadPty, shQuote, stripAnsi, keySequence, incompleteEscapeAt, utf8Boundary, Ring, KEYS, DEFAULTS, SessionError };

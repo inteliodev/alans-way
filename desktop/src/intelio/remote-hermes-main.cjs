@@ -936,8 +936,8 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
    * Never sends a profile key: the relay only answers the Access session
    * (cloud) or an allowed Tailscale login, so agents holding keys cannot use it.
    */
-  async function computersRequest(pathname, { method = 'GET', body, timeoutMs = 10000 } = {}) {
-    if (!/^\/api\/computers(?:\/[a-z-]+)?(?:\?[\w=&%.-]*)?$/.test(String(pathname))) throw new Error('Bad computers path.');
+  async function computersRequest(pathname, { method = 'GET', body, timeoutMs = 10000 } = {}) { // timeoutMs: terminal reads long-poll
+    if (!/^\/api\/computers(?:\/[a-z-]+){0,2}(?:\?[\w=&%.-]*)?$/.test(String(pathname))) throw new Error('Bad computers path.');
     let cfg;
     try { cfg = await config(); } catch { cfg = null; }
     const base = pwaBase(cfg || {});

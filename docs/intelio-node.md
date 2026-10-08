@@ -318,7 +318,16 @@ the read_output timeout.
   is kept (the Linux build dir and Windows prebuilds are ignored). node-pty 1.1.0 ships
   `spawn-helper` without the execute bit, so `scripts/fix-node-pty.cjs` (prepackage) sets
   it, `zip -y` keeps it, and sessions.cjs re-applies it at runtime if needed.
-- If node-pty fails to load or to spawn, the session runs as a piped child process and
+- Linux without node-pty (the VPS relay, whose checkout has no desktop `node_modules`):
+  util-linux `script -qfec … /dev/null` gives the program a real terminal (a `/dev/pts`
+  device, line discipline, ctrl-c as SIGINT); the session reports `pty: true`. The size is
+  set once at start (`stty`); later resizes are not applied.
+- Packaged proof: `intelio --smoke-test --node-pty` (`src/intelio/node/pty-smoke.cjs`) runs
+  a session through the same executor path the agents use and requires `pty: true`, a shell
+  that really ran, on macOS a `/dev` tty, and on Windows node-pty loaded from
+  `app.asar.unpacked`. `windows-installer.yml` runs it on the NSIS build and on the macOS
+  zip on a real Mac.
+- If node-pty fails to load or to spawn (and there is no `script`), the session runs as a piped child process and
   reports `pty: false` with a `note`. There is no terminal then: prompts that need a TTY,
   full-screen TUIs and line editing may misbehave or refuse to start; ctrl-c becomes SIGINT
   and ctrl-d closes stdin.
@@ -337,6 +346,28 @@ the read_output timeout.
 
 For one-shot work, prefer `run_command` with `claude -p "…"` or `codex exec "…"`: no TUI, a
 clean exit code and stdout, and nothing left running.
+
+### Finding Claude Code and Codex
+
+`computer_info` returns `coding_tools: { claude, codex }` (path or null), found on the
+app's PATH plus the usual install folders (`~/.local/bin`, `~/.claude/local`, npm global,
+Homebrew, `%APPDATA%\npm`, …) without running anything, and `sessions: { pty, hint }`.
+
+### The person's Terminal window
+
+Settings → This computer → Open Terminal opens a window with two tabs: **This computer**
+and **cloud** (the VPS). These are the person's own terminals (xterm.js, raw keystrokes,
+raw output, resize). Agents cannot see or type into them, and the agents' kill switch does
+not end them.
+
+- This computer: a session manager in the app's main process (`src/intelio/terminal/main.cjs`).
+- cloud: `POST /api/computers/terminal/{start,input,read,resize,stop}` and
+  `GET /api/computers/terminal/list` on the relay (`mobile/pwa/nodes-terminal.cjs`), behind
+  the person-only checks of `nodes-human.cjs` (Access session or allowed Tailscale login;
+  never a profile key; never the VPS itself; same-origin POSTs). The app calls them through
+  its existing cloud session / Tailscale path without a key. Up to 4 sessions, 1 h idle.
+  `INTELIO_CLOUD_TERMINAL=0` in `pwa.env` turns the routes off.
+- The window's renderer is sandboxed with one IPC channel that answers only that window.
 
 ### Where it lives
 

@@ -68,7 +68,7 @@ function makeExecutors(t, mode, extra = {}) {
     limits: { ...protocol.LIMITS, ...(extra.limits || {}) },
     confirmElevation: extra.confirmElevation || (async () => false),
     computerName: () => 'Test-PC',
-    sessionOptions: { loadPty: mode.loadPty, ...(extra.sessionOptions || {}) },
+    sessionOptions: { loadPty: mode.loadPty, scriptBin: mode.scriptBin || '', ...(extra.sessionOptions || {}) },
   });
   t.after(() => ex.closeSessions());
   return ex;
@@ -380,4 +380,35 @@ test('the audit file gets a masked preview of typed text and never the output', 
   assert.equal(previews.length, 1);
   assert.match(previews[0], /token=\*\*\*/);
   assert.ok(previews[0].length <= 80);
+});
+
+const SCRIPT_BIN = ['/usr/bin/script', '/bin/script'].find((p) => fs.existsSync(p)) || '';
+test('[script] Linux without node-pty (the VPS): script(1) gives sessions a real terminal; ctrl-c, exit codes, stop and resize', { skip: process.platform !== 'linux' ? 'Linux only' : !SCRIPT_BIN && 'util-linux script is not installed', timeout: 60000 }, async (t) => {
+  const ex = makeExecutors(t, { loadPty: () => ({ error: 'node-pty did not load: test' }), scriptBin: SCRIPT_BIN });
+  const started = parse(await ex.run('start_session', { command: "echo cols=$(tput cols 2>/dev/null || stty size); tty; echo \"it's\" \"quoted $((6*7))\"; exit 3", cols: 132, rows: 33 }));
+  assert.equal(started.pty, true);
+  const out = await readUntil(ex, started.session_id, (_, m) => m.exited);
+  assert.match(out.text, /\/dev\/pts\/\d+/);
+  assert.match(out.text, /cols=(132|33 132)/);
+  assert.match(out.text, /it's quoted 42/);
+  assert.equal(out.last.exit_code, 3);
+
+  const long = parse(await ex.run('start_session', { command: 'echo sleeping-now; sleep 600' }));
+  await readUntil(ex, long.session_id, (text) => /sleeping-now/.test(text), 15000);
+  await new Promise((r) => setTimeout(r, 300));
+  parse(await ex.run('send_input', { session_id: long.session_id, keys: ['ctrl-c'] }));
+  const c = await readUntil(ex, long.session_id, (_, m) => m.exited, 15000);
+  assert.equal(c.last.exited, true, 'ctrl-c reached sleep through the terminal');
+
+  const shell = parse(await ex.run('start_session', {}));
+  parse(await ex.run('send_input', { session_id: shell.session_id, text: 'echo typed-$((40+2))' }));
+  assert.match((await readUntil(ex, shell.session_id, (text) => /typed-42/.test(text), 15000)).text, /typed-42/);
+  assert.deepEqual(ex.sessions.resize(shell.session_id, { cols: 90, rows: 20 }).resized, false, 'script sessions keep their size');
+  const stopped = parse(await ex.run('stop_session', { session_id: shell.session_id }));
+  assert.equal(stopped.stopped, true);
+});
+
+test('shQuote survives quotes and spaces', () => {
+  const { shQuote } = require('../src/intelio/node/sessions.cjs');
+  assert.equal(shQuote("it's a b"), `'it'\\''s a b'`);
 });

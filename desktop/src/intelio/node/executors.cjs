@@ -24,6 +24,30 @@ const { createSessionManager } = require('./sessions.cjs');
 
 class ToolError extends Error {}
 
+/**
+ * Where Claude Code and Codex live, without running anything: the app's PATH
+ * plus the usual install folders (a Finder-launched Mac app has a short PATH).
+ */
+function findCodingTools({ platform = process.platform, home = os.homedir(), env = process.env, exists = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } } } = {}) {
+  const sep = platform === 'win32' ? ';' : ':';
+  const dirs = String(env.PATH || env.Path || '').split(sep).filter(Boolean);
+  const extra = platform === 'win32'
+    ? [path.join(env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'npm'), path.join(home, '.local', 'bin'), path.join(home, '.bun', 'bin'), path.join(env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Programs', 'claude')]
+    : [path.join(home, '.local', 'bin'), path.join(home, '.claude', 'local'), path.join(home, '.npm-global', 'bin'), path.join(home, '.bun', 'bin'), path.join(home, '.volta', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin'];
+  const exts = platform === 'win32' ? ['.cmd', '.exe', '.ps1', ''] : [''];
+  const found = {};
+  for (const name of ['claude', 'codex']) {
+    found[name] = null;
+    outer: for (const dir of [...new Set([...dirs, ...extra])]) {
+      for (const ext of exts) {
+        const candidate = path.join(dir, `${name}${ext}`);
+        if (exists(candidate)) { found[name] = candidate; break outer; }
+      }
+    }
+  }
+  return found;
+}
+
 function json(value) {
   return { type: 'text', text: JSON.stringify(value, null, 2) };
 }
@@ -196,6 +220,8 @@ function createExecutors({
         cpus: os.cpus().length,
         memory_bytes: os.totalmem(),
         uptime_s: Math.round(os.uptime()),
+        coding_tools: findCodingTools({ platform, home, env }),
+        sessions: { ...sessions.ptyStatus(), hint: 'Run claude or codex with start_session (it uses the login shell, so PATH matches the person\'s terminal), then send_input / read_output.' },
       };
       return { content: [json(info)] };
     },
@@ -432,4 +458,4 @@ function createExecutors({
   };
 }
 
-module.exports = { createExecutors, killTree, globToRegExp, compilePattern, osLabel, ToolError };
+module.exports = { findCodingTools, createExecutors, killTree, globToRegExp, compilePattern, osLabel, ToolError };
