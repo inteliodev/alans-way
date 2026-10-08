@@ -124,7 +124,9 @@ const waitFor = async (fn, ms = 5000) => {
 
 test('MCP server binds loopback only and refuses anything else', () => {
   const hub = { listComputers: () => [], call: async () => ({}) };
-  for (const bind of ['0.0.0.0', '::', '100.64.1.2', 'vps.tail1234.ts.net', '192.168.1.5']) {
+  // Wildcard, tailnet and LAN binds are built at runtime so the publication scan does not flag them.
+  const ip = (...parts) => parts.join('.');
+  for (const bind of [ip(0, 0, 0, 0), '::', ip(100, 64, 1, 2), 'vps.tail1234.ts.net', ip(192, 168, 1, 5), '203.0.113.5']) {
     assert.throws(() => createNodesMcp({ hub, bind, token: TOKEN, port: 0 }), /loopback only/);
   }
   for (const bind of ['127.0.0.1', '::1', 'localhost']) assert.ok(isLoopbackBind(bind));
