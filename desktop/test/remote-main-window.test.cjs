@@ -271,4 +271,40 @@ test('New session opens an empty thread with the agent wordmark instead of the l
   assert.equal(empty.children[0].className, 'chat-wordmark');
   assert.equal(empty.children[0].textContent, 'intelio');
 });
+test('client chips list every client and the app row opens that client\'s apps through the main process', async () => {
+  delete require.cache[require.resolve('../src/remote-main.js')];
+  const { byId } = installDom();
+  globalThis.IntelioClientApps = require('../src/intelio/client-apps.cjs');
+  const commands = [];
+  globalThis.workspace = {
+    command(name, value) {
+      commands.push({ name, value });
+      if (name === 'client-apps-status') return Promise.resolve({ clients: { hhp: { account: 'hayden@hhpasset.com', signedIn: true, suite: 'microsoft' }, prc: { account: '', signedIn: false, suite: 'google' } } });
+      return Promise.resolve({});
+    },
+  };
+  try {
+    const api = require('../src/remote-main.js');
+    await api.sync({ remoteHermes: { enabled: true, host: '127.0.0.1', port: 9, profile: 'intelio', profilesWithKeys: ['intelio', 'prc', 'alignment', 'hhp'] } });
+    api.setSidebar('sessions');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const chips = byId('session-agents').children;
+    assert.deepEqual(chips.map((node) => node.dataset.agent), ['', 'intelio', 'prc', 'alignment', 'hhp', 'arlp']);
+    chips.find((node) => node.dataset.agent === 'hhp').onclick();
+    const host = byId('client-apps');
+    const text = (node) => [node.textContent, ...(node.children || []).map(text)].join(' ');
+    assert.match(text(host.children[0]), /HHP Microsoft 365 hayden@hhpasset\.com/);
+    const row = host.children[1].children;
+    assert.deepEqual(row.map((node) => node.dataset.app), ['mail', 'calendar', 'teams', 'onedrive', undefined]);
+    assert.ok(row[0].children.some((node) => node.className === 'client-app-dot on'));
+    await row[2].onclick();
+    assert.deepEqual(commands.find((call) => call.name === 'open-client-app').value, { client: 'hhp', app: 'teams' });
+    chips.find((node) => node.dataset.agent === 'prc').onclick();
+    const prcRow = byId('client-apps').children[1].children;
+    assert.ok(prcRow.some((node) => node.dataset.app === 'box'));
+    assert.ok(prcRow[0].children.some((node) => node.className === 'client-app-dot'));
+  } finally {
+    delete globalThis.IntelioClientApps;
+  }
+});
 });

@@ -1202,52 +1202,216 @@
     return dot;
   }
 
-  /** Agent filter: a menu under the SESSIONS heading's filter button. */
-  /** The filter menu node is moved into the list on each paint, so keep a reference to it. */
-  function agentMenuNode() {
-    if (!ui.agentMenuNode) ui.agentMenuNode = $('session-agents');
-    return ui.agentMenuNode;
+  /** The client catalog (intelio/client-apps.cjs); empty where it is not loaded. */
+  function clientCatalog() {
+    return root.IntelioClientApps || null;
   }
 
+  /** Clients for the chip row: the catalog's work clients, plus any other agent on the VPS. */
+  function clientRows() {
+    const catalog = clientCatalog();
+    const rows = (catalog?.CLIENTS || []).map((client) => {
+      const agent = ui.agents.find((item) => item.id === client.id);
+      return { id: client.id, name: client.short || client.name, agent: agent || { id: client.id } };
+    });
+    for (const agent of ui.agents) {
+      if (!rows.some((row) => row.id === agent.id)) rows.push({ id: agent.id, name: shownAgent(agent.id, agent.name), agent });
+    }
+    return rows;
+  }
+
+  /** Client chips: All plus one per client. Picking one filters the sessions and shows its apps. */
   function paintAgentChips() {
-    const host = agentMenuNode();
-    if (!ui.agents.some((agent) => agent.id === ui.sessionAgent)) ui.sessionAgent = '';
+    const host = $('session-agents');
+    const rows = clientRows();
+    if (!rows.some((row) => row.id === ui.sessionAgent)) ui.sessionAgent = '';
     if (!host) return;
     host.replaceChildren();
-    host.classList.toggle('hidden', !ui.agentFilterOpen);
     const chip = (id, label, agent) => {
       const button = el('button', 'session-chip');
       button.type = 'button';
       button.dataset.agent = id;
-      button.setAttribute('role', 'menuitemradio');
-      button.setAttribute('aria-checked', String(ui.sessionAgent === id));
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', String(ui.sessionAgent === id));
       button.setAttribute('aria-pressed', String(ui.sessionAgent === id));
       if (agent) button.append(agentDot(agent, id));
       button.append(el('span', '', label));
-      button.onclick = (event) => { event?.stopPropagation?.(); ui.sessionAgent = id; ui.agentFilterOpen = false; paintAllSessions(); };
+      button.onclick = (event) => { event?.stopPropagation?.(); ui.sessionAgent = id; paintAllSessions(); };
       host.append(button);
     };
-    chip('', 'All agents');
-    for (const agent of ui.agents) chip(agent.id, shownAgent(agent.id, agent.name), agent);
+    chip('', 'All');
+    for (const row of rows) chip(row.id, row.name, row.agent);
+    paintClientApps();
   }
 
-  function sectionHead(label, { filter = false } = {}) {
+  const APP_ICONS = {
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/>',
+    calendar: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    chat: '<path d="M4 5.5h12v8H8.5L5 16.5v-3H4z"/><path d="M16 9h4v8h-1v3l-3.5-3H10v-3"/>',
+    drive: '<path d="M7 18h11a4 4 0 0 0 .6-7.95A6 6 0 0 0 7.2 9.1 4.5 4.5 0 0 0 7 18z"/>',
+    folder: '<path d="M3 7.5V18a1.5 1.5 0 0 0 1.5 1.5h15A1.5 1.5 0 0 0 21 18V9a1.5 1.5 0 0 0-1.5-1.5H11L9 5H4.5A1.5 1.5 0 0 0 3 6.5z"/>',
+    doc: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>',
+    sheet: '<rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M4 9.5h16M4 15h16M10 9.5v11"/>',
+    slides: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M12 16.5V20M8.5 20h7"/>',
+    video: '<rect x="3" y="6" width="12.5" height="12" rx="2.5"/><path d="m15.5 10.5 5-3v9l-5-3"/>',
+    box: '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>',
+    dashboard: '<rect x="3.5" y="3.5" width="7" height="9" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="5" rx="1.5"/><rect x="13.5" y="11.5" width="7" height="9" rx="1.5"/><rect x="3.5" y="15.5" width="7" height="5" rx="1.5"/>',
+    more: '<circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/>',
+  };
+
+  function appIcon(name) {
+    const span = el('span', 'client-app-icon');
+    span.setAttribute('aria-hidden', 'true');
+    span.innerHTML = `<svg viewBox="0 0 24 24">${APP_ICONS[name] || APP_ICONS.dashboard}</svg>`;
+    return span;
+  }
+
+  /** The client the app row is for: the picked chip, else the agent in the chat. */
+  function appsClient() {
+    const catalog = clientCatalog();
+    if (!catalog) return null;
+    return catalog.clientById(ui.sessionAgent) || catalog.clientById(ui.selected) || catalog.CLIENTS[0];
+  }
+
+  async function openClientApp(client, app) {
+    const catalog = clientCatalog();
+    ui.appsMenuOpen = false;
+    if (root.workspace?.command) {
+      try {
+        await root.workspace.command('open-client-app', { client: client.id, app: app.id });
+      } catch (error) {
+        notify(`Couldn't open ${app.label}: ${String(error?.message || error).slice(0, 120)}`);
+      }
+      paintClientApps();
+      return;
+    }
+    // The web desktop has no per-client browser jars; it opens the app in a new browser tab.
+    const account = ui.clientStatus?.[client.id]?.account;
+    root.open?.(catalog.urlFor(client.id, app.id, account), '_blank', 'noopener');
+  }
+
+  function appButton(client, app, signedIn, { inMenu = false } = {}) {
+    const button = el('button', inMenu ? 'client-app-row' : 'client-app');
+    button.type = 'button';
+    button.dataset.app = app.id;
+    button.append(appIcon(app.icon));
+    if (inMenu) button.append(el('span', 'client-app-label', app.label));
+    const status = signedIn === true ? 'signed in' : signedIn === false ? 'not signed in' : 'checking';
+    const suite = clientCatalog().SUITE_LABEL[app.suite] || '';
+    const label = `${app.label} · ${client.short || client.name}`;
+    button.title = `${label}\nBrowser: ${status}${suite ? ` (${suite})` : ''}\nAgent access: set up in the agent's Hermes connections`;
+    button.setAttribute('aria-label', `${label}, browser ${status}`);
+    if (!inMenu) {
+      const dot = el('span', `client-app-dot${signedIn ? ' on' : ''}`);
+      dot.setAttribute('aria-hidden', 'true');
+      button.append(dot);
+    }
+    button.onclick = (event) => { event?.stopPropagation?.(); openClientApp(client, app); };
+    button.addEventListener('contextmenu', (event) => {
+      event.preventDefault?.();
+      const input = $('remote-input');
+      if (input) { input.value = `Using ${client.short || client.name}'s ${app.label}, `; input.focus?.(); }
+    });
+    return button;
+  }
+
+  /** The app row: the client's suite apps with a browser sign-in dot, and More for the rest. */
+  function paintClientApps() {
+    const host = $('client-apps');
+    const catalog = clientCatalog();
+    if (!host) return;
+    host.replaceChildren();
+    const client = appsClient();
+    if (!catalog || !client) { host.classList.toggle('hidden', true); return; }
+    host.classList.toggle('hidden', false);
+    const state = ui.clientStatus?.[client.id];
+    const signedIn = state ? Boolean(state.signedIn) : undefined;
+    const apps = catalog.appsFor(client.id);
+    const head = el('div', 'client-apps-head');
+    head.append(el('span', 'client-apps-name', client.short || client.name));
+    head.append(el('span', 'client-apps-suite', catalog.SUITE_LABEL[client.suite]));
+    const account = el('span', `client-apps-account${signedIn ? ' on' : ''}`, signedIn ? (state.account || 'Signed in') : (state?.account ? `Sign in · ${state.account}` : 'Not signed in'));
+    head.append(account);
+    host.append(head);
+    const row = el('div', 'client-apps-row');
+    for (const app of apps.filter((item) => item.primary)) row.append(appButton(client, app, signedIn));
+    const more = el('button', 'client-app more');
+    more.type = 'button';
+    more.title = `More ${client.short || client.name} apps`;
+    more.setAttribute('aria-label', more.title);
+    more.setAttribute('aria-haspopup', 'menu');
+    more.setAttribute('aria-expanded', String(Boolean(ui.appsMenuOpen)));
+    more.append(appIcon('more'));
+    more.onclick = (event) => { event?.stopPropagation?.(); ui.appsMenuOpen = !ui.appsMenuOpen; paintClientApps(); };
+    row.append(more);
+    host.append(row);
+    if (ui.appsMenuOpen) {
+      const menu = el('div', 'client-apps-menu');
+      menu.setAttribute('role', 'menu');
+      menu.append(el('div', 'client-apps-menu-title', `${client.short || client.name} · ${catalog.SUITE_LABEL[client.suite]}`));
+      for (const app of apps) menu.append(appButton(client, app, signedIn, { inMenu: true }));
+      if (root.workspace?.command) {
+        const accountRow = el('button', 'client-app-row quiet', state?.account ? `Account: ${state.account}` : 'Set account email');
+        accountRow.type = 'button';
+        accountRow.onclick = (event) => { event?.stopPropagation?.(); editClientAccount(client); };
+        menu.append(accountRow);
+        if (signedIn) {
+          const out = el('button', 'client-app-row quiet danger', 'Sign out of this client');
+          out.type = 'button';
+          out.onclick = async (event) => {
+            event?.stopPropagation?.();
+            if (!out.dataset.armed) { out.dataset.armed = '1'; out.textContent = 'Click again to sign out'; return; }
+            ui.appsMenuOpen = false;
+            try { ui.clientStatus = (await root.workspace.command('client-sign-out', { client: client.id }))?.clients || ui.clientStatus; } catch (error) { notify(String(error?.message || error)); }
+            paintClientApps();
+          };
+          menu.append(out);
+        }
+      }
+      host.append(menu);
+    }
+  }
+
+  function editClientAccount(client) {
+    const host = $('client-apps');
+    const menu = host?.querySelector?.('.client-apps-menu');
+    if (!menu) return;
+    const input = el('input', 'client-account-input');
+    input.type = 'email';
+    input.placeholder = 'name@company.com';
+    input.value = ui.clientStatus?.[client.id]?.account || '';
+    input.setAttribute('aria-label', `${client.short || client.name} account email`);
+    menu.append(input);
+    input.focus?.();
+    const save = async () => {
+      try {
+        ui.clientStatus = (await root.workspace.command('client-account', { client: client.id, account: input.value }))?.clients || ui.clientStatus;
+        ui.appsMenuOpen = false;
+        paintClientApps();
+      } catch (error) { notify(String(error?.message || error)); }
+    };
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation?.();
+      if (event.key === 'Enter') save();
+      if (event.key === 'Escape') { ui.appsMenuOpen = false; paintClientApps(); }
+    });
+    input.addEventListener('click', (event) => event.stopPropagation?.());
+  }
+
+  /** Which clients' browser jars are signed in. Desktop app only. */
+  async function loadClientStatus() {
+    if (!root.workspace?.command || !clientCatalog()) return;
+    try {
+      const result = await root.workspace.command('client-apps-status', {});
+      ui.clientStatus = result?.clients || {};
+    } catch { ui.clientStatus = ui.clientStatus || {}; }
+    paintClientApps();
+  }
+
+  function sectionHead(label) {
     const head = el('li', 'session-section');
     head.append(el('span', 'session-section-mark'));
     head.append(el('span', 'session-section-label', label));
-    if (filter) {
-      const agent = ui.agents.find((item) => item.id === ui.sessionAgent);
-      if (agent) head.append(el('span', 'session-section-filter', `· ${shownAgent(agent.id, agent.name)}`));
-      const button = el('button', `session-filter${ui.sessionAgent ? ' active' : ''}`);
-      button.type = 'button';
-      button.title = 'Filter by agent';
-      button.setAttribute('aria-label', 'Filter by agent');
-      button.setAttribute('aria-haspopup', 'menu');
-      button.setAttribute('aria-expanded', String(Boolean(ui.agentFilterOpen)));
-      button.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>';
-      button.onclick = (event) => { event?.stopPropagation?.(); ui.agentFilterOpen = !ui.agentFilterOpen; paintAgentChips(); button.setAttribute('aria-expanded', String(ui.agentFilterOpen)); };
-      head.append(button);
-    }
     return head;
   }
 
@@ -1306,9 +1470,7 @@
       if (pinned.length) for (const session of pinned) list.append(sessionItem(session, now));
       else list.append(el('li', 'session-hint', 'Shift-click a chat to pin'));
     }
-    list.append(sectionHead(ui.showArchived ? 'Archived' : 'Sessions', { filter: true }));
-    const host = agentMenuNode();
-    if (host) list.append(host);
+    list.append(sectionHead(ui.showArchived ? 'Archived' : 'Sessions'));
     let group = '';
     const rest = ui.showArchived ? rows : rows.filter((session) => !session.pinned);
     for (const session of rest) {
@@ -1486,6 +1648,7 @@
     if (agentsOn && ui.showArchived) ui.showArchived = false;
     $('session-archived')?.classList.toggle('hidden', true);
     if (!agentsOn) $('bot-search')?.classList.toggle('hidden', true);
+    if (!agentsOn) loadClientStatus();
     paintAgents();
     if (!agentsOn) paintAllSessions();
     if (persist && root.workspace?.command) root.workspace.command('settings', { sidebarTab: ui.sidebar }).catch(() => {});
@@ -1703,10 +1866,11 @@
       }
     });
     root.document.addEventListener?.('pointerdown', (event) => {
-      if (!ui.agentFilterOpen || event.target?.closest?.('.session-agents, .session-filter')) return;
-      ui.agentFilterOpen = false;
-      paintAgentChips();
+      if (!ui.appsMenuOpen || event.target?.closest?.('.client-apps')) return;
+      ui.appsMenuOpen = false;
+      paintClientApps();
     }, true);
+    root.addEventListener?.('focus', () => { loadClientStatus(); });
     $('threads-new')?.addEventListener('click', () => { newChat(ui.selected); });
     $('session-archived')?.addEventListener('click', () => { ui.showArchived = !ui.showArchived; paintAllSessions(); });
     $('remote-input')?.addEventListener('keydown', (event) => {
@@ -2052,6 +2216,9 @@
   function sync(next) {
     if (!root.document) return;
     wire();
+    // A client tab that just finished loading may have signed in: recheck that client's jar.
+    const clientTabs = (next?.tabs || []).filter((tab) => tab.client).map((tab) => `${tab.client}:${tab.loading ? 1 : 0}:${tab.url || ''}`).join('|');
+    if (clientTabs !== ui.clientTabs) { ui.clientTabs = clientTabs; if (ui.sidebar === 'sessions') loadClientStatus(); }
     if (!ui.tabChosen) setSidebar('agents', { persist: false });
     $('sidebar-threads-wrap')?.classList.toggle('hidden', ui.sidebar !== 'agents');
     const remote = next?.remoteHermes || {};

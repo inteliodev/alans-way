@@ -36,14 +36,36 @@ body:not(.remote-main) #agent-caption-actions { display: flex !important; }
 .session-section { display: flex; align-items: center; gap: 7px; padding: 14px 8px 6px; color: #9d8cff; font-size: 10.5px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; }
 .session-section-mark { width: 7px; height: 7px; border-radius: 2px; background: currentColor; opacity: .85; flex: none; }
 .session-section-filter { color: #8d8d98; letter-spacing: .04em; text-transform: none; font-weight: 550; }
-.session-filter { margin-left: auto; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; color: #75757f; }
-.session-filter svg { width: 13px; height: 13px; stroke-width: 2; }
-.session-filter:hover, .session-filter.active { color: #f4f4f8; background: #24242b; }
-.session-agents { position: absolute; right: 8px; z-index: 30; display: flex; flex-direction: column; min-width: 170px; padding: 5px; border-radius: 12px; border: 1px solid #34343c; background: #1c1c21; box-shadow: 0 12px 32px rgba(0, 0, 0, .35); }
-.session-agents.hidden { display: none; }
-.session-chip { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; color: #e8e8ee; font-size: 13px; text-align: left; }
-.session-chip:hover { background: #2a2a31; }
-.session-chip[aria-checked="true"] { box-shadow: inset 0 0 0 1.5px #7a5cff; }
+/* Client chips: All, intelio, PRC, Alignment, HHP, ARLP. Picking one filters sessions and swaps the app row. */
+.client-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 2px 8px; }
+.session-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 999px; border: 1px solid #2c2c33; color: #a9a9b4; font-size: 12px; line-height: 1; }
+.session-chip:hover { color: #f4f4f8; background: #222228; }
+.session-chip[aria-selected="true"] { color: #f4f4f8; background: #26262d; border-color: #7a5cff; }
+.session-chip .session-dot { width: 7px; height: 7px; }
+/* Client apps: suite icons with a browser sign-in dot. */
+.client-apps { position: relative; margin: 0 0 10px; padding: 9px 10px 10px; border-radius: 12px; background: #17171c; border: 1px solid #25252b; }
+.client-apps.hidden { display: none; }
+.client-apps-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin-bottom: 8px; font-size: 11.5px; }
+.client-apps-name { color: #f4f4f8; font-weight: 600; }
+.client-apps-suite { color: #75757f; white-space: nowrap; }
+.client-apps-account { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #75757f; }
+.client-apps-account.on { color: #70bc95; }
+.client-apps-row { display: flex; gap: 6px; }
+.client-app { position: relative; flex: 1 1 0; max-width: 44px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; background: #1f1f25; color: #c9c9d2; }
+.client-app:hover { background: #2a2a32; color: #ffffff; }
+.client-app:focus-visible, .client-app-row:focus-visible, .session-chip:focus-visible { outline: 2px solid #7a5cff; outline-offset: 1px; }
+.client-app-icon { display: inline-flex; }
+.client-app-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.client-app.more .client-app-icon svg { fill: currentColor; stroke: none; }
+.client-app-dot { position: absolute; right: 5px; bottom: 5px; width: 6px; height: 6px; border-radius: 50%; background: #4a4a52; box-shadow: 0 0 0 2px #1f1f25; }
+.client-app-dot.on { background: #4cc38a; }
+.client-apps-menu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30; display: flex; flex-direction: column; padding: 5px; border-radius: 12px; border: 1px solid #34343c; background: #1c1c21; box-shadow: 0 12px 32px rgba(0, 0, 0, .35); }
+.client-apps-menu-title { padding: 6px 10px 4px; color: #75757f; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.client-app-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; color: #e8e8ee; font-size: 13px; text-align: left; }
+.client-app-row:hover { background: #2a2a31; }
+.client-app-row.quiet { color: #9d9da8; font-size: 12px; }
+.client-app-row.danger { color: #ff8a80; }
+.client-account-input { margin: 4px 6px 6px; padding: 7px 10px; border-radius: 8px; border: 1px solid #34343c; background: #131317; color: #f4f4f8; font: inherit; font-size: 12.5px; }
 .session-hint { padding: 2px 8px 4px 22px; color: #66666f; font-size: 12px; }
 .session-group { display: flex; align-items: center; gap: 10px; padding: 12px 8px 4px; color: #66666f; font-size: 10px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; }
 .session-group::after { content: ""; flex: 1; height: 1px; background: #232328; }

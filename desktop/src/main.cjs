@@ -30,6 +30,7 @@ const { createVaultStore } = require('./intelio/vault.cjs');
 const { usesRemoteVault } = require('./intelio/remote-vault.cjs');
 const { buildFill, publicFill, fieldValue } = require('./intelio/login-fill.cjs');
 const { normalizeTheme, themeVars } = require('./intelio/theme.cjs');
+const clientApps = require('./intelio/client-apps.cjs');
 const { hostLabels, hermesChecklist } = require('./intelio/host-labels.cjs');
 const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
 
@@ -111,14 +112,14 @@ function writePrivateJson(file, data) {
 }
 function savePreferences() {
   if (!prefs) return;
-  if (win && !win.isDestroyed()) prefs.savedTabs = [...tabs.values()].filter(tab => !tab.extensionPage && tab.view?.webContents && !tab.view.webContents.isDestroyed()).map((tab) => ({ url: tab.view.webContents.getURL(), botId: tab.botId }));
+  if (win && !win.isDestroyed()) prefs.savedTabs = [...tabs.values()].filter(tab => !tab.extensionPage && tab.view?.webContents && !tab.view.webContents.isDestroyed()).map((tab) => ({ url: tab.view.webContents.getURL(), botId: tab.botId, ...(tab.client ? { client: tab.client } : {}) }));
   fs.mkdirSync(app.getPath('userData'), { recursive: true });
   writePrivateJson(path.join(app.getPath('userData'), 'preferences.json'), prefs);
 }
 function describeTab(tab) {
   const wc = tab.view?.webContents;
   const url = wc && !wc.isDestroyed() ? wc.getURL() : '';
-  return { id: tab.id, title: tab.title || 'New tab', url, internal: url === NEWTAB_URL || url === 'about:blank', botId: tab.botId, favicon: tab.favicon || '', agentHue: botAccent(tab.botId).hue,
+  return { id: tab.id, title: tab.title || 'New tab', url, internal: url === NEWTAB_URL || url === 'about:blank', botId: tab.botId, client: tab.client || '', favicon: tab.favicon || '', agentHue: botAccent(tab.botId).hue,
     controller: tab.controller, epoch: tab.epoch, loading: tab.loading, error: tab.error || '', allowedBots: tab.allowedBots, agentCursor: tab.agentCursor || null, agentBusy: agentInput.isDispatching(tab), extensionPage: tab.extensionPage === true, viewport: tab.viewport || null, host: 'mac', session: 'shared-mac', handoff: tab.handoff || null };
 }
 function isVpsTab(id) { return vpsTabs.has(id); }
@@ -254,8 +255,10 @@ function backgroundHost(width = 900, height = 700) {
 }
 function applyLayout() {
   if (extensionPopup && extensionPopupTabId !== activeTabId) extensionPopup.destroy();
-  const active = tabs.get(activeTabId)?.view.webContents;
-  if (active && active.id !== extensionActiveContentsId) { extensionActiveContentsId = active.id; extensionHost?.selectTab(active); }
+  const activeTab = tabs.get(activeTabId);
+  const active = activeTab?.view.webContents;
+  // Client app tabs live in their own session, which the extension host does not manage.
+  if (active && !activeTab.client && active.id !== extensionActiveContentsId) { extensionActiveContentsId = active.id; extensionHost?.selectTab(active); }
   fit(telegramView, layout.telegram);
   for (const tab of tabs.values()) {
     const foreground = activeTabId === tab.id && layout.browser?.width > 0 && layout.browser?.height > 0 && !layout.obscured;
@@ -295,7 +298,7 @@ function configureContents(contents, isTelegram = false) {
     }
     return { action: 'allow', createWindow: (options) => {
       const parent = [...tabs.values()].find((tab) => tab.view.webContents === contents);
-      const tab = createTab({ url, extensionPage, botId: parent?.botId || prefs.selectedBotId || 'shared', controller: extensionPage ? 'human' : parent?.controller || 'human', options, skipLoad: details.disposition !== 'background-tab', activate: parent?.controller !== 'agent' && details.disposition !== 'background-tab' });
+      const tab = createTab({ url, extensionPage, client: parent?.client || '', botId: parent?.botId || prefs.selectedBotId || 'shared', controller: extensionPage ? 'human' : parent?.controller || 'human', options, skipLoad: details.disposition !== 'background-tab', activate: parent?.controller !== 'agent' && details.disposition !== 'background-tab' });
       return tab.view.webContents;
     } };
   });
@@ -357,15 +360,33 @@ async function resolveFavicon(tab, favicons) {
     apply(dataUrl);
   } catch { apply(''); }
 }
-function createTab({ url = 'about:blank', botId = prefs.selectedBotId || 'shared', controller = 'human', options, skipLoad = false, activate = true, extensionPage = false } = {}) {
+/** The sign-in hint for a client: Settings value, else the catalog default. */
+function clientAccount(id) {
+  const saved = prefs?.clientAccounts && Object.prototype.hasOwnProperty.call(prefs.clientAccounts, id) ? prefs.clientAccounts[id] : undefined;
+  return saved === undefined ? clientApps.clientById(id)?.account || '' : saved;
+}
+/** Per client: account hint and whether its own browser jar holds a work sign-in. */
+async function clientAppsStatus() {
+  const clients = {};
+  for (const client of clientApps.CLIENTS) {
+    const jar = session.fromPartition(clientApps.partitionFor(client.id)).cookies;
+    clients[client.id] = { account: clientAccount(client.id), signedIn: await clientApps.signedIn(jar, client.id), suite: client.suite };
+  }
+  return { clients };
+}
+function createTab({ url = 'about:blank', botId = prefs.selectedBotId || 'shared', controller = 'human', options, skipLoad = false, activate = true, extensionPage = false, client = '' } = {}) {
   if (tabs.size >= 40) throw new Error('Close a tab before opening another.');
+  // A client app tab uses that client's own cookie jar (persist:client-<id>), so each client's
+  // work account stays signed in on its own. Popups from it inherit the jar via options.
+  const clientId = client && clientApps.clientById(client) ? clientApps.clientById(client).id : '';
+  const partition = clientId ? clientApps.partitionFor(clientId) : 'persist:browser';
   const targetUrl = pageUrl(url, extensionPage);
   if (controller === 'agent') assertIntelioAgentUrl(targetUrl);
   const view = new WebContentsView({ ...(options?.webContents ? { webContents: options.webContents } : {}),
-    webPreferences: { ...options?.webPreferences, preload: undefined, partition: 'persist:browser', contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox(),
+    webPreferences: { ...options?.webPreferences, preload: undefined, partition, contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox(),
       webSecurity: true, backgroundThrottling: false } });
   view.setBackgroundColor('#0b0b0c');
-  const tab = { id: crypto.randomUUID(), view, botId: String(botId).slice(0, 100), controller, extensionPage, epoch: 1, title: 'New tab', loading: false, allowedBots: [], refs: new Set(), generation: 0, queue: Promise.resolve() };
+  const tab = { id: crypto.randomUUID(), view, botId: String(botId).slice(0, 100), controller, extensionPage, client: clientId, epoch: 1, title: 'New tab', loading: false, allowedBots: [], refs: new Set(), generation: 0, queue: Promise.resolve() };
   if (controller === 'agent') tab.agentSince = Date.now();
   tabs.set(tab.id, tab);
   tab.host = backgroundHost();
@@ -377,10 +398,11 @@ function createTab({ url = 'about:blank', botId = prefs.selectedBotId || 'shared
   // The library selects newly registered tabs. Registration must not reparent
   // or focus a background agent view in the human window.
   registeringExtensionTab = true;
-  try { extensionHost?.addTab(view.webContents, win); } finally { registeringExtensionTab = false; }
+  // Extensions live in the shared browser session only; client jars stay extension-free.
+  try { if (!clientId) extensionHost?.addTab(view.webContents, win); } finally { registeringExtensionTab = false; }
   extensionActiveContentsId = undefined;
   view.webContents.on('context-menu', (_event, params) => {
-    const items = extensionHost?.getContextMenuItems(view.webContents, params) || [];
+    const items = (!clientId && extensionHost?.getContextMenuItems(view.webContents, params)) || [];
     if (items.length && tab.id === activeTabId && tab.controller === 'human') Menu.buildFromTemplate(items).popup({ window: win });
   });
   view.webContents.on('page-title-updated', (_event, title) => { tab.title = title; broadcast(); });
@@ -407,7 +429,7 @@ function closeTab(id) {
   const tab = tabs.get(id);
   if (!tab) return;
   tabs.delete(id);
-  if (tab.view.webContents) extensionHost?.removeTab(tab.view.webContents);
+  if (tab.view.webContents && !tab.client) extensionHost?.removeTab(tab.view.webContents);
   if (browserReturnTabId === id) browserReturnTabId = [...tabs.keys()].at(-1) || 'home';
   tab.host?.contentView.removeChildView(tab.view);
   tab.view.webContents?.close();
@@ -515,6 +537,32 @@ function registerIpc() {
         return result;
       }
       case 'create-tab': return describeTab(createTab({ url: value.url || 'about:blank' }));
+      // Client apps: the URL comes from the catalog, never from the renderer.
+      case 'open-client-app': {
+        const client = clientApps.clientById(value.client);
+        if (!client || !clientApps.appFor(client.id, value.app)) throw new Error('Unknown app.');
+        const url = clientApps.urlFor(client.id, value.app, clientAccount(client.id));
+        if (prefs.showBrowser === false) prefs.showBrowser = true;
+        return describeTab(createTab({ url, client: client.id, botId: client.id }));
+      }
+      case 'client-apps-status': return await clientAppsStatus();
+      case 'client-account': {
+        const client = clientApps.clientById(value.client);
+        if (!client) throw new Error('Unknown client.');
+        const account = String(value.account || '').trim() ? clientApps.validAccount(value.account) : '';
+        if (String(value.account || '').trim() && !account) throw new Error('That is not an email address.');
+        prefs.clientAccounts = { ...(prefs.clientAccounts || {}), [client.id]: account };
+        savePreferences();
+        return await clientAppsStatus();
+      }
+      case 'client-sign-out': {
+        const client = clientApps.clientById(value.client);
+        if (!client) throw new Error('Unknown client.');
+        for (const tab of [...tabs.values()]) if (tab.client === client.id) closeTab(tab.id);
+        await session.fromPartition(clientApps.partitionFor(client.id)).clearStorageData();
+        broadcast();
+        return await clientAppsStatus();
+      }
       case 'close-tab':
         if (isVpsTab(value.id)) { if(activeTabId===value.id)prefs.remoteControl=false; await vpsBrowser.request(`/v1/tabs/${value.id}`,'DELETE',undefined,{human:true}); vpsTabs.delete(value.id); if(activeTabId===value.id)activeTabId='home'; applyLayout(); } else closeTab(value.id); break;
       case 'activate': {
@@ -1209,7 +1257,7 @@ function createWindow() {
   remoteView.webContents.loadFile(path.join(ROOT, 'remote.html'));
   const remoteOn = Boolean(prefs?.remoteHermes?.enabled && prefs?.remoteHermes?.host);
   if (!remoteOn) telegramView.webContents.loadURL(prefs.selectedBotId ? `${TELEGRAM}#${prefs.selectedBotId}` : TELEGRAM).catch(() => {});
-  for (const item of prefs.savedTabs.slice(0, 12)) { try { createTab({ url: item.url, botId: item.botId, activate: false }); } catch {} }
+  for (const item of prefs.savedTabs.slice(0, 12)) { try { createTab({ url: item.url, botId: item.botId, client: item.client || '', activate: false }); } catch {} }
   activeTabId = initialDesktopTab(remoteOn);
   win.on('enter-full-screen', broadcast); win.on('leave-full-screen', broadcast);
   win.on('close', (event) => { if (!isQuitting) { event.preventDefault(); win.hide(); } });
