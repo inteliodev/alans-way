@@ -110,7 +110,8 @@ class WsConnection extends EventEmitter {
     socket.on('data', (chunk) => this._onData(chunk));
     socket.on('close', () => this._finish(1006, ''));
     socket.on('end', () => this._finish(1006, ''));
-    socket.on('error', (error) => { this.emit('error', error); this._finish(1006, ''); });
+    // A reset socket must never become an uncaught 'error' (that would take down the relay).
+    socket.on('error', (error) => { this._emitError(error); this._finish(1006, ''); });
     if (head && head.length) setImmediate(() => this._onData(head));
   }
 
@@ -119,7 +120,7 @@ class WsConnection extends EventEmitter {
     this.lastActivity = Date.now();
     let frames;
     try { frames = this._parser.push(chunk); } catch (error) {
-      this.emit('error', error);
+      this._emitError(error);
       this.close(1002, 'protocol error');
       return;
     }
@@ -163,6 +164,10 @@ class WsConnection extends EventEmitter {
       return;
     }
     this.close(1002, 'protocol error');
+  }
+
+  _emitError(error) {
+    if (this.listenerCount('error') > 0) this.emit('error', error);
   }
 
   _deliver(opcode, payload) {
