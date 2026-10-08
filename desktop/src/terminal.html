@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>intelio terminal</title>
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="terminal.css">
+</head>
+<body>
+  <header class="term-bar">
+    <nav class="term-tabs" id="tabs" role="tablist">
+      <button class="term-tab" role="tab" data-target="local" id="tab-local">This computer</button>
+      <button class="term-tab" role="tab" data-target="cloud" id="tab-cloud">cloud</button>
+    </nav>
+    <span class="term-status" id="status"></span>
+    <button class="term-action" id="restart" title="End this terminal and start a new one">New session</button>
+  </header>
+  <main class="term-panes" id="panes">
+    <section class="term-pane" data-target="local" id="pane-local"></section>
+    <section class="term-pane" data-target="cloud" id="pane-cloud"></section>
+  </main>
+  <footer class="term-note">Your own terminals. Agents cannot see or type into them; your agents use their own sessions.</footer>
+  <script type="module" src="terminal.js"></script>
+</body>
+</html>

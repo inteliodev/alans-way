@@ -1050,6 +1050,11 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
               });
             } finally { inflight.delete(id); }
           }
+          case 'approve': {
+            const runId = String(value.runId || '');
+            if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(runId)) throw new Error('That approval is no longer valid.');
+            return await client.runApproval(runId, value.choice, value.requestId, { profile: value.profile });
+          }
           case 'cancel': inflight.get(String(value.id))?.abort(); return true;
           default: throw new Error(`Unknown Remote Hermes request: ${name}`);
         }
@@ -1145,7 +1150,64 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
-  return { register, command, open, publicState, watchVersion, viewerUrl, vncPassword, vault, startupNotice: () => startupNotice };
+  /**
+   * Where the intelio node (desktop/src/intelio/node) dials. Uses the connection
+   * already chosen (never opens a sign-in window itself): cloud → origin plus the
+   * Access cookies from the cloud session; Tailscale → the configured host.
+   */
+  async function nodeTarget() {
+    if (!resolved) return null;
+    if (resolved.mode === 'cloud') {
+      if (needsSignIn || !(await hasCloudCookie(resolved.origin))) return null;
+      const ses = sessionFor(resolved.partition || CLOUD_PARTITION);
+      if (!ses || !ses.cookies) return null;
+      let cookies = [];
+      try { cookies = await ses.cookies.get({ url: resolved.origin }); } catch { return null; }
+      const cookie = mergeAccessCookies('', cookies);
+      if (!cookie) return null;
+      return { mode: 'cloud', origin: resolved.origin, cookie };
+    }
+    let cfg;
+    try { cfg = await baseConfig(); } catch { return null; }
+    if (!cfg.host) return null;
+    return { mode: 'tailscale', host: cfg.host };
+  }
+
+  /**
+   * The person's intelio computers API on the VPS (mobile/pwa/nodes-human.cjs).
+   * Never sends a profile key: the relay only answers the Access session
+   * (cloud) or an allowed Tailscale login, so agents holding keys cannot use it.
+   */
+  async function computersRequest(pathname, { method = 'GET', body, timeoutMs = 10000 } = {}) { // timeoutMs: terminal reads long-poll
+    if (!/^\/api\/computers(?:\/[a-z-]+){0,2}(?:\?[\w=&%.-]*)?$/.test(String(pathname))) throw new Error('Bad computers path.');
+    let cfg;
+    try { cfg = await config(); } catch { cfg = null; }
+    const base = pwaBase(cfg || {});
+    if (!base) throw new Error('Connect to the VPS (intelio cloud or Tailscale) to see your computers.');
+    const doFetch = selectFetch(cfg, { fetchImpl: globalThis.fetch, sessionFor });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await doFetch(`${base}${pathname}`, {
+        method,
+        headers: { Accept: 'application/json', Origin: base, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+        redirect: 'error',
+      });
+      let parsed = {};
+      try { parsed = await response.json(); } catch { parsed = {}; }
+      if (!response.ok) throw new Error(String(parsed.error || `The VPS answered ${response.status}.`).slice(0, 300));
+      return parsed;
+    } catch (error) {
+      if (error && error.name === 'AbortError') throw new Error('The VPS did not answer in time.');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return { register, command, open, publicState, watchVersion, viewerUrl, vncPassword, vault, nodeTarget, computersRequest, startupNotice: () => startupNotice };
 }
 
 module.exports = { setupRemoteHermes, secretsFromBootstrap, importRemoteHermesKey, keyFromImport, keysFromImport, profileNames, secureDelete, attachCloudSessionCookies, cloudCookieFilter, VNC_KEY };

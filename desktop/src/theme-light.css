@@ -190,3 +190,15 @@ html[data-theme="light"] .saved-logins .saved-login-row + .saved-login-row { bor
 /* Sidebar threads (agent view): the selected row stays a soft grey on white. */
 html[data-theme="light"] .thread-line:hover { background: #f3f3f6; }
 html[data-theme="light"] .thread-line.active { background: #ececef; color: #1c1c21; }
+/* Inline approval row (remote-main.css). */
+html[data-theme="light"] .approval-row { border-left-color: #e4e4e8; color: #1c1c21; }
+html[data-theme="light"] .approval-title,
+html[data-theme="light"] .approval-note,
+html[data-theme="light"] .approval-outcome,
+html[data-theme="light"] .approval-row.settled .approval-command { color: #6e6e73; }
+html[data-theme="light"] .approval-where { color: #8e8e93; }
+html[data-theme="light"] .approval-command { background: none; color: #1c1c21; }
+html[data-theme="light"] .approval-allow { background: #1c1c21; color: #fff; }
+html[data-theme="light"] .approval-allow:hover { background: #000; }
+html[data-theme="light"] .approval-deny { border-color: #d5d5dc; color: #1c1c21; }
+html[data-theme="light"] .approval-deny:hover { border-color: #b5b5bf; }

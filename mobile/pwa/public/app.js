@@ -6,6 +6,7 @@
   const voiceKit = () => window.IntelioDesktopVoice || null;
   const app = document.getElementById('app');
   const state = {
+    approvals: [], // { sessionId, profile, data, outcome, busy }: inline push approvals (intelio/approval-ui.cjs)
     view: 'login',
     sample: false,
     home: { profiles: [], conversations: [] },
@@ -1609,6 +1610,7 @@
         thread.append(choice);
       } else if (item.kind === 'bubble' && item.text) thread.append(el('div', `bubble ${item.role === 'user' ? 'user' : 'bot'}`, item.text));
     }
+    for (const item of state.approvals) if (item.sessionId === state.chatId) { const row = approvalRow(item); if (row) thread.append(row); }
     const block = bopsBlock();
     if (block) thread.append(block);
     mountLoginCards(thread, keepFocus);
@@ -1622,6 +1624,58 @@
         jump.hidden = gap < 72;
       });
     });
+  }
+
+  /**
+   * Hermes asks before a push (Hayden: "anything push is an approval"): one quiet
+   * row with Allow / Don't allow. The answer is "once" or "deny", never remembered.
+   */
+  function addApproval(sessionId, profile, data) {
+    const api = window.IntelioApproval;
+    if (!api || !api.answerable(data)) return;
+    const key = String(data.request_id || data.run_id);
+    if (state.approvals.some((item) => String(item.data.request_id || item.data.run_id) === key)) return;
+    state.approvals.push({ sessionId, profile, data, outcome: '', busy: false });
+    if (state.approvals.length > 20) state.approvals.splice(0, state.approvals.length - 20);
+    paintThread();
+    // The thread's own scroll may not move the page (the stage scrolls on phones): bring the
+    // question into view so it is never hidden under the composer.
+    const rows = document.querySelectorAll('#thread .approval-row');
+    const row = rows[rows.length - 1];
+    if (row) { try { row.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch { /* old browser */ } }
+  }
+
+  function settleApprovals(sessionId) {
+    for (const item of state.approvals) if (item.sessionId === sessionId && !item.outcome) item.outcome = 'expired';
+  }
+
+  function approvalRow(item) {
+    const api = window.IntelioApproval;
+    if (!api) return null;
+    const row = api.render(document, item.data, {
+      onAnswer: async (choice) => {
+        item.busy = true;
+        try {
+          const response = await fetch(`/api/runs/${encodeURIComponent(item.data.run_id)}/approval`, {
+            method: 'POST',
+            headers: profileHeaders(item.profile, { 'content-type': 'application/json' }),
+            body: JSON.stringify({ choice, request_id: item.data.request_id || undefined, profile: item.profile }),
+          });
+          if (!response.ok) {
+            const json = await response.json().catch(() => ({}));
+            const message = (json.error && (json.error.message || json.error)) || `HTTP ${response.status}`;
+            if (response.status === 409) item.outcome = 'expired';
+            throw Object.assign(new Error(String(message)), { status: response.status });
+          }
+          item.outcome = choice;
+        } finally {
+          item.busy = false;
+        }
+      },
+    });
+    if (item.outcome) api.settle(row, item.outcome);
+    else if (item.busy) row.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+    return row;
   }
 
   function toolCard(message) {
@@ -2894,6 +2948,7 @@
     await readSse(response, (event, data) => {
       let payload = {};
       try { payload = JSON.parse(data); } catch { payload = { text: data }; }
+      if (event === 'approval.request') { addApproval(sessionId, state.bot?.id || '', payload); return; }
       if (event.includes('tool')) {
         const name = payload.name || payload.tool || 'a tool';
         const failed = event.includes('fail');
@@ -2928,6 +2983,7 @@
       if (spoken && state.call.active && state.call.speaker && !replyMuted) feedSpeech(spoken);
     });
     pending.pending = false;
+    settleApprovals(sessionId);
     placeSteps();
     if (state.call.active && state.call.speaker && !replyMuted && unspoken.trim()) {
       speakQueue.push(unspoken.trim());

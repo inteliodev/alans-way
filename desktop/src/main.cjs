@@ -4,7 +4,7 @@ if (process.argv.includes('--smoke-test')) {
     process.exit(1);
   });
 }
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, dialog, clipboard, shell, nativeTheme, screen, nativeImage, session, safeStorage, net } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, dialog, clipboard, shell, nativeTheme, screen, nativeImage, session, safeStorage, net, desktopCapturer } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -25,6 +25,8 @@ const { agentNavigationDecision } = require('./intelio/safety.cjs');
 const { loadIntelio, publicIntelioState, pngIcon } = require('./intelio/bridge.cjs');
 const { agents, agentsSetup } = require('./intelio/forks.cjs');
 const { setupRemoteHermes } = require('./intelio/remote-hermes-main.cjs');
+const { setupIntelioNode } = require('./intelio/node/electron.cjs');
+const { setupTerminalWindow } = require('./intelio/terminal/main.cjs');
 const { loadPreferences, initialDesktopTab, resolveUserDataDir } = require('./intelio/preferences.cjs');
 const { createVaultStore } = require('./intelio/vault.cjs');
 const { usesRemoteVault } = require('./intelio/remote-vault.cjs');
@@ -72,6 +74,8 @@ const BATCH_BUDGET_MS = 50000;
 let isQuitting = false;
 let intelioSession = null;
 let remoteHermes = null; // Remote Hermes (VPS) client mode, see src/intelio/remote-hermes*.cjs
+let intelioNode = null; // intelio node: VPS agents use this computer, see src/intelio/node/
+let terminalWindow = null; // the person's Terminal window (this computer + cloud), see src/intelio/terminal/
 let backgroundCaptureQueue = Promise.resolve();
 const avatarStore = createAvatarStore({ root: ROOT, nativeImage, dialog, getWindow: () => win, getPreferences: () => prefs });
 const agentInput = createAgentInput({ command: browserCommand,
@@ -555,8 +559,17 @@ function registerIpc() {
     switch (command) {
       case 'remote-hermes-state': case 'remote-hermes-config': case 'remote-hermes-key': case 'remote-hermes-test': case 'open-remote-hermes': case 'remote-hermes-sign-in': {
         const result = await remoteHermes.command(command, value);
-        if (command === 'remote-hermes-config' || command === 'remote-hermes-key' || command === 'remote-hermes-sign-in') broadcast();
+        if (command === 'remote-hermes-config' || command === 'remote-hermes-key' || command === 'remote-hermes-sign-in') { broadcast(); intelioNode?.kick(); }
         return result;
+      }
+      case 'intelio-node-state': case 'intelio-node-config': case 'intelio-node-audit': case 'intelio-computers': case 'intelio-computers-pause': case 'intelio-computers-audit': {
+        if (!intelioNode) return { enabled: false, status: 'unavailable', detail: 'intelio node is not running in this window.' };
+        return intelioNode.command(command, value);
+      }
+      case 'open-terminal': {
+        if (!terminalWindow) terminalWindow = setupTerminalWindow({ BrowserWindow, ipcMain, getRemote: () => remoteHermes, icon: nativeImage.createFromBuffer(pngIcon()), rendererSandbox });
+        terminalWindow.open(value && value.target === 'cloud' ? 'cloud' : 'local');
+        return { ok: true };
       }
       case 'create-tab': return describeTab(createTab({ url: value.url || 'about:blank' }));
       // Client apps: the URL comes from the catalog, never from the renderer.
@@ -1332,10 +1345,12 @@ function createWindow() {
 }
 if (process.argv.includes('--smoke-test')) {
   const { runPackagedSmoke } = require('./intelio/smoke.cjs');
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     let code = 1;
     try {
       code = runPackagedSmoke();
+      // --node-pty: prove terminal sessions get a real PTY in this packaged build (intelio/node/pty-smoke.cjs).
+      if (code === 0 && process.argv.includes('--node-pty')) code = await require('./intelio/node/pty-smoke.cjs').runPtySmoke();
       process.stdout.write(code === 0 ? 'smoke ok\n' : 'smoke failed\n');
     } catch (error) {
       process.stderr.write(`${error && error.stack || error}\n`);
@@ -1361,7 +1376,7 @@ else {
     }
     remoteHermes = setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs: () => prefs, savePreferences, getMainWindow: () => win, root: ROOT, rendererSandbox,
       icon: nativeImage.createFromBuffer(pngIcon()), background: intelioSession?.public?.brand?.tokens?.background, session, net });
-    remoteHermes.watchVersion(() => broadcast());
+    remoteHermes.watchVersion(() => { broadcast(); intelioNode?.kick(); });
     try { parseRemoteUrl(prefs.remoteUrl); } catch { prefs.remoteUrl = ''; }
     fs.mkdirSync(app.getPath('userData'), { recursive: true });
     const browserSession = session.fromPartition('persist:browser');
@@ -1393,6 +1408,12 @@ else {
     if (process.env.INTELIO_E2E === '1') process.stderr.write('intelio e2e: open window\n');
     else await extensionStore.installStore();
     createWindow();
+    // intelio node: lets the VPS agent use this computer (docs/intelio-node.md). Dials out in the background.
+    try {
+      intelioNode = setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, getPrefs: () => prefs, savePreferences, remoteHermes, getMainWindow: () => win });
+      intelioNode.start();
+    } catch (error) { process.stderr.write(`intelio node did not start: ${error && error.message || error}
+`); }
     if (process.env.INTELIO_E2E !== '1') await extensionStore.restore();
     broadcast();
     if (process.env.INTELIO_E2E === '1') process.stderr.write('intelio e2e: window ready\n');
@@ -1421,6 +1442,6 @@ else {
   // show() alone does not un-minimize on Windows; restore first so relaunching brings the window back.
   app.on('second-instance', () => { if (!win || win.isDestroyed()) return; if (win.isMinimized()) win.restore(); win.show(); win.focus(); });
   app.on('activate', () => { win?.show(); win?.focus(); });
-  app.on('before-quit', () => { isQuitting = true; clearInterval(pointerTimer); clearInterval(activityTimer); clearInterval(idleTimer); clearInterval(vpsTimer); savePreferences(); apiServer?.close(); });
+  app.on('before-quit', () => { isQuitting = true; intelioNode?.stop(); terminalWindow?.close(); clearInterval(pointerTimer); clearInterval(activityTimer); clearInterval(idleTimer); clearInterval(vpsTimer); savePreferences(); apiServer?.close(); });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 }

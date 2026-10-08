@@ -63,6 +63,7 @@
     if (remoteOn(state)) {
       appendVpsHermes(body, { element, state });
       appendRemoteHermes(body, { element, command, toast, state });
+      appendIntelioNode(body, { element, command, toast });
       return;
     }
     const intelio = state?.intelio || {};
@@ -102,6 +103,170 @@
     };
     body.append(field, load, recheck, element('hr', 'section-divider'));
     appendRemoteHermes(body, { element, command, toast, state });
+    appendIntelioNode(body, { element, command, toast });
+  }
+
+  /** intelio node (docs/intelio-node.md): VPS agents use this computer as the signed-in user. */
+  function appendIntelioNode(body, { element, command, toast }) {
+    body.append(element('h3', '', 'This computer'));
+    const held = element('p', 'settings-note intelio-node-held', '');
+    held.hidden = true;
+    const clearedField = element('div', 'field checkbox-field');
+    clearedField.hidden = true;
+    const cleared = element('input');
+    cleared.id = 'intelio-node-cleared';
+    cleared.type = 'checkbox';
+    const clearedLabel = element('label', '', 'IT has cleared this computer for intelio');
+    clearedLabel.htmlFor = 'intelio-node-cleared';
+    clearedField.append(cleared, clearedLabel);
+    const allowField = element('div', 'field checkbox-field');
+    const allow = element('input');
+    allow.id = 'intelio-node-enabled';
+    allow.type = 'checkbox';
+    allow.checked = true;
+    const allowLabel = element('label', '', 'Let my agents use this computer');
+    allowLabel.htmlFor = 'intelio-node-enabled';
+    allowField.append(allow, allowLabel);
+    // Ask-before gate (src/intelio/node/approval-gate.cjs): on by default, per computer.
+    const riskyField = element('div', 'field checkbox-field');
+    const risky = element('input');
+    risky.id = 'intelio-node-ask-risky';
+    risky.type = 'checkbox';
+    risky.checked = true;
+    const riskyLabel = element('label', '', 'Ask before deletes, pushes and installs');
+    riskyLabel.htmlFor = 'intelio-node-ask-risky';
+    riskyField.append(risky, riskyLabel);
+    const nameField = element('div', 'field');
+    const nameLabel = element('label', '', 'Computer name');
+    nameLabel.htmlFor = 'intelio-node-name';
+    const name = element('input');
+    name.id = 'intelio-node-name';
+    name.spellcheck = false;
+    name.autocomplete = 'off';
+    nameField.append(nameLabel, name);
+    const status = element('p', 'settings-note', 'Loading…');
+    status.id = 'intelio-node-status';
+    const words = { online: 'Connected: agents can use this computer.', connecting: 'Connecting…', waiting: 'Waiting for sign-in.', retrying: 'Reconnecting…', revoked: 'Revoked on the VPS. Turn the switch off and on to enroll again.', error: 'Not connected.', off: 'Off: agents cannot use this computer.', held: 'Held: agents cannot use this computer.', ask: 'Not set up yet: tick the box to let your agents use this computer.', unavailable: 'Not available.' };
+    const doing = { list_dir: 'looking at files', stat: 'looking at files', read_file: 'reading a file', search_files: 'searching files', write_file: 'changing a file', run_command: 'running a command', screenshot: 'taking a screenshot', computer_info: 'checking this computer' };
+    const show = (s) => {
+      allow.checked = s.enabled !== false && s.status !== 'ask';
+      allow.disabled = Boolean(s.held);
+      if (document.activeElement !== name) name.value = s.customName || s.name || '';
+      name.placeholder = s.hostname || '';
+      held.hidden = !s.held;
+      held.textContent = s.held ? s.detail : '';
+      clearedField.hidden = !s.managed;
+      cleared.checked = Boolean(s.cleared);
+      risky.checked = s.askBeforeRisky !== false;
+      const active = Array.isArray(s.active) ? s.active : [];
+      const using = active.length ? `An agent is using this computer now (${[...new Set(active.map((a) => doing[a.tool] || 'using the terminal'))].join(', ')}).` : '';
+      status.textContent = [words[s.status] || s.status || '', s.detail && !['online', 'held'].includes(s.status) ? s.detail : '', using].filter(Boolean).join(' ');
+    };
+    const load = () => command('intelio-node-state', {}).then(show).catch((e) => { status.textContent = e.message; });
+    load();
+    const poll = setInterval(() => { if (!status.isConnected) { clearInterval(poll); return; } load(); }, 3000);
+    allow.onchange = async () => {
+      try { show(await command('intelio-node-config', { enabled: allow.checked })); toast(allow.checked ? 'Your agents can use this computer.' : 'Your agents can no longer use this computer.'); }
+      catch (e) { status.textContent = e.message; }
+    };
+    risky.onchange = async () => {
+      try { show(await command('intelio-node-config', { askBeforeRisky: risky.checked })); toast(risky.checked ? 'Agents will ask before deleting, pushing or installing here.' : 'Agents no longer ask before deleting, pushing or installing here.'); }
+      catch (e) { status.textContent = e.message; }
+    };
+    cleared.onchange = async () => {
+      try { show(await command('intelio-node-config', { cleared: cleared.checked })); toast(cleared.checked ? 'Marked as cleared by IT.' : 'Held until IT clears this computer.'); }
+      catch (e) { status.textContent = e.message; }
+    };
+    const save = element('button', 'secondary-button', 'Save name');
+    save.onclick = async () => {
+      try { show(await command('intelio-node-config', { name: name.value.trim() })); toast('Computer name saved.'); }
+      catch (e) { status.textContent = e.message; }
+    };
+    const activity = element('div', 'intelio-node-activity');
+    activity.hidden = true;
+    const view = element('button', 'secondary-button', 'View activity');
+    view.onclick = async () => {
+      if (!activity.hidden) { activity.hidden = true; view.textContent = 'View activity'; return; }
+      try {
+        const result = await command('intelio-node-audit', { limit: 200 });
+        renderActivity(activity, element, result.entries || [], false);
+        activity.prepend(element('p', 'settings-note', `What agents did on this computer (newest first). Saved in ${result.file}.`));
+        activity.hidden = false;
+        view.textContent = 'Hide activity';
+      } catch (e) { status.textContent = e.message; }
+    };
+    const terminal = element('button', 'secondary-button', 'Open Terminal');
+    terminal.title = 'Your own terminal on this computer and on the VPS (cloud)';
+    terminal.onclick = () => command('open-terminal', { target: 'local' }).catch((e) => { status.textContent = e.message; });
+    body.append(held, clearedField, allowField, riskyField, nameField, status, save, view, terminal, activity,
+      element('p', 'settings-note', 'When this is on, your intelio agents on the VPS can work with files and the terminal on this computer as you (and Claude Code or Codex through the terminal if they are installed), search, and take screenshots. They never get administrator rights: a command that asks for them shows a prompt here first. Deleting files, pushing code and installing software ask you here first (Allow once / Deny; no answer in 2 minutes is Deny) while "Ask before deletes, pushes and installs" is ticked. A notice with a Stop button shows at the top of the screen while an agent is working here. Every request is logged; View activity shows the log. Turning this off disconnects immediately.'),
+      element('hr', 'section-divider'));
+    appendComputers(body, { element, command, toast });
+  }
+
+  function renderActivity(container, element, entries, relay) {
+    container.textContent = '';
+    if (!entries.length) { container.append(element('p', 'settings-note', 'No agent activity yet.')); return; }
+    const list = element('ol', 'intelio-node-activity-list');
+    for (const e of entries.slice().reverse()) {
+      const when = e.time ? new Date(e.time).toLocaleString() : '';
+      const a = e.args || {};
+      const what = a.summary || a.path || a.root || a.cwd || a.command || (a.program ? `${a.program}…` : '') || '';
+      // Ask-before prompts (approval-gate.cjs): who asked, what, and Hayden's answer.
+      const tool = e.tool === 'approval' ? `asked${a.agent ? ` (${a.agent})` : ''}` : e.tool;
+      const result = e.tool === 'approval' ? (e.note || (e.ok ? 'allowed' : 'denied')) : e.ok === false ? `failed${e.error ? `: ${e.error}` : ''}` : (e.exit_code !== undefined ? `exit ${e.exit_code}` : '');
+      const line = [when, relay ? e.computer : '', tool, what, result].filter(Boolean).join(' · ');
+      list.append(element('li', e.ok === false ? 'failed' : '', line));
+    }
+    container.append(list);
+  }
+
+  /** Every computer the agents can use (relay list) with its kill switch, plus the relay's activity log. */
+  function appendComputers(body, { element, command, toast }) {
+    body.append(element('h3', '', 'Your computers'));
+    const list = element('div', 'intelio-computers');
+    const note = element('p', 'settings-note', 'Loading…');
+    const activity = element('div', 'intelio-node-activity');
+    activity.hidden = true;
+    const render = (result) => {
+      list.textContent = '';
+      const rows = Array.isArray(result?.computers) ? result.computers : [];
+      note.textContent = rows.length ? 'Untick a computer to turn it off for agents (its kill switch). It stays connected and comes back when you tick it again.' : 'No computers yet.';
+      for (const c of rows) {
+        const row = element('div', 'field checkbox-field intelio-computer-row');
+        const box = element('input');
+        box.type = 'checkbox';
+        box.id = `intelio-computer-${String(c.id).replace(/[^\w-]/g, '')}`;
+        box.checked = !c.paused;
+        const state = [c.kind === 'cloud' ? 'the VPS' : c.os, c.online ? 'online' : 'offline', c.in_use ? `in use${c.current_tool ? ` (${c.current_tool})` : ''}` : ''].filter(Boolean).join(' · ');
+        const label = element('label', '', `${c.name}${state ? ` · ${state}` : ''}`);
+        label.htmlFor = box.id;
+        box.onchange = async () => {
+          try {
+            await command('intelio-computers-pause', { computer: c.id, paused: !box.checked });
+            toast(box.checked ? `Agents can use ${c.name} again.` : `${c.name} is turned off for agents.`);
+          } catch (e) { box.checked = !box.checked; note.textContent = e.message; }
+        };
+        row.append(box, label);
+        list.append(row);
+      }
+    };
+    const refresh = () => command('intelio-computers', {}).then(render).catch((e) => { list.textContent = ''; note.textContent = e.message; });
+    refresh();
+    const again = element('button', 'secondary-button', 'Refresh');
+    again.onclick = refresh;
+    const all = element('button', 'secondary-button', 'All agent activity');
+    all.onclick = async () => {
+      if (!activity.hidden) { activity.hidden = true; all.textContent = 'All agent activity'; return; }
+      try {
+        const result = await command('intelio-computers-audit', { limit: 200 });
+        renderActivity(activity, element, result.entries || [], true);
+        activity.prepend(element('p', 'settings-note', 'Every agent request to any computer, as the VPS saw it (newest first). Commands show the program only; each computer\'s own log has the full command.'));
+        activity.hidden = false;
+        all.textContent = 'Hide activity';
+      } catch (e) { note.textContent = e.message; }
+    };
+    body.append(list, note, again, all, activity, element('hr', 'section-divider'));
   }
 
   /** Remote Hermes (VPS): this app as a client of the single Hermes on the VPS, over Tailscale only. */
