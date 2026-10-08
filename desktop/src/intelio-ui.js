@@ -63,6 +63,7 @@
     if (remoteOn(state)) {
       appendVpsHermes(body, { element, state });
       appendRemoteHermes(body, { element, command, toast, state });
+      appendIntelioNode(body, { element, command, toast });
       return;
     }
     const intelio = state?.intelio || {};
@@ -102,6 +103,52 @@
     };
     body.append(field, load, recheck, element('hr', 'section-divider'));
     appendRemoteHermes(body, { element, command, toast, state });
+    appendIntelioNode(body, { element, command, toast });
+  }
+
+  /** intelio node (docs/intelio-node.md): VPS agents use this computer as the signed-in user. */
+  function appendIntelioNode(body, { element, command, toast }) {
+    body.append(element('h3', '', 'This computer'));
+    const allowField = element('div', 'field checkbox-field');
+    const allow = element('input');
+    allow.id = 'intelio-node-enabled';
+    allow.type = 'checkbox';
+    allow.checked = true;
+    const allowLabel = element('label', '', 'Allow intelio agents to use this computer');
+    allowLabel.htmlFor = 'intelio-node-enabled';
+    allowField.append(allow, allowLabel);
+    const nameField = element('div', 'field');
+    const nameLabel = element('label', '', 'Computer name');
+    nameLabel.htmlFor = 'intelio-node-name';
+    const name = element('input');
+    name.id = 'intelio-node-name';
+    name.spellcheck = false;
+    name.autocomplete = 'off';
+    nameField.append(nameLabel, name);
+    const status = element('p', 'settings-note', 'Loading…');
+    status.id = 'intelio-node-status';
+    const words = { online: 'Connected: agents can use this computer.', connecting: 'Connecting…', waiting: 'Waiting for sign-in.', retrying: 'Reconnecting…', revoked: 'Revoked on the VPS. Turn the switch off and on to enroll again.', error: 'Not connected.', off: 'Off: agents cannot use this computer.', unavailable: 'Not available.' };
+    const show = (s) => {
+      allow.checked = s.enabled !== false;
+      name.value = s.customName || s.name || '';
+      name.placeholder = s.hostname || '';
+      status.textContent = [words[s.status] || s.status || '', s.detail && s.status !== 'online' ? s.detail : ''].filter(Boolean).join(' ');
+    };
+    command('intelio-node-state', {}).then(show).catch((e) => { status.textContent = e.message; });
+    allow.onchange = async () => {
+      try { show(await command('intelio-node-config', { enabled: allow.checked })); toast(allow.checked ? 'intelio agents can use this computer.' : 'intelio agents can no longer use this computer.'); }
+      catch (e) { status.textContent = e.message; }
+    };
+    const save = element('button', 'secondary-button', 'Save name');
+    save.onclick = async () => {
+      try { show(await command('intelio-node-config', { name: name.value.trim() })); toast('Computer name saved.'); }
+      catch (e) { status.textContent = e.message; }
+    };
+    const refresh = element('button', 'secondary-button', 'Refresh status');
+    refresh.onclick = () => command('intelio-node-state', {}).then(show).catch((e) => { status.textContent = e.message; });
+    body.append(allowField, nameField, status, save, refresh,
+      element('p', 'settings-note', 'When this is on and the app is signed in to intelio cloud (or on the tailnet), intelio agents on the VPS can read and write files, search, run commands and take screenshots on this computer as you. They never get administrator rights: a command that asks for them shows a prompt here first. Every request is logged in intelio-node/audit.jsonl in the app data folder. Turning this off disconnects immediately.'),
+      element('hr', 'section-divider'));
   }
 
   /** Remote Hermes (VPS): this app as a client of the single Hermes on the VPS, over Tailscale only. */
