@@ -58,6 +58,9 @@
     modelApplied: '',
     modelNote: '',
     profileModel: '',
+    claudeUrl: '',
+    claudeAll: false,
+    claudeFor: '',
   };
   let rfb = null;
   let audioCtx = null;
@@ -263,7 +266,7 @@
     if (name.toLowerCase() === 'intelio') return 'intelio';
     return name || 'intelio';
   }
-  const CLIENT_VERSION = 'intelio-pwa-17';
+  const CLIENT_VERSION = 'intelio-pwa-18';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);
@@ -1752,20 +1755,99 @@
     return button;
   }
 
+  function claudeWaitingHere() {
+    return Boolean(state.claudeUrl) && (state.claudeAll === true || state.claudeFor === state.bot?.id);
+  }
+
+  async function startPhoneClaude() {
+    const api = modelApi();
+    const response = await fetch('/api/agent/claude-signin', {
+      method: 'POST',
+      headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ profile: state.bot?.id || '', allAgents: state.claudeAll === true }),
+    });
+    const json = await response.json().catch(() => ({}));
+    const url = api?.authorizeUrl?.(json.url || '') || '';
+    if (!response.ok || !url) { state.modelNote = json.error || 'Claude sign-in did not start.'; render(); return; }
+    state.claudeUrl = url;
+    state.claudeFor = state.bot?.id || '';
+    state.modelOpen = true;
+    render();
+  }
+
+  async function finishPhoneClaude(code) {
+    const pasted = String(code || '');
+    const response = await fetch('/api/agent/claude-signin', {
+      method: 'POST',
+      headers: profileHeaders(state.bot?.id, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ profile: state.bot?.id || '', allAgents: state.claudeAll === true, code: pasted }),
+    });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) { state.modelNote = json.error || 'Claude sign-in did not finish.'; render(); return; }
+    state.claudeUrl = '';
+    state.modelNote = state.claudeAll ? 'Claude is signed in on the shared Hermes login.' : 'Claude is signed in for this agent.';
+    state.modelOpen = true;
+    await loadModelOptions();
+  }
+
+  function paintPhoneClaude(menu) {
+    menu.classList.add('signing');
+    menu.append(modelOption('Sign in to Claude', false, () => startPhoneClaude()));
+    const share = el('label', 'model-share');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = state.claudeAll === true;
+    box.addEventListener('click', (event) => event.stopPropagation());
+    box.addEventListener('change', () => { state.claudeAll = box.checked; });
+    share.append(box, document.createTextNode(' Use for all agents'));
+    menu.append(share);
+    menu.append(el('p', 'model-hint', state.claudeAll
+      ? 'One shared Hermes login. Agents without their own Claude login use it.'
+      : 'This agent only.'));
+    if (!claudeWaitingHere()) return;
+    const link = el('a', 'model-url', state.claudeUrl);
+    link.href = state.claudeUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    menu.append(link);
+    const field = document.createElement('input');
+    field.className = 'model-code';
+    field.type = 'text';
+    field.autocomplete = 'off';
+    field.spellcheck = false;
+    field.placeholder = 'Paste the code Claude shows';
+    field.setAttribute('aria-label', 'Claude authorization code');
+    field.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      event.stopPropagation();
+      const pasted = field.value;
+      field.value = '';
+      finishPhoneClaude(pasted);
+    });
+    menu.append(field);
+    menu.append(modelOption('Continue', false, () => {
+      const pasted = field.value;
+      field.value = '';
+      finishPhoneClaude(pasted);
+    }));
+  }
+
   function modelMenu() {
     const api = modelApi();
     const menu = el('div', 'model-menu');
     menu.id = 'model-menu';
     menu.setAttribute('role', 'listbox');
     if (!api) return menu;
-    const groups = state.modelGroups || [];
+    const groups = api.planGroups ? api.planGroups(state.modelGroups || []) : (state.modelGroups || []);
     if (!groups.length && state.modelId) {
       menu.append(el('div', 'model-label', api.providerLabel(state.modelProvider)));
       menu.append(modelOption(state.modelId, true, () => {}));
     }
     for (const group of groups) {
       menu.append(el('div', 'model-label', group.label || api.providerLabel(group.provider)));
-      for (const id of group.models || []) menu.append(modelOption(id, id === state.modelId, () => choosePhoneModel(group.provider, id)));
+      if (group.signIn) paintPhoneClaude(menu);
+      else for (const id of group.models || []) menu.append(modelOption(id, id === state.modelId, () => choosePhoneModel(group.provider, id)));
     }
     menu.append(el('div', 'model-label', 'Thinking'));
     for (const effort of api.EFFORTS) menu.append(modelOption(api.EFFORT_LABELS[effort], effort === (state.modelEffort || 'auto'), () => choosePhoneEffort(effort)));

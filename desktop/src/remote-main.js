@@ -123,6 +123,9 @@
     needsSignIn: false,
     pendingVoice: '',
     phoneReady: {},
+    claudeUrl: '',
+    claudeAll: false,
+    claudeFor: '',
   };
   const REFRESH_MS = 45000;
   const FOCUS_REFRESH_GAP_MS = 5000;
@@ -1510,19 +1513,110 @@
     } catch { paintModel(); }
   }
 
+  function claudeWaitingHere() {
+    return Boolean(ui.claudeUrl) && (ui.claudeAll === true || ui.claudeFor === ui.selected);
+  }
+
+  async function copyClaudeLink() {
+    try {
+      await navigator.clipboard.writeText(ui.claudeUrl);
+      showInline('composer-note', 'Claude link copied.');
+    } catch {
+      showInline('composer-note', 'Select the Claude link and copy it.');
+    }
+  }
+
+  async function startClaudeSignIn() {
+    const api = pickerApi();
+    try {
+      const result = await root.remoteHermes.request('claude-signin', { profile: ui.selected, allAgents: ui.claudeAll === true });
+      const url = api?.authorizeUrl?.(result?.url || '') || '';
+      if (!url) throw new Error(result?.error || 'Claude sign-in did not start.');
+      ui.claudeUrl = url;
+      ui.claudeFor = ui.selected;
+      ui.modelOpen = true;
+      paintModelMenu();
+      $('model-menu')?.classList.remove('hidden');
+    } catch (error) {
+      showInline('composer-note', error?.message || 'Claude sign-in did not start.');
+    }
+  }
+
+  async function finishClaudeSignIn(code) {
+    const pasted = String(code || '');
+    try {
+      await root.remoteHermes.request('claude-signin', { profile: ui.selected, allAgents: ui.claudeAll === true, code: pasted });
+      ui.claudeUrl = '';
+      showInline('composer-note', ui.claudeAll ? 'Claude is signed in on the shared Hermes login.' : 'Claude is signed in for this agent.');
+      await loadModelOptions();
+      ui.modelOpen = true;
+      paintModelMenu();
+      $('model-menu')?.classList.remove('hidden');
+    } catch (error) {
+      showInline('composer-note', error?.message || 'Claude sign-in did not finish.');
+    }
+  }
+
+  function paintClaudeSignIn(menu) {
+    menu.classList.add('signing');
+    menu.append(menuButton('Sign in to Claude', false, () => startClaudeSignIn()));
+    const share = el('label', 'model-share');
+    const box = root.document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = ui.claudeAll === true;
+    box.addEventListener('click', (event) => event.stopPropagation());
+    box.addEventListener('change', () => { ui.claudeAll = box.checked; });
+    share.append(box, document.createTextNode(' Use for all agents'));
+    menu.append(share);
+    menu.append(el('p', 'model-hint', ui.claudeAll
+      ? 'One shared Hermes login. Agents without their own Claude login use it.'
+      : 'This agent only.'));
+    if (!claudeWaitingHere()) return;
+    const link = el('a', 'model-url', ui.claudeUrl);
+    link.href = ui.claudeUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.addEventListener('click', (event) => event.stopPropagation());
+    menu.append(link);
+    menu.append(menuButton('Copy link', false, () => copyClaudeLink()));
+    const field = root.document.createElement('input');
+    field.className = 'model-code';
+    field.type = 'text';
+    field.autocomplete = 'off';
+    field.spellcheck = false;
+    field.placeholder = 'Paste the code Claude shows';
+    field.setAttribute('aria-label', 'Claude authorization code');
+    field.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      const pasted = field.value;
+      field.value = '';
+      finishClaudeSignIn(pasted);
+    });
+    menu.append(field);
+    menu.append(menuButton('Continue', false, () => {
+      const pasted = field.value;
+      field.value = '';
+      finishClaudeSignIn(pasted);
+    }));
+  }
+
   function paintModelMenu() {
     const menu = $('model-menu');
     const api = pickerApi();
     if (!menu || !api) return;
     menu.replaceChildren();
-    const groups = ui.modelGroups || [];
+    menu.classList.remove('signing');
+    const groups = api.planGroups ? api.planGroups(ui.modelGroups || []) : (ui.modelGroups || []);
     if (!groups.length && ui.modelId) {
       menu.append(el('div', 'model-label', api.providerLabel(ui.modelProvider)));
       menu.append(menuButton(ui.modelId, true, () => {}));
     }
     for (const group of groups) {
       menu.append(el('div', 'model-label', group.label || api.providerLabel(group.provider)));
-      for (const id of group.models || []) menu.append(menuButton(id, id === ui.modelId, () => chooseModel(group.provider, id)));
+      if (group.signIn) paintClaudeSignIn(menu);
+      else for (const id of group.models || []) menu.append(menuButton(id, id === ui.modelId, () => chooseModel(group.provider, id)));
     }
     menu.append(el('div', 'model-label', 'Thinking'));
     for (const effort of api.EFFORTS) {

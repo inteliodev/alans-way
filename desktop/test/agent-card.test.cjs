@@ -161,11 +161,11 @@ test('the phone card route reads the profile files and refuses a cross-origin wr
     const screens = await request(address.port, 'GET', '/api/screens');
     assert.equal(screens.status, 200);
     assert.equal(JSON.parse(screens.body).data[0].host, 'google.com');
-    assert.match(sw, /intelio-pwa-20/);
+    assert.match(sw, /intelio-pwa-21/);
     assert.match(sw, /skipWaiting/);
     assert.match(sw, /clients\.claim/);
     assert.match(sw, /cache\.put/);
-    assert.match(page, /intelio-pwa-17/);
+    assert.match(page, /intelio-pwa-18/);
     assert.match(page, /New version\. Tap to reload\./);
     assert.match(page, /Manage in Vault/);
   } finally {

@@ -35,7 +35,7 @@
   function baseState() {
     return {
       name: 'intelio',
-      version: '0.3.19',
+      version: '0.3.20',
       intelio: { ok: true, profileName: 'intelio', brand: { mark: '/icon-192.png' }, hermes: {} },
       bots: [],
       order: [],
@@ -318,6 +318,11 @@
     }
     if (name === 'agent-model') {
       return fetchJson('/api/agent/model', { method: 'POST', profile, body: { profile, model: value.model, provider: value.provider } });
+    }
+    if (name === 'claude-signin') {
+      const body = { profile, allAgents: value.allAgents === true };
+      if (value.code) body.code = String(value.code);
+      return fetchJson('/api/agent/claude-signin', { method: 'POST', profile, body });
     }
     if (name === 'cancel') {
       inflight.get(String(value.id || ''))?.abort();

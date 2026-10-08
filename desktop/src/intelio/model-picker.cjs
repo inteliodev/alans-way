@@ -27,7 +27,7 @@
   }
 
   function providerLabel(value) {
-    return canonicalProvider(value) === 'anthropic' ? 'Claude' : 'ChatGPT';
+    return canonicalProvider(value) === 'anthropic' ? 'Claude plan' : 'ChatGPT plan';
   }
 
   function modelIdOf(entry) {
@@ -187,6 +187,46 @@
     return fields;
   }
 
+  function planGroups(groups) {
+    const by = new Map();
+    for (const group of groups || []) {
+      const provider = canonicalProvider(group.provider);
+      if (provider !== 'openai-codex' && provider !== 'anthropic') continue;
+      const models = [];
+      for (const id of group.models || []) if (keepId(id) && !models.includes(id)) models.push(id);
+      const existing = by.get(provider);
+      if (existing) {
+        for (const id of models) if (!existing.includes(id)) existing.push(id);
+      } else by.set(provider, models);
+    }
+    const planned = [];
+    const codex = by.get('openai-codex') || [];
+    if (codex.length) planned.push({ provider: 'openai-codex', label: 'ChatGPT plan', models: codex, signIn: false });
+    const claude = by.get('anthropic') || [];
+    planned.push({ provider: 'anthropic', label: 'Claude plan', models: claude, signIn: claude.length === 0 });
+    return planned;
+  }
+
+  function authorizeUrl(text) {
+    const match = String(text || '').match(/https:\/\/claude\.ai\/oauth\/authorize\?[^\s<>"']+/);
+    if (!match) return '';
+    try {
+      const url = new URL(match[0]);
+      if (url.protocol !== 'https:' || url.hostname !== 'claude.ai' || url.pathname !== '/oauth/authorize') return '';
+      if (!url.searchParams.get('code_challenge')) return '';
+      return url.toString();
+    } catch {
+      return '';
+    }
+  }
+
+  function claudePaste(value) {
+    const text = String(value || '').trim();
+    if (text.length < 8 || text.length > 2048 || /\s/.test(text)) return false;
+    if (/sk-ant-api/i.test(text)) return false;
+    return true;
+  }
+
   function pillLabel(model) {
     const id = String(model || '').trim();
     return id || 'Model';
@@ -206,6 +246,9 @@
     providerLabel,
     modelsFromHermes,
     modelsFromList,
+    planGroups,
+    authorizeUrl,
+    claudePaste,
     configModel,
     effortFromConfig,
     applyModelDefault,
