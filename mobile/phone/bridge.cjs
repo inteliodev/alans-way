@@ -18,6 +18,8 @@ const PUBLIC_BASE = 'https://2-24-110-12.sslip.io/twilio';
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const SPOKEN_PREFIX = 'spoken reply, no markdown';
 const FILLER = 'one sec';
+const GREETING = "Hi, it's intelio. What do you need?";
+const FAILED_SAY = 'Sorry, intelio could not stay on the line. Try again in a minute.';
 
 function normalizeNumber(value) {
   const compact = String(value || '').trim().replace(/[\s().-]/g, '');
@@ -116,8 +118,30 @@ function rejectTwiml() {
   return '<?xml version="1.0" encoding="UTF-8"?><Response><Reject reason="rejected"/></Response>';
 }
 
-function relayTwiml({ url, greeting, nonce }) {
-  return `<?xml version="1.0" encoding="UTF-8"?><Response><Connect><ConversationRelay url="${xmlEscape(url)}" welcomeGreeting="${xmlEscape(greeting)}"><Parameter name="nonce" value="${xmlEscape(nonce)}"/></ConversationRelay></Connect></Response>`;
+function relayTwiml({ url, greeting, nonce, action }) {
+  const connect = action ? `<Connect action="${xmlEscape(action)}" method="POST">` : '<Connect>';
+  return `<?xml version="1.0" encoding="UTF-8"?><Response>${connect}<ConversationRelay url="${xmlEscape(url)}" welcomeGreeting="${xmlEscape(greeting)}"><Parameter name="nonce" value="${xmlEscape(nonce)}"/></ConversationRelay></Connect></Response>`;
+}
+
+// Twilio requests the <Connect action> URL when the relay session ends. A failed
+// session gets one spoken apology instead of dead air; anything else just hangs up.
+function statusTwiml(failed) {
+  const say = failed ? `<Say>${xmlEscape(FAILED_SAY)}</Say>` : '';
+  return `<?xml version="1.0" encoding="UTF-8"?><Response>${say}<Hangup/></Response>`;
+}
+
+function shortSid(value) {
+  const sid = String(value || '').replace(/[^A-Za-z0-9]/g, '');
+  return sid ? `…${sid.slice(-6)}` : 'unknown';
+}
+
+function cleanLabel(value, max = 40) {
+  return String(value || '')
+    .replace(/[^A-Za-z0-9 _.:,'()/+-]/g, ' ')
+    .replace(/\+?\d{7,}/g, (digits) => `+*****${digits.slice(-4)}`)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
 }
 
 function takeSentences(buffer) {
@@ -286,9 +310,10 @@ function attachFrames(socket, { onText, onClose, max = BODY_LIMIT }) {
   let fragments = [];
   socket.on('error', () => {});
   socket.on('end', () => {
-    onClose();
+    onClose('ended');
     if (!socket.destroyed) socket.destroy();
   });
+  socket.on('close', () => onClose('closed'));
   socket.on('data', (chunk) => {
     buf = Buffer.concat([buf, chunk]);
     while (buf.length >= 2) {
@@ -319,7 +344,13 @@ function attachFrames(socket, { onText, onClose, max = BODY_LIMIT }) {
         payload = copy;
       }
       buf = buf.subarray(offset + maskLen + length);
-      if (opcode === 0x8) { onClose(); return; }
+      if (opcode === 0x8) {
+        const code = payload.length >= 2 ? payload.readUInt16BE(0) : 0;
+        onClose(code ? `close frame ${code}` : 'close frame');
+        sendFrame(socket, 0x8, payload.length >= 2 ? payload.subarray(0, 2) : Buffer.alloc(0));
+        socket.end();
+        return;
+      }
       if (opcode === 0x9) { sendFrame(socket, 0xA, payload); continue; }
       if (opcode === 0xA) continue;
       if (opcode === 0x0) {
@@ -506,6 +537,7 @@ function createBridge({
       if (!state.alive(turn)) return;
       feed(decoder.decode(), true);
       pump(true);
+      note(`hermes reply spoken for ${profile}${spoke ? '' : ' (empty)'}`);
     } catch (error) {
       if (error?.name === 'AbortError' || !state.alive(turn)) return;
       note(`hermes stream failed for ${profile}`);
@@ -553,6 +585,10 @@ function createBridge({
     let sessionId = '';
     let ready = false;
     let queuedPrompt = null;
+    let callLabel = 'unknown';
+    let closed = false;
+    const openedAt = now();
+    note('relay connected');
     const startQueued = () => {
       if (!sessionId || queuedPrompt === null || socket.destroyed) return;
       const prompt = queuedPrompt;
@@ -560,13 +596,23 @@ function createBridge({
       speak(socket, state, profile, sessionId, prompt).catch(() => {});
     };
     attachFrames(socket, {
-      onClose: () => state.stop(),
+      onClose: (how) => {
+        state.stop();
+        if (closed) return;
+        closed = true;
+        const seconds = ((now() - openedAt) / 1000).toFixed(1);
+        note(`relay closed call ${callLabel} profile ${profile || 'none'} after ${seconds}s (${how || 'closed'}${ready ? '' : ', before setup'})`);
+      },
       onText: (text) => {
         if (!allowSocket(socketKey)) return socket.destroy();
         let message;
         try { message = JSON.parse(text); } catch { return; }
         if (!ready) {
-          if (message.type !== 'setup') return socket.end();
+          if (message.type !== 'setup') {
+            note(`relay first message was ${cleanLabel(message.type, 20) || 'unknown'}, not setup`);
+            return socket.end();
+          }
+          callLabel = shortSid(message.callSid);
           const nonce = message.customParameters?.nonce || message.customParameters?.Nonce;
           const row = takeNonce(nonce, String(message.callSid || ''), String(message.from || ''));
           if (!row) {
@@ -576,9 +622,10 @@ function createBridge({
           }
           ready = true;
           profile = row.profile;
-          note(`relay open profile ${profile} from ${normalizeNumber(message.from)}`);
+          note(`relay open call ${callLabel} profile ${profile} from ${normalizeNumber(message.from)}`);
           createSession(profile).then((id) => {
             sessionId = id;
+            note(`relay session ready call ${callLabel} profile ${profile}`);
             startQueued();
           }).catch(() => {
             note(`session create failed for ${profile}`);
@@ -593,8 +640,13 @@ function createBridge({
           note(`relay interrupt profile ${profile}`);
           return;
         }
+        if (message.type === 'error') {
+          note(`relay error from Twilio call ${callLabel}: ${cleanLabel(message.description || message.message, 120) || 'no description'}`);
+          return;
+        }
         if (message.type === 'prompt' && message.last === true) {
           queuedPrompt = String(message.voicePrompt || '');
+          note(`relay prompt call ${callLabel} (${queuedPrompt.length} chars)`);
           startQueued();
         }
       },
@@ -606,6 +658,21 @@ function createBridge({
     if (!allowIp(remote)) return writeHttp(res, 429, '');
     const url = new URL(req.url || '/', 'http://127.0.0.1');
     try {
+      if (req.method === 'POST' && url.pathname === '/twilio/status') {
+        const raw = await readRaw(req, BODY_LIMIT);
+        const form = parseForm(raw);
+        if (!signed('status', form, header(req, 'x-twilio-signature'))) {
+          note('status signature rejected');
+          return writeHttp(res, 403, '');
+        }
+        const session = cleanLabel(formValue(form, 'SessionStatus'), 20) || 'unknown';
+        const callStatus = cleanLabel(formValue(form, 'CallStatus'), 20) || 'unknown';
+        const duration = cleanLabel(formValue(form, 'SessionDuration'), 10) || '?';
+        const code = cleanLabel(formValue(form, 'ErrorCode'), 10);
+        const message = cleanLabel(formValue(form, 'ErrorMessage'), 160);
+        note(`relay status call ${shortSid(formValue(form, 'CallSid'))} session ${session} call ${callStatus} duration ${duration}s${code ? ` error ${code}` : ''}${message ? ` ${message}` : ''}`);
+        return writeHttp(res, 200, statusTwiml(session === 'failed'), 'text/xml; charset=utf-8');
+      }
       if (req.method === 'POST' && (url.pathname === '/twilio/sms' || url.pathname === '/twilio/voice')) {
         const raw = await readRaw(req, BODY_LIMIT);
         const form = parseForm(raw);
@@ -636,8 +703,9 @@ function createBridge({
         note(`voice accepted profile ${profile} from ${normalizeNumber(from)}`);
         return writeHttp(res, 200, relayTwiml({
           url: relayUrl(config.base),
-          greeting: 'Hello.',
+          greeting: GREETING,
           nonce,
+          action: publicUrl(config.base, '/status'),
         }), 'text/xml; charset=utf-8');
       }
       writeHttp(res, 404, '');
@@ -678,7 +746,7 @@ function createBridge({
 
 async function main() {
   let bridge;
-  try { bridge = createBridge(); }
+  try { bridge = createBridge({ log: (line) => process.stderr.write(`phone-bridge ${line}\n`) }); }
   catch (error) {
     process.stderr.write(`phone-bridge config: ${maskNumber(error.message)}\n`);
     process.exit(1);
@@ -698,6 +766,7 @@ module.exports = {
   PUBLIC_BASE,
   SPOKEN_PREFIX,
   FILLER,
+  GREETING,
   normalizeNumber,
   maskNumber,
   parseNumberMap,
@@ -710,6 +779,7 @@ module.exports = {
   signaturesMatch,
   rejectTwiml,
   relayTwiml,
+  statusTwiml,
   takeSentences,
   loadConfig,
   createBridge,

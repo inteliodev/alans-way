@@ -169,6 +169,13 @@ function connectRelay(port, signature) {
         resolve({
           messages,
           send(obj) { socket.write(clientFrame(JSON.stringify(obj))); },
+          closeFrame(code) {
+            const mask = crypto.randomBytes(4);
+            const payload = Buffer.alloc(2);
+            payload.writeUInt16BE(code, 0);
+            const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4]));
+            socket.write(Buffer.concat([Buffer.from([0x88, 0x80 | 2]), mask, masked]));
+          },
           close() { socket.destroy(); },
         });
       }
@@ -377,6 +384,53 @@ test('relay streams spoken sentences and stops on interrupt', async () => {
     assert.equal(logs.some((line) => line.includes(TOKEN) || line.includes(KEY) || line.includes('what time is it') || line.includes('+19188991650')), false);
     socket.close();
     replay.close();
+  });
+});
+
+test('voice greets clearly, reports relay status, and logs relay closes without full numbers', async () => {
+  const hermes = mockHermes((call) => {
+    if (call.url.endsWith('/api/sessions')) return jsonResponse(200, { id: 'sess-9' });
+    return null;
+  });
+  await withBridge({ fetchImpl: hermes.fetchImpl }, async ({ port, logs }) => {
+    const fields = { CallSid: 'CA0000000000000000000000000000abcdef', From: '+19188991650', To: '+19185550100' };
+    const voice = await post(port, '/twilio/voice', fields, bridge.computeSignature(TOKEN, `${BASE}/voice`, fields));
+    assert.equal(voice.status, 200);
+    assert.equal(bridge.GREETING, "Hi, it's intelio. What do you need?");
+    assert.match(voice.body, /welcomeGreeting="Hi, it&apos;s intelio\. What do you need\?"/);
+    assert.match(voice.body, /<Connect action="https:\/\/2-24-110-12\.sslip\.io\/twilio\/status" method="POST">/);
+    const nonce = voice.body.match(/name="nonce" value="([^"]+)"/)[1];
+
+    const socket = await connectRelay(port, bridge.computeSignature(TOKEN, bridge.relayUrl(BASE), {}));
+    socket.send({ type: 'setup', callSid: fields.CallSid, from: '+19188991650', customParameters: { nonce } });
+    await waitFor(logs, (line) => String(line).includes('relay session ready'));
+    socket.closeFrame(1000);
+    await waitFor(logs, (line) => String(line).includes('relay closed'));
+    const closedLine = logs.find((line) => String(line).includes('relay closed'));
+    assert.match(closedLine, /call …abcdef profile intelio after \d+\.\ds \(close frame 1000\)/);
+    socket.close();
+
+    const done = { CallSid: fields.CallSid, CallStatus: 'completed', SessionStatus: 'completed', SessionDuration: '35' };
+    const forged = await post(port, '/twilio/status', done, bridge.computeSignature(TOKEN, 'https://evil.example/twilio/status', done));
+    assert.equal(forged.status, 403);
+    const ok = await post(port, '/twilio/status', done, bridge.computeSignature(TOKEN, `${BASE}/status`, done));
+    assert.equal(ok.status, 200);
+    assert.match(ok.body, /<Response><Hangup\/><\/Response>/);
+
+    const failed = {
+      CallSid: fields.CallSid,
+      CallStatus: 'in-progress',
+      SessionStatus: 'failed',
+      SessionDuration: '10',
+      ErrorCode: '64105',
+      ErrorMessage: 'Websocket ended for +19188991650 <script>',
+    };
+    const failedRes = await post(port, '/twilio/status', failed, bridge.computeSignature(TOKEN, `${BASE}/status`, failed));
+    assert.equal(failedRes.status, 200);
+    assert.match(failedRes.body, /<Say>Sorry, intelio could not stay on the line\. Try again in a minute\.<\/Say><Hangup\/>/);
+    const statusLine = logs.find((line) => String(line).includes('session failed'));
+    assert.match(statusLine, /relay status call …abcdef session failed call in-progress duration 10s error 64105 Websocket ended for \+\*\*\*\*\*1650/);
+    assert.equal(logs.some((line) => line.includes('+19188991650') || line.includes('19188991650') || line.includes('<script>') || line.includes(TOKEN) || line.includes(KEY)), false);
   });
 });
 
