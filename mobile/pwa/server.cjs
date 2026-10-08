@@ -38,6 +38,7 @@ const picker = require('../../desktop/src/intelio/model-picker.cjs');
 const { preview: previewTranscript } = require('../../desktop/src/intelio/transcript.cjs');
 const { createSkillInstaller } = require('./skills-install.cjs');
 const { createAccountsApi } = require('./accounts-routes.cjs');
+const { createTranscripts } = require('./transcripts.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
 const STATIC = {
@@ -57,7 +58,7 @@ const DESKTOP_SRC = path.resolve(__dirname, '../../desktop/src');
 // intelio home, missions, command bar and skill links (shared with the desktop renderer).
 const HOME_CJS = ['intelio/commands.cjs', 'intelio/missions.cjs', 'intelio/home-feed.cjs', 'intelio/skill-link.cjs'];
 const UI_EXT = new Set(['.css', '.js', '.woff2', '.png', '.svg']);
-const UI_CJS = new Set(['intelio/approval-ui.cjs', 'intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs', 'intelio/calls.cjs', 'intelio/desktop-voice.cjs', 'intelio/model-picker.cjs', 'intelio/client-apps.cjs', 'intelio/login-prompt.cjs', ...HOME_CJS]);
+const UI_CJS = new Set(['intelio/pages.cjs', 'intelio/approval-ui.cjs', 'intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs', 'intelio/calls.cjs', 'intelio/desktop-voice.cjs', 'intelio/model-picker.cjs', 'intelio/client-apps.cjs', 'intelio/login-prompt.cjs', ...HOME_CJS]);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json' };
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -253,6 +254,8 @@ function createPwaServer({
   // The intelio vault (data + key) lives outside ~/.hermes. A test that
   // passes its own vaultRoot gets a sibling folder instead of the real home.
   const skillInstaller = createSkillInstaller({ fetchImpl: githubFetch, profilesRoot: vaultRootPath });
+  // Plaud meeting transcripts (integrations/plaud), read-only, for the Transcripts page.
+  const transcripts = createTranscripts({ root: vaultRootPath });
   const vault = createVaultStore({
     root: vaultRootPath,
     home: vaultHome || (vaultRoot ? `${path.resolve(vaultRoot)}.intelio-home` : (profileHome || os.homedir())),
@@ -885,10 +888,10 @@ function createPwaServer({
       "img-src 'self' data: blob: crx:",
     );
     html = html.replace(/(href|src)="(?!\/|https?:|data:)([^"]+)"/g, '$1="/ui/$2"');
-    html = html.replace('</head>', '<script src="/desktop-boot.js?v=30"></script></head>');
+    html = html.replace('</head>', '<script src="/desktop-boot.js?v=31"></script></head>');
     html = html.replace(
       '<script src="/ui/renderer.js"></script>',
-      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=30"></script><script src="/ui/renderer.js"></script>',
+      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=31"></script><script src="/ui/renderer.js"></script>',
     );
     return html;
   }
@@ -1504,6 +1507,20 @@ function createPwaServer({
       }
       if (req.method === 'GET' && url.pathname === '/api/screens') {
         return send(res, 200, { data: await listScreens() });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/transcripts') {
+        const params = url.searchParams;
+        try {
+          return send(res, 200, transcripts.list({
+            profile: params.get('profile') || 'intelio',
+            client: params.get('client') || '',
+            q: String(params.get('q') || '').slice(0, 200),
+            limit: params.get('limit') || undefined,
+            offset: params.get('offset') || 0,
+          }));
+        } catch (error) {
+          return send(res, error.status === 400 ? 400 : 500, { error: error.status === 400 ? error.message : 'Could not read the transcripts.' });
+        }
       }
       if (req.method === 'GET' && url.pathname === '/api/home') {
         if (sample) return send(res, 200, SAMPLE_HOME);

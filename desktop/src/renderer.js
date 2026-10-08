@@ -584,7 +584,7 @@ function paintScreenGrid() {
 }
 function scheduleLayout() {
   cancelAnimationFrame(resizeFrame);
-  resizeFrame = requestAnimationFrame(() => api.layout({ telegram: focusMode ? null : rect('telegram-slot'), browser: browserRect(), preview: rect('preview-screen'), obscured: modalOpen || Boolean(window.IntelioHome?.covers?.()) }));
+  resizeFrame = requestAnimationFrame(() => api.layout({ telegram: focusMode ? null : rect('telegram-slot'), browser: browserRect(), preview: rect('preview-screen'), obscured: modalOpen || Boolean(window.IntelioHome?.covers?.()) || Boolean(window.IntelioPages?.covers?.()) }));
 }
 window.intelioLayout = scheduleLayout; // intelio home/command bar overlays cover the native views
 // The mini VM window is anchored bottom-right until dragged; its saved offset

@@ -941,6 +941,29 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return Array.isArray(parsed?.data) ? parsed.data : [];
   }
 
+  /**
+   * Plaud meeting transcripts (GET /api/transcripts on the phone server). Each profile's own
+   * key reads that profile's folder; without one, intelio's key reads intelio's folder filtered
+   * to recordings tagged for that client.
+   */
+  async function listTranscripts(value = {}) {
+    const want = harnessId(value.profile) || 'intelio';
+    const query = new URLSearchParams();
+    if (value.q) query.set('q', String(value.q).slice(0, 200));
+    if (value.limit) query.set('limit', String(Math.min(Number(value.limit) || 40, 200)));
+    if (value.offset) query.set('offset', String(Number(value.offset) || 0));
+    const options = { expectId: false, timeoutMs: 15000 };
+    const key = await getKey(want).catch(() => '');
+    let parsed = await pwaRequest(want, key, '/api/transcripts', null, { ...options, query: query.toString() });
+    if (!parsed && want !== 'intelio') {
+      const mainKey = await getKey('intelio').catch(() => '');
+      query.set('client', want);
+      parsed = await pwaRequest('intelio', mainKey, '/api/transcripts', null, { ...options, query: query.toString() });
+    }
+    if (!parsed || !Array.isArray(parsed.items)) throw new Error('Could not reach the transcripts on the VPS.');
+    return parsed;
+  }
+
   async function agentPause(profile, paused) {
     const id = harnessId(profile) || 'intelio';
     const key = await getKey(id).catch(() => '');
@@ -1026,6 +1049,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
           case 'session-model': return await sessionModel(value.profile, value);
           case 'agent-model': return await agentModel(value.profile, value);
           case 'screens': return { data: await listRemoteScreens() };
+          case 'transcripts': return await listTranscripts(value || {});
           case 'skill-preview': {
             const targets = (Array.isArray(value.profiles) ? value.profiles : []).map((id) => harnessId(id)).filter(Boolean).slice(0, 12);
             return await skillRequest(targets[0] || 'intelio', '/api/skills/preview', { url: String(value.url || '').slice(0, 600), profiles: targets, category: String(value.category || '').slice(0, 64) });

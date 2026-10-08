@@ -269,7 +269,7 @@
     if (name.toLowerCase() === 'intelio') return 'intelio';
     return name || 'intelio';
   }
-  const CLIENT_VERSION = 'intelio-pwa-27';
+  const CLIENT_VERSION = 'intelio-pwa-28';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);
@@ -884,6 +884,16 @@
     profileRow.type = 'button';
     profileRow.addEventListener('click', () => openBrowser('agent'));
     panel.append(profileRow);
+    if (window.IntelioPages) {
+      panel.append(el('div', 'kicker', 'TOOLS'));
+      for (const [id, label] of [['workspace', 'Workspace'], ['transcripts', 'Transcripts']]) {
+        const row = el('button', 'navbtn', label);
+        row.type = 'button';
+        row.dataset.page = id;
+        row.addEventListener('click', () => { state.drawer = false; render(); window.IntelioPages.open(id); });
+        panel.append(row);
+      }
+    }
     panel.append(el('div', 'kicker', 'THREADS'));
     const sides = el('div', 'sides');
     const threads = visibleChats();

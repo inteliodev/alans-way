@@ -1,0 +1,93 @@
+/*
+ * intelio pages: Workspace and Transcripts (desktop/src/intelio/pages.cjs).
+ * Colors come from the theme's --text / --bg, so Light, Blue and Dark all work on the
+ * desktop window and the phone.
+ */
+:root { --ip-fg: var(--text, #f5f5f7); --ip-bg: var(--bg, #09090a); }
+html[data-theme="light"] { --ip-fg: var(--text, #1c1c21); --ip-bg: var(--bg, #ffffff); }
+html[data-theme="blue"] { --ip-fg: var(--text, #ffffff); --ip-bg: var(--bg, #0000e8); }
+:root {
+  --ip-fg-2: color-mix(in srgb, var(--ip-fg) 72%, transparent);
+  --ip-fg-3: color-mix(in srgb, var(--ip-fg) 52%, transparent);
+  --ip-line: color-mix(in srgb, var(--ip-fg) 11%, transparent);
+  --ip-line-2: color-mix(in srgb, var(--ip-fg) 22%, transparent);
+  --ip-card: color-mix(in srgb, var(--ip-fg) 4%, var(--ip-bg));
+  --ip-card-2: color-mix(in srgb, var(--ip-fg) 9%, var(--ip-bg));
+}
+
+/* ---- sidebar entries (desktop) ---- */
+.ip-nav { display: flex; flex-direction: column; gap: 2px; padding: 6px 10px 6px; border-top: 1px solid var(--ip-line); flex-shrink: 0; }
+.ip-nav-item { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border-radius: 8px; color: var(--ip-fg-2); font-size: 13px; text-align: left; width: 100%; }
+.ip-nav-item:hover { background: var(--ip-card-2); color: var(--ip-fg); }
+.ip-nav-item[aria-pressed="true"] { background: var(--ip-card-2); color: var(--ip-fg); box-shadow: inset 0 0 0 1px var(--ip-line-2); }
+.ip-nav-item span:not(.ip-icon) { flex: 1; min-width: 0; }
+.ip-nav-item .ip-icon { color: var(--ip-fg-3); }
+.ip-nav-item[aria-pressed="true"] .ip-icon { color: var(--ip-fg); }
+
+/* ---- the page ---- */
+.ip-icon { display: inline-flex; width: 16px; height: 16px; flex: none; }
+.ip-icon svg { width: 100%; height: 100%; stroke: currentColor; stroke-width: 1.6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.ip-overlay { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 40; display: flex; flex-direction: column; background: var(--ip-bg); color: var(--ip-fg); font-family: var(--intelio-font, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif); }
+.ip-overlay[hidden], .ip-page[hidden] { display: none !important; }
+.ip-overlay.ip-desktop { border-left: 1px solid var(--ip-line); }
+.ip-overlay.ip-phone { z-index: 60; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.ip-overlay button, .ip-overlay a, .ip-overlay input { font: inherit; color: inherit; }
+.ip-overlay button { background: none; border: 0; cursor: pointer; }
+.ip-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ip-head { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 10px 16px; border-bottom: 1px solid var(--ip-line); flex: none; -webkit-app-region: drag; }
+.ip-head > * { -webkit-app-region: no-drag; }
+.ip-overlay.ip-desktop .ip-head { min-height: 70px; padding-top: 22px; }
+.ip-title { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-app-region: drag; }
+.ip-spacer { flex: 1; }
+.ip-count { font-size: 12px; color: var(--ip-fg-3); white-space: nowrap; }
+.ip-btn { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px; border-radius: 8px; border: 1px solid var(--ip-line-2) !important; background: var(--ip-card) !important; font-size: 12.5px; font-weight: 550; text-decoration: none; white-space: nowrap; }
+.ip-btn:hover { background: var(--ip-card-2) !important; }
+.ip-btn[disabled] { opacity: .6; cursor: default; }
+.ip-icon-btn { width: 30px; padding: 0; justify-content: center; }
+
+/* ---- Workspace ---- */
+.ip-frame-wrap { position: relative; flex: 1; min-height: 0; }
+.ip-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; }
+.ip-frame-note { position: absolute; inset: auto 0 45% 0; margin: 0; padding: 0 24px; text-align: center; font-size: 12.5px; color: var(--ip-fg-3); }
+
+/* ---- Transcripts ---- */
+.ip-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--ip-line); flex: none; }
+.ip-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ip-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--ip-line) !important; font-size: 12px; color: var(--ip-fg-2) !important; }
+.ip-chip:hover { border-color: var(--ip-line-2) !important; color: var(--ip-fg) !important; }
+.ip-chip[aria-checked="true"] { border-color: var(--ip-fg) !important; color: var(--ip-fg) !important; background: var(--ip-card) !important; }
+.ip-chip-count { font-size: 11px; color: var(--ip-fg-3); }
+.ip-search { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; margin-left: auto; min-width: 220px; flex: 0 1 340px; border-radius: 9px; border: 1px solid var(--ip-line-2); background: var(--ip-card); color: var(--ip-fg-3); }
+.ip-search-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 13px; }
+.ip-scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--ip-line-2) transparent; }
+.ip-list { max-width: 920px; margin: 0 auto; padding: 14px 16px 40px; display: flex; flex-direction: column; gap: 8px; }
+.ip-card { border: 1px solid var(--ip-line); border-radius: 12px; background: var(--ip-card); overflow: hidden; }
+.ip-card--open { border-color: var(--ip-line-2); }
+.ip-card-head { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 12px 14px 4px; text-align: left; }
+.ip-card-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ip-card-title { font-size: 14px; font-weight: 600; line-height: 1.35; }
+.ip-card-meta { font-size: 11.5px; color: var(--ip-fg-3); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ip-tag { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--ip-line-2); font-size: 10.5px; color: var(--ip-fg-2); }
+.ip-caret { font-size: 20px; line-height: 1; color: var(--ip-fg-3); transition: transform .15s; }
+.ip-caret--open { transform: rotate(90deg); }
+.ip-excerpt { margin: 0; padding: 2px 14px 12px; font-size: 12.5px; line-height: 1.55; color: var(--ip-fg-2); }
+.ip-block { padding: 4px 14px 8px; }
+.ip-block h3 { margin: 6px 0 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ip-fg-3); font-weight: 650; }
+.ip-actions { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.55; }
+.ip-summary { font-size: 13px; line-height: 1.6; color: var(--ip-fg-2); }
+.ip-summary h4 { margin: 10px 0 4px; font-size: 13px; color: var(--ip-fg); }
+.ip-summary p { margin: 0 0 8px; }
+.ip-summary ul { margin: 0 0 8px; padding-left: 18px; }
+.ip-file { margin: 0; padding: 0 14px 12px; font: 10.5px "Geist Mono", ui-monospace, Menlo, monospace; color: var(--ip-fg-3); word-break: break-all; }
+.ip-more { align-self: center; margin-top: 6px; }
+.ip-empty, .ip-error { margin: 30px 0; text-align: center; font-size: 13px; color: var(--ip-fg-3); }
+.ip-error { color: var(--ip-fg-2); }
+.ip-link { text-decoration: underline; padding: 0; }
+
+@media (max-width: 700px) {
+  .ip-toolbar { padding: 10px 12px; }
+  .ip-search { margin-left: 0; flex: 1 1 100%; min-width: 0; }
+  .ip-list { padding: 10px 10px 30px; }
+  .ip-head .ip-btn span:not(.ip-icon) { display: none; }
+  .ip-head .ip-btn:not(.ip-icon-btn) { width: 30px; padding: 0; justify-content: center; }
+}

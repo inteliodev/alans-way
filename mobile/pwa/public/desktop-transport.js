@@ -38,7 +38,7 @@
   function baseState() {
     return {
       name: 'intelio',
-      version: '0.3.29',
+      version: '0.3.30',
       intelio: { ok: true, profileName: 'intelio', brand: { mark: '/icon-192.png' }, hermes: {} },
       bots: [],
       order: [],
@@ -340,6 +340,11 @@
       return true;
     }
     if (name === 'screens') return fetchJson('/api/screens');
+    if (name === 'transcripts') {
+      const query = new URLSearchParams();
+      for (const key of ['profile', 'client', 'q', 'limit', 'offset']) if (value[key] !== undefined && value[key] !== '') query.set(key, String(value[key]));
+      return fetchJson(`/api/transcripts?${query}`);
+    }
     if (name === 'skills') return fetchJson('/api/skills', { profile });
     if (name === 'skill-preview') {
       const profiles = Array.isArray(value.profiles) ? value.profiles.slice(0, 12) : [];
