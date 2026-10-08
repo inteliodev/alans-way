@@ -387,6 +387,10 @@ The Sessions tab has a client row: All, intelio, PRC, Alignment, HHP and ARLP. P
 
 Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
 
+## 0.3.29
+
+intelio computers: agents can use this computer and the VPS (`mcp__intelio_computers__*`), with an on/off box per computer, a Stop notice, activity logs, the ARLP/managed-PC hold, and terminal sessions (Settings, This computer, Open Terminal). On a local computer, deleting files, pushing code and installing software ask Hayden first (Allow once / Deny, deny after 120 s); everything else runs on its own. Settings has "Ask before deletes, pushes and installs" per computer, on by default. The VPS (`cloud`) is covered by the VPS push guard instead. The Agents list shows every agent with a saved key, so ARLP appears on the Tailscale route. Phone client `intelio-pwa-27`. Service worker cache `intelio-pwa-31`. Asset query `?v=30`. VPS: check out main, re-run `mobile/deploy/install-on-vps.sh` (sets `INTELIO_NODES=1`, restarts intelio-pwa only), then alans-way-agents `setup.sh --computers-profiles intelio`.
+
 ## 0.3.28
 
 Themes come in three, in this order: Light, Blue and Dark. The bottom-left button cycles light → blue → dark and Settings → Appearance lists Light / Blue / Dark, on desktop and phone. Blue is white on electric blue (`#0000e8`) with pale-blue accents (`#cfdcff`). The Watching section is gone from the Agents sidebar; screens stay on the top-right grid.
