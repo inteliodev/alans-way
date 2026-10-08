@@ -14,7 +14,7 @@ function registry() {
       run: ({ agent }) => { ran.push(agent); return Commands.ok(`Switched to ${agent}.`); },
     },
     { id: 'screen.open', title: 'Open screen', args: [{ name: 'n', type: 'number', required: true, min: 1, max: 4 }], phrases: ['open screen {n}'], run: ({ n }) => Commands.ok(`Screen ${n}.`) },
-    { id: 'theme.set', title: 'Set theme', args: [{ name: 'theme', type: 'string', required: true, enum: ['light', 'dark', 'blue'] }], run: ({ theme }) => Commands.ok(theme) },
+    { id: 'theme.set', title: 'Set theme', args: [{ name: 'theme', type: 'string', required: true, enum: ['light', 'blue', 'dark'] }], run: ({ theme }) => Commands.ok(theme) },
     { id: 'agent.only', title: 'Agent-callable', sources: ['agent'], run: () => Commands.ok('agent') },
     { id: 'boom.now', title: 'Throws', run: () => { throw new Error('kaboom'); } },
   ]);
@@ -48,7 +48,7 @@ test('run validates args, never throws, and respects sources', async () => {
   assert.match((await reg.run('screen.open', { n: 9 })).error, /at most 4/);
   assert.equal((await reg.run('screen.open', { n: '2' })).summary, 'Screen 2.');
   assert.equal((await reg.run('theme.set', { theme: 'BLUE' })).summary, 'blue');
-  assert.match((await reg.run('theme.set', { theme: 'yellow' })).error, /one of light, dark, blue/);
+  assert.match((await reg.run('theme.set', { theme: 'yellow' })).error, /one of light, blue, dark/);
   assert.match((await reg.run('home.open', { extra: 1 })).error, /unknown argument/);
   assert.match((await reg.run('boom.now')).error, /kaboom/);
   assert.match((await reg.run('nope.cmd')).error, /Unknown command/);

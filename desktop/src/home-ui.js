@@ -315,12 +315,12 @@
       entries: () => ["Agent's computer", 'Your Mac', 'Screen 3', 'Screen 4'].map((label, index) => ({ key: String(index + 1), title: `Open screen ${index + 1}`, subtitle: label, args: { n: index + 1 }, keywords: [label], hint: `${index + 1}`, order: 30 + index * 0.01 })),
       run: ({ n }) => openScreen(n),
     },
-    { id: 'theme.toggle', title: 'Toggle theme', description: 'Next theme', group: 'App', order: 60, keywords: ['dark', 'light', 'blue', 'appearance'], phrases: ['toggle theme', 'switch theme', 'change theme'], run: () => { const button = doc.getElementById('theme-toggle'); if (!button) return Commands.fail('The theme switch is not on this page.'); button.click(); return Commands.ok(`${themeNow()} theme.`); } },
+    { id: 'theme.toggle', title: 'Toggle theme', description: 'Next theme', group: 'App', order: 60, keywords: ['light', 'blue', 'dark', 'appearance'], phrases: ['toggle theme', 'switch theme', 'change theme'], run: () => { const button = doc.getElementById('theme-toggle'); if (!button) return Commands.fail('The theme switch is not on this page.'); button.click(); return Commands.ok(`${themeNow()} theme.`); } },
     {
       id: 'theme.set', title: 'Set theme', group: 'App', order: 61,
-      args: [{ name: 'theme', type: 'string', required: true, enum: ['light', 'dark', 'blue'] }],
+      args: [{ name: 'theme', type: 'string', required: true, enum: ['light', 'blue', 'dark'] }],
       phrases: ['{theme} theme', 'use the {theme} theme'],
-      entries: () => ['light', 'dark', 'blue'].map((theme, index) => ({ key: theme, title: `${theme[0].toUpperCase()}${theme.slice(1)} theme`, args: { theme }, subtitle: themeNow() === theme ? 'On now' : '', keywords: ['appearance'], order: 61 + index * 0.01 })),
+      entries: () => ['light', 'blue', 'dark'].map((theme, index) => ({ key: theme, title: `${theme[0].toUpperCase()}${theme.slice(1)} theme`, args: { theme }, subtitle: themeNow() === theme ? 'On now' : '', keywords: ['appearance'], order: 61 + index * 0.01 })),
       run: ({ theme }) => setTheme(theme),
     },
     { id: 'settings.open', title: 'Open settings', group: 'App', order: 62, keywords: ['preferences', 'options'], phrases: ['open settings', 'settings'], run: () => { const button = doc.getElementById('settings-fallback') || doc.getElementById('settings-button'); if (!button) return Commands.fail('Settings are not on this page.'); hide(); button.click(); return Commands.ok('Settings.'); } },
@@ -851,11 +851,21 @@
     if (view) { paint(); hydrate(view === 'missions' ? 24 : 12); }
   }
 
+  // Ctrl/Cmd+K opens the bar only when focus is in intelio's own UI. A web page in an
+  // agent browser tab (its own WebContentsView, an iframe/webview, or the noVNC screen
+  // of a remote browser) keeps the shortcut for itself.
+  const EMBEDDED_BROWSER = 'webview, iframe, object, embed, canvas, #screen, .vnc-screen, #vnc-screen, .remote-preview-slot, .browser-slot, [data-embedded-browser]';
+  function inEmbeddedBrowser(event) {
+    const targets = [event.target, doc.activeElement];
+    return targets.some((node) => node && node.nodeType === 1 && typeof node.closest === 'function' && Boolean(node.closest(EMBEDDED_BROWSER)));
+  }
+  function commandBarKey(event) {
+    return (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === 'k';
+  }
   doc.addEventListener('keydown', (event) => {
-    if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === 'k') {
-      event.preventDefault();
-      toggleBar();
-    }
+    if (!commandBarKey(event) || inEmbeddedBrowser(event)) return;
+    event.preventDefault();
+    toggleBar();
   }, true);
   // Leaving home: picking a session or agent in the sidebar, or starting a new chat.
   doc.addEventListener('click', (event) => {
@@ -867,6 +877,7 @@
   root.onIntelioSessions = onSessions;
   root.IntelioCommandRegistry = registry;
   root.IntelioHome = {
+    commandBarKey, inEmbeddedBrowser,
     show, hide, toggle, paint, openBar, closeBar, toggleBar, openSkill, appendSettings, registry, sources,
     run: (id, args, source = 'ui') => run(id, args, source),
     covers: () => Boolean((bar && !bar.hidden) || (skillBox && !skillBox.hidden)),

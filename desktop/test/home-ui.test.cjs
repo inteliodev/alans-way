@@ -42,7 +42,7 @@ test('small hooks in shared files: overlays hide native views, Cmd+K reaches the
   assert.match(renderer, /window\.intelioLayout = scheduleLayout;/);
   assert.match(renderer, /window\.IntelioHome\?\.appendSettings\?\.\(body\);/);
   assert.match(read('desktop/src/preload.cjs'), /onCommandBar: \(callback\) => \{ ipcRenderer\.on\('workspace:command-bar'/);
-  assert.match(read('desktop/src/main.cjs'), /label: 'Command Bar', accelerator: 'CmdOrCtrl\+K', click: \(\) => win\?\.webContents\.send\('workspace:command-bar'\)/);
+  assert.match(read('desktop/src/main.cjs'), /label: 'Command Bar', accelerator: 'CmdOrCtrl\+K', registerAccelerator: false, click: \(\) => win\?\.webContents\.send\('workspace:command-bar'\)/, 'the menu shows Ctrl+K but does not grab it from web pages in browser tabs');
   const remote = read('desktop/src/remote-main.js');
   assert.match(remote, /homeState, openListed, newChat, loadAllSessions,/);
   assert.match(remote, /root\.onIntelioSessions\(\)/);
@@ -89,4 +89,12 @@ test('adapted Herald OS code keeps its MIT notice', () => {
   for (const rel of ['desktop/src/home-ui.js', 'desktop/src/home.css', 'desktop/src/intelio/commands.cjs', 'desktop/src/intelio/missions.cjs', 'desktop/src/intelio/home-feed.cjs', 'mobile/pwa/public/home-tab.js']) {
     assert.match(read(rel).slice(0, 1200), /Herald OS/, rel);
   }
+});
+
+test('Ctrl/Cmd+K is only taken in the intelio UI, never from an embedded browser', () => {
+  const source = read('desktop/src/home-ui.js');
+  assert.match(source, /if \(!commandBarKey\(event\) \|\| inEmbeddedBrowser\(event\)\) return;/);
+  for (const sel of ['webview', 'iframe', 'canvas', '#screen', '.remote-preview-slot', '.browser-slot']) assert.ok(source.includes(sel), `embedded browser selector ${sel}`);
+  assert.match(source, /\['light', 'blue', 'dark'\]\.map\(/, 'theme command lists Light, Blue, Dark');
+  assert.match(source, /enum: \['light', 'blue', 'dark'\]/);
 });
