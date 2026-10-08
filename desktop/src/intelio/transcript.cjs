@@ -1,7 +1,9 @@
 /**
  * Chat display. User lines and the assistant's final reply stay as bubbles.
  * Tool calls, tool results, and untrusted-data wrappers become one status chip
- * per run. The chip can open the plain detail. Raw JSON is not the bubble.
+ * per run in present(); the chat views use conversation(), which drops those
+ * chips and shows a single typing bubble while the agent works.
+ * Raw JSON is not the bubble.
  */
 (function intelioTranscript(root, factory) {
   const api = factory();
@@ -228,6 +230,7 @@
     if (rawDetail.includes(' · ') && detail === rawDetail.trim()) detail = '';
     return {
       kind: 'chip',
+      name,
       label: labelFor({ name, detail: rawDetail, running: part.running, failed: part.failed, summary }),
       detail,
       running: Boolean(part.running),
@@ -256,6 +259,7 @@
       });
       out.push({
         kind: 'chip',
+        name: running ? latest.name : '',
         label: running ? latest.label : `Worked through ${run.length} steps`,
         detail: lines.join('\n\n').slice(0, 4000),
         running,
@@ -318,5 +322,46 @@
     return items.find((item) => item.kind === 'chip')?.label || '';
   }
 
-  return { textOf, peel, present, preview, labelFor, plainDetail, readText };
+  /**
+   * What the chat shows: user and agent bubbles only. Tool steps never render;
+   * while the agent works the view ends in one typing bubble whose status is the
+   * latest running step (if any). The reply replaces the bubble.
+   */
+  const DOING = [
+    [/outlook/i, 'Reading Outlook'],
+    [/memory|recall|session[_\s-]?search/i, 'Searching memory'],
+    [/search[_\s-]?files|find[_\s-]?files|grep/i, 'Searching files'],
+    [/read[_\s-]?file|file[_\s-]?read|^view$/i, 'Reading files'],
+    [/write[_\s-]?file|patch|edit|apply[_\s-]?diff/i, 'Editing files'],
+    [/^(exec|terminal|shell|bash|command|run[_\s-]?command)$/i, 'Running a command'],
+    [/web|browse|fetch|crawl|extract|search/i, 'Looking things up'],
+    [/skill/i, 'Checking skills'],
+  ];
+
+  function typingStatus(steps) {
+    const list = Array.isArray(steps) ? steps : [];
+    const latest = [...list].reverse().find((step) => step && step.running);
+    if (!latest) return '';
+    const name = String(latest.name || '').trim();
+    const doing = name ? DOING.find(([pattern]) => pattern.test(name)) : null;
+    const label = doing ? doing[1] : (latest.label || labelFor({ name, detail: latest.detail || '', running: true, summary: latest.summary || '' }));
+    const text = String(label || '').trim();
+    return text ? `${text.replace(/[.…]+$/, '')}…` : '';
+  }
+
+  function conversation(messages, options = {}) {
+    const items = present(messages);
+    const out = [];
+    let tail = [];
+    for (const item of items) {
+      if (item.kind === 'chip') { tail.push(item); continue; }
+      if (item.kind === 'bubble') tail = [];
+      out.push(item);
+    }
+    const running = tail.some((item) => item.running);
+    if (options.working || running) out.push({ kind: 'typing', status: typingStatus(tail) });
+    return out;
+  }
+
+  return { textOf, peel, present, conversation, typingStatus, preview, labelFor, plainDetail, readText };
 });

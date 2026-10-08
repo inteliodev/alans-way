@@ -25,6 +25,14 @@ main { display: flex; flex-direction: column; min-height: 0; padding-top: 28px; 
 .tool-detail { display: none; margin: 0 0 4px 18px; white-space: pre-wrap; color: var(--muted); font: 12px/1.4 inherit; }
 .tool-chip[aria-expanded="true"] + .tool-detail { display: block; }
 @keyframes tool-spin { to { transform: rotate(360deg); } }
+.msg.assistant:empty { display: none; }
+.msg.assistant.typing-bubble { display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 16px 16px 16px 6px; color: var(--muted); white-space: nowrap; }
+.typing-bubble .think-dots { display: inline-flex; gap: 4px; flex: none; }
+.typing-bubble .think-dots i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .35; animation: think-blink 1.2s infinite ease-in-out; }
+.typing-bubble .think-dots i:nth-child(2) { animation-delay: .15s; }
+.typing-bubble .think-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes think-blink { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: .9; transform: translateY(-2px); } }
+.typing-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
 #rh-composer { border-top: 1px solid var(--line); padding: 10px 14px 4px; }
 #rh-composer textarea { width: 100%; resize: vertical; }
 #rh-composer .row { justify-content: flex-end; padding: 6px 0; }

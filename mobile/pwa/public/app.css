@@ -238,6 +238,15 @@ html[data-theme="light"] .screen { background: #fff; }
 .name-pill-status { font-size: 11px; font-weight: 500; color: #9a9aa6; }
 .read-receipt { align-self: flex-end; margin-top: -4px; font-size: 11px; color: #9a9aa6; }
 .stop-all { align-self: flex-start; border: 0; background: none; color: #8a8a96; font-size: 13px; padding: 0; }
+.bubble.bot.typing { display: inline-flex; align-items: center; gap: 8px; max-width: 86%; padding: 12px 16px; color: #8a8a96; white-space: nowrap; }
+.typing .think-dots { display: inline-flex; gap: 4px; flex: none; }
+.typing .think-dots i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .35; animation: think-blink 1.2s infinite ease-in-out; }
+.typing .think-dots i:nth-child(2) { animation-delay: .15s; }
+.typing .think-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes think-blink { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: .9; transform: translateY(-2px); } }
+.typing-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.typing-stop { position: relative; flex: none; width: 20px; height: 20px; margin: 0 -6px 0 2px; padding: 0; border: 0; border-radius: 50%; background: rgba(127, 127, 127, .18); color: inherit; cursor: pointer; }
+.typing-stop::before { content: ''; position: absolute; inset: 7px; border-radius: 1.5px; background: currentColor; }
 .stage { flex: 1; min-height: 0; overflow: auto; padding: 8px 14px 12px; }
 .feed { display: flex; flex-direction: column; gap: 12px; padding-top: 8px; }
 .agents { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 4px; }

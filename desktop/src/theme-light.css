@@ -164,3 +164,6 @@ html[data-theme="light"] .tool-chip.failed { color: #d70015; }
 html[data-theme="light"] .tool-detail { background: #f7f7f9; color: #5e5e68; }
 html[data-theme="light"] .chat-wordmark { color: #111113; }
 html[data-theme="light"] .chat-empty-hint { color: #8e8e93; }
+html[data-theme="light"] .msg.assistant.typing-bubble { color: #6e6e73; }
+html[data-theme="light"] .typing-stop { background: rgba(0, 0, 0, .08); }
+html[data-theme="light"] .typing-stop:hover { background: rgba(0, 0, 0, .14); color: #1c1c21; }

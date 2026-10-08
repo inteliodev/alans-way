@@ -1473,7 +1473,29 @@
     return wrap;
   }
 
-  function threadItems(messages) {
+  /** Agent work is one typing bubble (dots, a short status, a small stop); tool steps are not listed. */
+  function typingBubble(status, onStop) {
+    const wrap = el('div', 'bubble bot typing');
+    wrap.setAttribute('role', 'status');
+    wrap.setAttribute('aria-label', 'The agent is working');
+    const dots = el('span', 'think-dots');
+    dots.setAttribute('aria-hidden', 'true');
+    dots.append(el('i'), el('i'), el('i'));
+    wrap.append(dots);
+    if (status) wrap.append(el('span', 'typing-status', status));
+    if (typeof onStop === 'function') {
+      const stop = el('button', 'typing-stop');
+      stop.type = 'button';
+      stop.title = 'Stop';
+      stop.setAttribute('aria-label', 'Stop');
+      stop.addEventListener('click', onStop);
+      wrap.append(stop);
+    }
+    return wrap;
+  }
+
+  function threadItems(messages, working = false) {
+    if (window.IntelioTranscript?.conversation) return window.IntelioTranscript.conversation(messages, { working });
     if (window.IntelioTranscript) return window.IntelioTranscript.present(messages);
     return messages.map((message) => ({ kind: 'bubble', role: message.role === 'user' ? 'user' : 'assistant', text: message.text || '' }));
   }
@@ -1489,8 +1511,15 @@
 
   function fillThread(thread, messages) {
     thread.replaceChildren();
-    for (const item of threadItems(threadSource(messages))) {
-      if (item.kind === 'chip') thread.append(phoneChip(item));
+    const working = Boolean(state.thinking || (state.bops?.tasks || []).some((task) => task.status === 'running'));
+    const stopAll = () => {
+      if (window.IntelioBops && state.bops) state.bops = window.IntelioBops.stopAll(state.bops);
+      state.thinking = false;
+      render();
+    };
+    for (const item of threadItems(threadSource(messages), working)) {
+      if (item.kind === 'typing') thread.append(typingBubble(item.status || '', working ? stopAll : null));
+      else if (item.kind === 'chip') thread.append(phoneChip(item));
       else if (item.kind === 'read') thread.append(el('div', 'read-receipt', item.text));
       else if (item.kind === 'time') thread.append(el('div', 'stamp', item.text));
       else if (item.kind === 'choice') {
@@ -1499,16 +1528,6 @@
         choice.addEventListener('click', () => sendTurn(item.text));
         thread.append(choice);
       } else if (item.kind === 'bubble' && item.text) thread.append(el('div', `bubble ${item.role === 'user' ? 'user' : 'bot'}`, item.text));
-    }
-    if (state.thinking || (state.bops?.tasks || []).some((task) => task.status === 'running')) {
-      const stop = el('button', 'stop-all', 'Stop all');
-      stop.type = 'button';
-      stop.addEventListener('click', () => {
-        if (window.IntelioBops && state.bops) state.bops = window.IntelioBops.stopAll(state.bops);
-        state.thinking = false;
-        render();
-      });
-      thread.append(stop);
     }
     const block = bopsBlock();
     if (block) thread.append(block);

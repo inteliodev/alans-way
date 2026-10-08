@@ -127,6 +127,14 @@ body:not(.remote-main) #agent-caption-actions { display: flex !important; }
 .stop-all { align-self: flex-start; margin: 0 0 10px; padding: 0; border: 0; background: none; color: #8a8a96; font-size: 13px; cursor: pointer; }
 .tool-live { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; align-self: stretch; margin: 0 0 8px; }
 .msg.assistant:empty { display: none; }
+.msg.assistant.typing-bubble { display: inline-flex; align-items: center; gap: 8px; width: auto; max-width: min(420px, 88%); padding: 10px 14px; border-radius: 18px 18px 18px 6px; color: #9d9da8; white-space: nowrap; }
+.typing-bubble .think-dots { gap: 4px; }
+.typing-bubble .think-dots i { width: 7px; height: 7px; }
+.typing-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.typing-status.hidden { display: none; }
+.typing-stop { position: relative; flex: none; width: 18px; height: 18px; margin: 0 -4px 0 2px; padding: 0; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .12); color: inherit; cursor: pointer; }
+.typing-stop::before { content: ''; position: absolute; inset: 6px; border-radius: 1.5px; background: currentColor; }
+.typing-stop:hover { background: rgba(255, 255, 255, .2); color: #f4f4f8; }
 .bops-head { display: none; }
 .bops-bar { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 0; }
 .bops-bar.hidden { display: none; }
