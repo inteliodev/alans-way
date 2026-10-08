@@ -125,9 +125,10 @@ html[data-theme="light"] .session-group,
 html[data-theme="light"] .all-session .session-agent { color: #a1a1a8; }
 html[data-theme="light"] .session-group::after { background: #ececf0; }
 html[data-theme="light"] .session-section { color: #5b46f5; }
-html[data-theme="light"] .session-chip { color: #55555e; border-color: #e2e2e8; }
-html[data-theme="light"] .session-chip:hover { background: #f3f3f6; color: #1c1c21; }
-html[data-theme="light"] .session-chip[aria-selected="true"] { background: #f1eeff; color: #1c1c21; border-color: #7a5cff; }
+html[data-theme="light"] .session-tools .session-agent-select { color-scheme: light; background: #ffffff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%238e8e93' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 9px center; border-color: #e2e2e8; color: #1c1c21; }
+html[data-theme="light"] .session-tools .session-agent-select:hover { background-color: #f7f7f9; border-color: #d5d5dc; }
+html[data-theme="light"] .session-tools .session-agent-select:focus-visible { border-color: #b8b8c0; box-shadow: 0 0 0 2px rgba(0, 0, 0, .06); }
+html[data-theme="light"] .session-tools .session-agent-select option { background: #ffffff; color: #1c1c21; }
 html[data-theme="light"] .client-apps { background: #f7f7f9; border-color: #ececf0; }
 html[data-theme="light"] .client-apps-name { color: #1c1c21; }
 html[data-theme="light"] .client-apps-suite, html[data-theme="light"] .client-apps-account { color: #8e8e93; }

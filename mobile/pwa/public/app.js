@@ -122,6 +122,7 @@
       lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
       eye: '<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
       moon: '<path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/>',
+      bluetheme: '<circle class="theme-blue-dot" cx="12" cy="12" r="8"/>',
       sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
       waveform: '<path d="M3 12h2M7 8v8M11 5v14M15 8v8M19 10v4"/>',
     };
@@ -237,7 +238,7 @@
 
   const FACE_PX = { avatar: 72, 'avatar sm': 36, 'avatar lg': 148, face: 32, tile: 96, pip: 28, mark: 96 };
   const VPS_AGENTS = ['intelio', 'prc', 'alignment', 'hhp'];
-  const AGENT_NAMES = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+  const AGENT_NAMES = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP', arlp: 'ARLP' };
   function workStatus() {
     const tasks = (state.bops?.tasks || []).filter((task) => task.status === 'running').length;
     const steps = (state.messages || []).filter((row) => row.liveStep && row.status === 'Running').length;
@@ -310,35 +311,60 @@
     return canvas;
   }
 
+  // Light (default), dark, or blue (white on electric blue). Saved on this device.
+  const THEME_ORDER = ['light', 'dark', 'blue'];
+  const THEME_LABEL = { light: 'Light', dark: 'Dark', blue: 'Blue' };
+  const THEME_BAR = { light: '#f4f4f6', dark: '#070708', blue: '#0000e8' };
+
   function storedTheme() {
     const saved = localStorage.getItem('intelio-theme');
-    return saved === 'light' || saved === 'dark' ? saved : '';
+    return saved === 'light' || saved === 'dark' || saved === 'blue' ? saved : '';
   }
 
   function currentTheme() {
-    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+    const theme = document.documentElement.dataset.theme;
+    return theme === 'dark' || theme === 'blue' ? theme : 'light';
+  }
+
+  function followingTheme(theme) {
+    return THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length];
   }
 
   function themeIconButton() {
-    const light = currentTheme() === 'light';
+    const after = followingTheme(currentTheme());
     const button = el('button', 'iconbtn theme-toggle');
     button.type = 'button';
     button.id = 'theme-toggle';
-    button.title = light ? 'Dark mode' : 'Light mode';
-    button.setAttribute('aria-label', button.title);
-    button.append(icon(light ? 'moon' : 'sun'));
+    button.title = `${THEME_LABEL[after]} theme`;
+    button.setAttribute('aria-label', `Switch to the ${THEME_LABEL[after]} theme`);
+    button.append(icon(after === 'dark' ? 'moon' : after === 'blue' ? 'bluetheme' : 'sun'));
     button.addEventListener('click', () => {
-      setTheme(light ? 'dark' : 'light', true);
+      setTheme(after, true);
       render();
     });
     return button;
   }
 
+  function themePicker() {
+    const group = el('div', 'theme-picker');
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', 'Appearance');
+    const current = currentTheme();
+    for (const name of THEME_ORDER) {
+      const choice = el('button', `theme-choice theme-choice-${name}`, THEME_LABEL[name]);
+      choice.type = 'button';
+      choice.setAttribute('aria-pressed', String(name === current));
+      choice.addEventListener('click', () => { setTheme(name, true); render(); });
+      group.append(choice);
+    }
+    return group;
+  }
+
   function setTheme(mode, persist) {
-    const next = mode === 'light' ? 'light' : 'dark';
+    const next = mode === 'dark' || mode === 'blue' ? mode : 'light';
     if (persist) localStorage.setItem('intelio-theme', next);
     document.documentElement.dataset.theme = next;
-    const color = next === 'light' ? '#f4f4f6' : '#070708';
+    const color = THEME_BAR[next];
     document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
       meta.setAttribute('content', color);
       meta.removeAttribute('media');
@@ -592,38 +618,67 @@
     return button;
   }
 
-  function agentLine(profile) {
-    const button = el('button', 'agent-line');
-    button.type = 'button';
-    button.append(face(profile, 'pip'), el('span', 'agent-line-name', agentLabel(profile)), el('span', 'agent-role', agentRole(profile)));
-    button.addEventListener('click', () => openAgentChat(profile));
-    return button;
+  const SESSION_AGENT_KEY = 'intelio-session-agent';
+  /** The Sessions filter: '' is All agents. Shared with the web desktop on this origin. */
+  function sessionAgent() {
+    if (state.sessionAgent === undefined) {
+      try { state.sessionAgent = String(localStorage.getItem(SESSION_AGENT_KEY) || '').trim().toLowerCase(); } catch { state.sessionAgent = ''; }
+    }
+    const id = state.sessionAgent || '';
+    return id && vpsAgents(state.home.profiles).some((profile) => profile.id === id) ? id : '';
   }
 
-  function watchingBlock() {
-    const rows = (state.screens || []).filter((row) => row && row.host && !excludedAgent(row.profileId));
-    if (!rows.length) return null;
-    const wrap = el('section', 'side-block');
-    wrap.append(el('p', 'section-label', 'WATCHING'));
-    rows.forEach((row) => {
-      const button = el('button', 'watch-row');
-      button.type = 'button';
-      const name = agentLabel(profileById(row.profileId) || { id: row.profileId, name: row.name });
-      const extra = rows.filter((item) => item.profileId === row.profileId).length > 1 ? ` ${row.screen}` : '';
-      button.append(icon('eye'), el('strong', '', row.host), el('span', '', ` · ${name}'s screen${extra}`));
-      button.addEventListener('click', () => {
-        state.bot = profileById(row.profileId) || state.bot;
-        openBrowser('computer');
-      });
-      wrap.append(button);
-    });
+  function setSessionAgent(id) {
+    haptic();
+    state.sessionAgent = String(id || '').trim().toLowerCase();
+    try {
+      if (state.sessionAgent) localStorage.setItem(SESSION_AGENT_KEY, state.sessionAgent);
+      else localStorage.removeItem(SESSION_AGENT_KEY);
+    } catch { /* the filter still applies until reload */ }
+    const picked = state.sessionAgent ? vpsAgents(state.home.profiles).find((profile) => profile.id === state.sessionAgent) : null;
+    if (picked) state.bot = picked;
+    render();
+  }
+
+  /** One compact dropdown instead of a list of agents: All agents, intelio, PRC, Alignment, HHP, ARLP. */
+  function sessionFilter() {
+    const wrap = el('label', 'session-filter');
+    wrap.append(el('span', 'session-filter-label', 'Showing'));
+    const select = document.createElement('select');
+    select.className = 'session-filter-select';
+    select.setAttribute('aria-label', 'Show sessions for');
+    const current = sessionAgent();
+    const rows = [{ id: '', name: 'All agents' }, ...vpsAgents(state.home.profiles).map((profile) => ({ id: profile.id, name: agentLabel(profile) }))];
+    for (const row of rows) {
+      const option = document.createElement('option');
+      option.value = row.id;
+      option.textContent = row.name;
+      option.selected = row.id === current;
+      select.append(option);
+    }
+    select.value = current;
+    select.addEventListener('change', () => setSessionAgent(select.value));
+    wrap.append(select);
     return wrap;
   }
 
-  function threadLine(row) {
+  /** Threads under the Sessions filter: every agent's for All agents, newest first. */
+  function filteredChats() {
+    const id = sessionAgent();
+    const q = state.query.trim().toLowerCase();
+    return state.home.conversations.filter((row) => {
+      const profile = String(row.profileId || '').toLowerCase();
+      if (excludedAgent(profile)) return false;
+      if (id && profile !== id) return false;
+      return !q || `${row.title} ${row.preview}`.toLowerCase().includes(q);
+    }).sort((a, b) => (id ? 0 : String(b.updated_at || '').localeCompare(String(a.updated_at || ''))));
+  }
+
+  function threadLine(row, { showAgent = false } = {}) {
     const button = el('button', `thread-line${row.id === state.chatId ? ' on' : ''}`);
     button.type = 'button';
     button.append(el('span', 'thread-title', row.title || 'Untitled'));
+    if (showAgent) button.append(el('span', 'thread-agent', agentLabel(profileById(row.profileId) || { id: row.profileId })));
     if (row.id === state.chatId && (state.thinking || state.connecting)) button.append(el('span', 'thread-dot'));
     button.addEventListener('click', () => openChat(row));
     return button;
@@ -633,19 +688,13 @@
     const list = el('div', 'home-list');
     list.id = 'list';
     list.append(leadCard());
-    const others = vpsAgents(state.home.profiles).filter((profile) => profile.id !== state.bot?.id);
-    if (others.length) {
-      const agents = el('div', 'agent-lines');
-      for (const profile of others) agents.append(agentLine(profile));
-      list.append(agents);
-    }
-    const watching = watchingBlock();
-    if (watching) list.append(watching);
+    if (vpsAgents(state.home.profiles).length > 1) list.append(sessionFilter());
     const threads = el('section', 'side-block');
     threads.append(el('p', 'section-label', 'THREADS'));
-    const rows = visibleChats();
+    const all = !sessionAgent();
+    const rows = filteredChats();
     if (!rows.length) threads.append(el('p', 'empty', state.sample ? 'No sample conversations.' : 'No conversations yet.'));
-    for (const row of rows) threads.append(threadLine(row));
+    for (const row of rows) threads.append(threadLine(row, { showAgent: all }));
     list.append(threads);
     return list;
   }
@@ -1956,7 +2005,7 @@
     wrap.append(saved);
     wrap.append(el('p', '', 'Site, username, agent and last use for every agent. Passwords stay encrypted on your server and are never shown.'));
     wrap.append(el('h2', '', 'Appearance'));
-    wrap.append(themeIconButton(), el('p', '', 'Light is the default. Your choice is saved on this device.'));
+    wrap.append(themePicker(), el('p', '', 'Light is the default. Blue is white on electric blue. Your choice is saved on this device.'));
     wrap.append(el('h2', '', 'About'));
     wrap.append(el('p', '', 'intelio · Alan’s Way'));
     wrap.append(el('p', 'version', `Version ${CLIENT_VERSION}`));
