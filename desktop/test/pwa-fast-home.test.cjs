@@ -165,3 +165,94 @@ test('listProfiles can skip the hermes CLI and list profile folders only', async
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('a failing /v1/skills is remembered so polling /api/home does not re-ask the gateway every refresh', async () => {
+  const hits = [];
+  const upstream = mockHermes(hits);
+  const upstreamPort = await listen(upstream);
+  const home = profileHome(['intelio', 'hhp']);
+  let clock = Date.now();
+  const app = createPwaServer({
+    bind: '127.0.0.1', port: 0, upstream: `http://127.0.0.1:${upstreamPort}`, fetchImpl: globalThis.fetch,
+    profileKey: KEYS.intelio, identify: allowLocal, profileHome: home,
+    profileRun: async () => ({ code: 0, stdout: 'intelio\nhhp\n' }),
+    profileOps: { keyFor: (id) => KEYS[id] },
+    probeTimeoutMs: 400,
+    now: () => clock,
+    skillsTtlMs: 1000,
+    skillsErrorTtlMs: 60000,
+  });
+  const address = await app.listen();
+  const skillHits = () => hits.filter((url) => url.endsWith('/v1/skills')).length;
+  try {
+    for (let i = 0; i < 5; i += 1) {
+      const res = await request(address.port, '/api/home');
+      assert.equal(res.status, 200, res.body);
+      assert.equal(JSON.parse(res.body).skillsOk, false);
+    }
+    assert.equal(skillHits(), 1, 'five home refreshes ask /v1/skills once');
+
+    const primary = (await request(address.port, '/api/home').then((res) => JSON.parse(res.body))).profiles[0].id;
+    const direct = await request(address.port, `/api/skills?profile=${primary}`);
+    assert.equal(direct.status, 404);
+    assert.equal(skillHits(), 1, '/api/skills reuses the remembered failure');
+
+    clock += 60001;
+    await request(address.port, '/api/home');
+    assert.equal(skillHits(), 2, 'the failure is retried once it expires');
+  } finally {
+    await closeServer(app.server);
+    await closeServer(upstream);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('a good /v1/skills list is cached briefly and a timeout is not cached', async () => {
+  let skillCalls = 0;
+  let hang = true;
+  const upstream = http.createServer((req, res) => {
+    const profile = /^\/p\/([a-z0-9-]+)\//.exec(req.url)?.[1] || '';
+    if (req.headers.authorization !== `Bearer ${KEYS[profile]}`) { res.statusCode = 401; res.end('{}'); return; }
+    if (req.url === `/p/${profile}/v1/skills`) {
+      skillCalls += 1;
+      if (hang) return; // first call never answers
+      res.end(JSON.stringify({ data: [{ name: 'notes', description: 'Take notes' }] }));
+      return;
+    }
+    if (req.url.startsWith(`/p/${profile}/api/sessions?`)) { res.end('{"data":[]}'); return; }
+    if (req.url === `/p/${profile}/api/jobs`) { res.end('[]'); return; }
+    if (req.url === `/p/${profile}/v1/capabilities`) { res.end('{"features":{}}'); return; }
+    res.statusCode = 404;
+    res.end('{}');
+  });
+  const upstreamPort = await listen(upstream);
+  const home = profileHome(['intelio']);
+  let clock = Date.now();
+  const app = createPwaServer({
+    bind: '127.0.0.1', port: 0, upstream: `http://127.0.0.1:${upstreamPort}`, fetchImpl: globalThis.fetch,
+    profileKey: KEYS.intelio, identify: allowLocal, profileHome: home,
+    profileRun: async () => ({ code: 0, stdout: 'intelio\n' }),
+    profileOps: { keyFor: (id) => KEYS[id] },
+    probeTimeoutMs: 300,
+    now: () => clock,
+    skillsTtlMs: 1000,
+  });
+  const address = await app.listen();
+  try {
+    const slow = JSON.parse((await request(address.port, '/api/home')).body);
+    assert.equal(slow.skillsOk, false);
+    hang = false;
+    const ok = JSON.parse((await request(address.port, '/api/home')).body);
+    assert.equal(ok.skillsOk, true, 'a timeout was not remembered as a failure');
+    assert.equal(skillCalls, 2);
+    await request(address.port, '/api/home');
+    assert.equal(skillCalls, 2, 'a good list is served from cache');
+    clock += 1001;
+    await request(address.port, '/api/home');
+    assert.equal(skillCalls, 3, 'and refreshed after skillsTtlMs');
+  } finally {
+    await closeServer(app.server);
+    await closeServer(upstream);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
