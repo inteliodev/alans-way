@@ -88,12 +88,27 @@ function importRemoteHermesKey({ file, profile, safeStorage, readKeys, writeKeys
   return { imported: true, profiles: names, vnc: Boolean(parsed[VNC_KEY]), notice: 'Connected to VPS Hermes', profile: profile || names[0] };
 }
 
+/** Most profile keys one bootstrap reply may add. */
+const BOOTSTRAP_MAX = 64;
+
+/**
+ * Every profile the VPS lists comes back from /intelio/bootstrap, so an agent
+ * created after the first sign-in (arlp) gets its key too. Names are profile
+ * slugs; anything else in the reply is ignored.
+ */
 function secretsFromBootstrap(body) {
   const parsed = {};
-  if (!body || typeof body !== 'object') return parsed;
-  for (const name of ['intelio', 'prc', 'alignment', 'hhp']) {
-    const value = String(body[name] || '').trim();
-    if (value.length >= 16 && value.length <= 4096) parsed[name] = value;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return parsed;
+  let count = 0;
+  for (const [raw, rawValue] of Object.entries(body)) {
+    const name = String(raw || '').trim().toLowerCase();
+    if (name === VNC_KEY || name === 'default' || !PROFILE_RE.test(name)) continue;
+    if (typeof rawValue !== 'string') continue;
+    const value = rawValue.trim();
+    if (value.length < 16 || value.length > 4096) continue;
+    parsed[name] = value;
+    count += 1;
+    if (count >= BOOTSTRAP_MAX) break;
   }
   const vnc = String(body.vnc || '').trim();
   if (vnc.length >= 1 && vnc.length <= 256) parsed[VNC_KEY] = vnc;
@@ -209,30 +224,62 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
+  /**
+   * Fetches the profile keys over the signed-in cloud origin. The tailnet
+   * listener never hands keys out, so this needs the cloud sign-in cookie even
+   * when the app is on Tailscale. Keys merge in; a key the reply does not
+   * mention stays. Returns { ok, added, reason }.
+   */
   async function maybeBootstrap(force = false) {
-    if (!resolved || resolved.mode !== 'cloud') return;
-    if (!force && profileNames(readKeys()).length) return;
-    if (!(await hasCloudCookie(resolved.origin))) return;
-    if (!safeStorage || !safeStorage.isEncryptionAvailable()) return;
+    if (!force && (!resolved || resolved.mode !== 'cloud')) return { ok: false, reason: 'not-cloud' };
+    if (!force && profileNames(readKeys()).length) return { ok: true, added: [] };
+    const origin = resolved?.mode === 'cloud' ? resolved.origin : cloudTargets().origin;
+    if (!(await hasCloudCookie(origin))) return { ok: false, reason: 'sign-in' };
+    if (!safeStorage || !safeStorage.isEncryptionAvailable()) return { ok: false, reason: 'keychain' };
     const ses = sessionFor(CLOUD_PARTITION);
-    if (!ses) return;
-    const url = `${resolved.origin}/intelio/bootstrap`;
+    if (!ses) return { ok: false, reason: 'sign-in' };
+    const url = `${origin}/intelio/bootstrap`;
     const doFetch = (target, init) => ses.fetch(target, init);
     let response;
     try {
       response = await doFetch(url, { redirect: 'manual', headers: { Accept: 'application/json' } });
     } catch {
       process.stderr.write('Intelio Cloud key bootstrap failed.\n');
-      return;
+      return { ok: false, reason: 'unreachable' };
     }
-    if (!response || !response.ok) return;
+    if (!response || !response.ok) return { ok: false, reason: response?.status === 401 || response?.status === 403 || (response?.status >= 300 && response?.status < 400) ? 'sign-in' : 'server' };
     let body;
-    try { body = await response.json(); } catch { return; }
+    try { body = await response.json(); } catch { return { ok: false, reason: 'server' }; }
     const parsed = secretsFromBootstrap(body);
-    if (!profileNames(parsed).length) return;
+    if (!profileNames(parsed).length) return { ok: false, reason: 'server' };
     const keys = readKeys();
+    const added = profileNames(parsed).filter((name) => !keys[name]);
     for (const name of Object.keys(parsed)) keys[name] = safeStorage.encryptString(parsed[name]).toString('base64');
     writeKeys(keys);
+    return { ok: true, added };
+  }
+
+  // One refresh at a time, and not more than once every few seconds.
+  let keyRefresh = null;
+  let keyRefreshAt = 0;
+  let keyRefreshResult = null;
+  async function refreshKeys({ minGapMs = 5000 } = {}) {
+    if (keyRefresh) return keyRefresh;
+    if (keyRefreshResult && Date.now() - keyRefreshAt < minGapMs) return keyRefreshResult;
+    keyRefresh = (async () => {
+      try {
+        const result = await maybeBootstrap(true);
+        keyRefreshResult = result;
+        keyRefreshAt = Date.now();
+        if (result?.added?.length) notify();
+        return result;
+      } catch {
+        return { ok: false, reason: 'server' };
+      } finally {
+        keyRefresh = null;
+      }
+    })();
+    return keyRefresh;
   }
 
   function closeSignInPoll() {
@@ -313,8 +360,10 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     if (choice.mode === 'cloud') {
       needsSignIn = !(await hasCloudCookie(choice.origin));
       if (gen !== generation) return resolved;
-      if (!needsSignIn) await maybeBootstrap();
-      else openSignIn();
+      if (needsSignIn) openSignIn();
+      else if (!profileNames(readKeys()).length) await maybeBootstrap();
+      // Pick up agents created since the last sign-in without holding up startup.
+      else refreshKeys().catch(() => {});
     } else {
       needsSignIn = false;
     }
@@ -557,10 +606,23 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
       try { parsed = JSON.parse(text); } catch { parsed = {}; }
       if (!response.ok) throw new Error(parsed.error || 'Could not create that agent.');
       if (text.includes('API_SERVER_KEY') || /sk-[a-z0-9]{8,}/i.test(text)) throw new Error('Could not create that agent.');
-      return parsed;
+      // The new agent's key comes down with the other profile keys.
+      const id = String(parsed.id || '');
+      const keyed = await refreshKeys({ minGapMs: 0 }).catch(() => ({ ok: false, reason: 'server' }));
+      const hasKey = Boolean(id && readKeys()[id]);
+      notify();
+      return { ...parsed, keySaved: hasKey, ...(hasKey ? {} : { keyNote: keyNote(id, keyed) }) };
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  function keyNote(id, result) {
+    const name = id || 'this agent';
+    if (result?.reason === 'sign-in') return `Sign in to intelio cloud to finish setting up ${name}.`;
+    if (result?.reason === 'keychain') return `The OS keychain is unavailable, so ${name}'s key could not be saved.`;
+    if (result?.reason === 'unreachable') return `Could not reach intelio cloud to fetch ${name}'s key. Try again in a moment.`;
+    return `The VPS did not return a key for ${name}. Try again in a moment.`;
   }
 
   async function voiceRequest(profile, { pathname, method = 'GET', body, contentType, accept = 'application/json', timeoutMs = 20000 } = {}) {
@@ -829,6 +891,12 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
       try {
         switch (name) {
           case 'state': return publicState();
+          case 'refresh-keys': {
+            const wanted = value.profile ? harnessId(value.profile) || '' : '';
+            const result = await refreshKeys();
+            const hasKey = !wanted || Boolean(readKeys()[wanted]);
+            return { ...publicState(), refreshed: Boolean(result?.ok), ...(hasKey ? {} : { keyNote: keyNote(wanted, result) }) };
+          }
           case 'agents': return await mainData.listAgents();
           case 'sessions': {
             const rows = await mainData.listSessions(value.profile ? String(value.profile) : undefined, { source: value.source, limit: Math.min(Number(value.limit) || 50, 200), offset: Number(value.offset) || 0 });
@@ -955,4 +1023,4 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   return { register, command, open, publicState, watchVersion, viewerUrl, vncPassword, vault, startupNotice: () => startupNotice };
 }
 
-module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, keysFromImport, profileNames, secureDelete, attachCloudSessionCookies, cloudCookieFilter, VNC_KEY };
+module.exports = { setupRemoteHermes, secretsFromBootstrap, importRemoteHermesKey, keyFromImport, keysFromImport, profileNames, secureDelete, attachCloudSessionCookies, cloudCookieFilter, VNC_KEY };

@@ -17,7 +17,8 @@ const { ORB_IDS } = require('../../desktop/src/intelio/orb-signature.cjs');
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 const TEMPLATE = 'intelio';
 const ORBS = ORB_IDS;
-const GATEWAY_NOTE = 'Ready after the next agent restart';
+// Hermes serves a new profile's /p/<name>/ route without a gateway restart.
+const GATEWAY_NOTE = '';
 const SIGN_IN_NOTE = 'Needs sign-in. This profile has no model credential of its own. The ChatGPT/Codex login stays in ~/.hermes/auth.json, which this app does not read, copy, or change, and it does not run hermes auth. Sign in on the VPS for this agent.';
 const SHARED_PROVIDERS = new Set(['openai-codex', 'openai_codex', 'codex', 'chatgpt']);
 
@@ -165,6 +166,7 @@ function cleanOrb(value, slug) {
 function modelFrom(text) {
   let provider = '';
   let model = '';
+  let baseUrl = '';
   let secret = false;
   let inModel = false;
   for (const raw of String(text || '').split(/\r?\n/)) {
@@ -179,8 +181,17 @@ function modelFrom(text) {
     if (providerLine) provider = providerLine[1].trim().replace(/^['"]|['"]$/g, '').slice(0, 80);
     const modelLine = raw.match(/^\s*(?:default|name|model)\s*:\s*(.+)$/);
     if (modelLine && !model) model = modelLine[1].trim().replace(/^['"]|['"]$/g, '').slice(0, 80);
+    const baseLine = raw.match(/^\s*base_url\s*:\s*(.+)$/);
+    if (baseLine && !baseUrl) baseUrl = cleanBaseUrl(baseLine[1]);
   }
-  return { provider, model, secret };
+  return { provider, model, baseUrl, secret };
+}
+
+/** The template's endpoint (openai-codex: https://chatgpt.com/backend-api/codex). Plain https URLs only. */
+function cleanBaseUrl(value) {
+  const raw = String(value || '').trim().replace(/^['"]|['"]$/g, '');
+  if (raw.length > 200 || !/^https:\/\/[A-Za-z0-9.-]+(?::\d+)?(?:\/[A-Za-z0-9._~/-]*)?$/.test(raw)) return '';
+  return raw;
 }
 
 function toolsetsFrom(text) {
@@ -204,10 +215,11 @@ function yamlQuote(value) {
   return `'${String(value || '').replace(/'/g, "''").slice(0, 80)}'`;
 }
 
-function safeConfig({ provider, model, toolsets }) {
+function safeConfig({ provider, model, baseUrl = '', toolsets }) {
   const lines = ['model:'];
   if (provider) lines.push(`  provider: ${yamlQuote(provider)}`);
   if (model) lines.push(`  default: ${yamlQuote(model)}`);
+  if (provider && baseUrl) lines.push(`  base_url: ${baseUrl}`);
   lines.push('platform_toolsets:', '  cli:');
   for (const name of toolsets) lines.push(`    - ${name}`);
   lines.push('');
@@ -247,6 +259,7 @@ function shapeProfile({ home, slug, title, soul, orb, color = '', fsImpl }) {
   fsImpl.writeFileSync(path.join(dir, 'config.yaml'), safeConfig({
     provider: SHARED_PROVIDERS.has(provider) ? provider : '',
     model: model.secret ? '' : model.model,
+    baseUrl: model.secret ? '' : model.baseUrl,
     toolsets,
   }), { mode: 0o600 });
   const instructions = cleanSoul(soul);
@@ -331,7 +344,7 @@ async function createProfile({
     needsSignIn: shaped.needsSignIn,
     signInNote: shaped.needsSignIn ? SIGN_IN_NOTE : '',
     gatewayNote: GATEWAY_NOTE,
-    needsGatewayRestart: true,
+    needsGatewayRestart: false,
   };
 }
 
