@@ -515,6 +515,9 @@
     return text ? el('div', 'read-receipt', text) : null;
   }
 
+  /** Push approval rows by thread ({ key, sessionId, row }), newest last; see showApproval. */
+  const approvalRows = [];
+
   function paintMessages() {
     const pane = $('remote-messages');
     if (!pane) return;
@@ -541,6 +544,8 @@
       else if (item.kind === 'bubble' && item.text) pane.append(el('div', `msg ${item.role === 'user' ? 'user' : 'assistant'}`, item.text));
     }
     flushRead();
+    // Push approvals asked in this thread stay visible (answered or not) after the reload.
+    for (const entry of approvalRows) if (entry.sessionId === ui.sessionId) pane.append(entry.row);
     if (!pane.children?.length && !ui.sessionId && !ui.busy && ui.selected && ui.freshThread) pane.append(emptyThread());
     pane.scrollTop = pane.scrollHeight;
     const raf = root.requestAnimationFrame;
@@ -1934,23 +1939,24 @@
     const pane = $('remote-messages');
     if (!api || !pane || !api.answerable(data)) return;
     const key = String(data.request_id || data.run_id);
-    if (pane.querySelector?.(`.approval-row[data-key="${key.replace(/[^A-Za-z0-9_-]/g, '')}"]`)) return;
+    if (approvalRows.some((entry) => entry.key === key)) return;
     const profile = ui.selected;
     const row = api.render(root.document, data, {
       onAnswer: (choice) => root.remoteHermes.request('approve', { profile, runId: data.run_id, requestId: data.request_id, choice }),
     });
     row.dataset.key = key.replace(/[^A-Za-z0-9_-]/g, '');
     row.dataset.session = sessionId;
+    approvalRows.push({ key, sessionId, row });
+    if (approvalRows.length > 20) approvalRows.splice(0, approvalRows.length - 20);
     if (ui.liveTools && ui.liveTools.parentNode === pane) pane.insertBefore(row, ui.liveTools);
     else pane.append(row);
     pane.scrollTop = pane.scrollHeight;
   }
 
   /** The turn ended: a prompt nobody answered is no longer waiting. */
-  function settleApprovals() {
+  function settleApprovals(sessionId) {
     const api = root.IntelioApproval;
-    const rows = $('remote-messages')?.querySelectorAll?.('.approval-row:not([data-settled])') || [];
-    for (const row of rows) api?.settle(row, 'expired');
+    for (const entry of approvalRows) if (entry.sessionId === sessionId && !entry.row.dataset.settled) api?.settle(entry.row, 'expired');
   }
 
   async function runHandoff(handoff, token) {
@@ -2234,7 +2240,7 @@
       }
       ui.spokenProse = '';
       ui.busy = false;
-      settleApprovals();
+      settleApprovals(sessionId);
       ui.streaming = null;
       ui.liveTools?.remove?.();
       ui.liveTools = null;
