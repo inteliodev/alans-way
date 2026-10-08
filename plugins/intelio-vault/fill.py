@@ -28,7 +28,27 @@ SCHEMA = {
     },
 }
 
-PUBLIC_KEYS = ("ok", "filled", "saved", "domain", "username", "error")
+REQUEST_SCHEMA = {
+    "name": "request_login",
+    "description": (
+        "Ask the person for a site login when a page needs one. With a saved login the "
+        "vault fills and submits it. Otherwise the intelio chat shows a sign-in card and "
+        "the typed username and password go straight to the vault and the browser. "
+        "Open the sign-in page first. You never receive the password; the result only "
+        "says whether the form was filled."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "site": {"type": "string", "description": "Site domain, such as github.com"},
+            "reason": {"type": "string", "description": "One short line shown on the card"},
+            "wait_seconds": {"type": "integer", "description": "How long to wait for the person, 0-110. Default 90."},
+        },
+        "required": ["site"],
+    },
+}
+
+PUBLIC_KEYS = ("ok", "filled", "saved", "pending", "status", "domain", "username", "error")
 UNKNOWN = "Unknown profile."
 FILLER_URL = "Filler URL is not configured."
 REFUSED = frozenset({"default", "custom", "unknown"})
@@ -43,6 +63,12 @@ def public_result(payload):
         "domain": str(data.get("domain") or "")[:200],
         "username": str(data.get("username") or "")[:200],
     }
+    if data.get("saved"):
+        out["saved"] = True
+    if data.get("pending"):
+        out["pending"] = True
+    if data.get("status"):
+        out["status"] = str(data.get("status") or "")[:20]
     if data.get("error"):
         out["error"] = str(data.get("error") or "")[:160]
     return {key: out[key] for key in PUBLIC_KEYS if key in out}
@@ -192,6 +218,49 @@ def read_profile_key(profile, home=None):
         if stripped.startswith("API_SERVER_KEY="):
             return stripped.split("=", 1)[1].strip().strip('"').strip("'")
     raise ValueError(UNKNOWN)
+
+
+def _post(path, body, profile, timeout):
+    key = read_profile_key(profile)
+    origin = filler_origin()
+    request = urllib.request.Request(
+        origin + path,
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": "Bearer " + key,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "x-intelio-profile": profile,
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        raw = response.read().decode("utf-8", "replace")
+    return json.loads(raw)
+
+
+def request_login(args, **kwargs):
+    """Show the intelio sign-in card (or use the saved login). No secret returned."""
+    del kwargs
+    try:
+        args = args or {}
+        site = str(args.get("site") or "").strip()
+        if not site:
+            return json.dumps(public_result({"ok": False, "filled": False, "error": "Enter a site domain."}))
+        reason = str(args.get("reason") or "").strip()[:160]
+        try:
+            wait = int(args.get("wait_seconds", 90))
+        except (TypeError, ValueError):
+            wait = 90
+        wait = max(0, min(110, wait))
+        profile = active_profile()
+        body = {"site": site, "reason": reason, "wait": wait, "profile": profile}
+        return json.dumps(public_result(_post("/api/vault/prompt", body, profile, wait + 20)))
+    except ValueError as exc:
+        message = str(exc) if str(exc) in FIXED_ERRORS else UNKNOWN
+        return json.dumps(public_result({"ok": False, "filled": False, "error": message}))
+    except Exception:
+        return json.dumps(public_result({"ok": False, "filled": False, "error": "Filler did not run."}))
 
 
 def fill_saved_login(args, **kwargs):

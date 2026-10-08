@@ -130,6 +130,85 @@ async function pageUrl(cdp, page, targetId) {
   return '';
 }
 
+// Submits the form that holds the typed field: its submit button, else
+// requestSubmit(). Returns booleans only.
+function submitExpression(selectors) {
+  const fn = function submit(sel) {
+    const el = document.querySelector(sel.password) || document.querySelector(sel.username);
+    if (!el) return { submitted: false };
+    const form = el.form || el.closest('form');
+    const button = form
+      ? form.querySelector('button[type="submit"], input[type="submit"], button:not([type])')
+      : null;
+    if (button && !button.disabled) { button.click(); return { submitted: true }; }
+    if (form && typeof form.requestSubmit === 'function') { form.requestSubmit(); return { submitted: true }; }
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    return { submitted: true };
+  };
+  return `(${fn.toString()})(${JSON.stringify({ username: selectors.username, password: selectors.password })})`;
+}
+
+// Looks for a visible sign-in form. Reads no field values: only whether a
+// password box is empty. Returns booleans.
+function detectExpression() {
+  const fn = function detect(userSel) {
+    function shown(el) {
+      if (!el || el.disabled || el.readOnly) return false;
+      const box = el.getBoundingClientRect();
+      if (box.width < 2 || box.height < 2) return false;
+      const style = getComputedStyle(el);
+      return style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || 1) > 0.05;
+    }
+    const pw = Array.from(document.querySelectorAll('input[type="password"]')).filter(shown);
+    const fresh = pw.filter((el) => /new-password/i.test(el.getAttribute('autocomplete') || ''));
+    const login = pw.filter((el) => !fresh.includes(el));
+    const user = Array.from(document.querySelectorAll(userSel)).filter(shown);
+    const words = `${location.pathname} ${document.title}`;
+    const loginish = /(log[-_ ]?in|sign[-_ ]?in|signin|auth|session|identifier)/i.test(words);
+    return {
+      password: login.length > 0,
+      signup: fresh.length > 0 && login.length === 0,
+      username: user.length > 0,
+      identifierFirst: pw.length === 0 && user.length > 0 && loginish,
+      empty: login.length > 0 && login.every((el) => !el.value),
+    };
+  };
+  return `(${fn.toString()})(${JSON.stringify(FIELD_SELECTORS.username)})`;
+}
+
+function webPage(target) {
+  return target && target.type === 'page' && target.targetId && /^https?:\/\//i.test(String(target.url || ''));
+}
+
+// One pass over the profile browser's tabs. Each result names the page host
+// and what kind of sign-in form is showing; nothing typed is read back.
+async function scanLoginPages({ profile, root, cdpUrl, fsImpl, CDPImpl = CDP, limit = 6 } = {}) {
+  const endpoint = resolveCdpUrl({ profile, root, explicit: cdpUrl, fsImpl });
+  const cdp = await CDPImpl.connect(endpoint);
+  const found = [];
+  try {
+    const listed = await cdp.send('Target.getTargets');
+    const pages = (listed?.targetInfos || []).filter(webPage).slice(0, limit);
+    for (const target of pages) {
+      let page;
+      try {
+        page = await cdp.page(target.targetId);
+        const seen = await page.executeJavaScript(detectExpression());
+        const host = pageHost(target.url);
+        if (!host || !seen) continue;
+        const needsLogin = seen.signup !== true && ((seen.password === true && seen.empty === true) || seen.identifierFirst === true);
+        found.push({ targetId: target.targetId, domain: host, needsLogin, password: seen.password === true, identifierFirst: seen.identifierFirst === true });
+      } catch { /* a page that cannot be read is skipped */ }
+      finally {
+        if (page?.sessionId) { try { await cdp.send('Target.detachFromTarget', { sessionId: page.sessionId }); } catch { /* gone */ } }
+      }
+    }
+  } finally {
+    try { cdp.socket.close(); } catch { /* already closed */ }
+  }
+  return found;
+}
+
 async function fillLogin({
   profile,
   root,
@@ -137,6 +216,7 @@ async function fillLogin({
   domain,
   selectors,
   values,
+  submit = false,
   fsImpl,
   CDPImpl = CDP,
 } = {}) {
@@ -170,7 +250,14 @@ async function fillLogin({
         const names = Array.isArray(result?.fields) ? result.fields : [];
         if (result?.filled === true && names.includes(name)) typed.push(name);
       }
-      return { ok: typed.length > 0, filled: typed.length > 0, domain: site, fields: typed };
+      let submitted = false;
+      if (submit === true && typed.length) {
+        const url = await pageUrl(cdp, page, target.targetId);
+        if (hostMatches(url, site)) {
+          try { submitted = (await page.executeJavaScript(submitExpression(chosen)))?.submitted === true; } catch { submitted = false; }
+        }
+      }
+      return { ok: typed.length > 0, filled: typed.length > 0, domain: site, fields: typed, ...(submit === true ? { submitted } : {}) };
     } finally {
       try { cdp.socket.close(); } catch { /* already closed */ }
     }
@@ -185,6 +272,9 @@ module.exports = {
   assertLoopbackCdp,
   resolveCdpUrl,
   fillExpression,
+  submitExpression,
+  detectExpression,
+  scanLoginPages,
   hostMatches,
   pickTarget,
   fillLogin,

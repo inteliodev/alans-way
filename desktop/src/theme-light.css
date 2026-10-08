@@ -125,9 +125,10 @@ html[data-theme="light"] .session-group,
 html[data-theme="light"] .all-session .session-agent { color: #a1a1a8; }
 html[data-theme="light"] .session-group::after { background: #ececf0; }
 html[data-theme="light"] .session-section { color: #5b46f5; }
-html[data-theme="light"] .session-chip { color: #55555e; border-color: #e2e2e8; }
-html[data-theme="light"] .session-chip:hover { background: #f3f3f6; color: #1c1c21; }
-html[data-theme="light"] .session-chip[aria-selected="true"] { background: #f1eeff; color: #1c1c21; border-color: #7a5cff; }
+html[data-theme="light"] .session-tools .session-agent-select { color-scheme: light; background: #ffffff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%238e8e93' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 9px center; border-color: #e2e2e8; color: #1c1c21; }
+html[data-theme="light"] .session-tools .session-agent-select:hover { background-color: #f7f7f9; border-color: #d5d5dc; }
+html[data-theme="light"] .session-tools .session-agent-select:focus-visible { border-color: #b8b8c0; box-shadow: 0 0 0 2px rgba(0, 0, 0, .06); }
+html[data-theme="light"] .session-tools .session-agent-select option { background: #ffffff; color: #1c1c21; }
 html[data-theme="light"] .client-apps { background: #f7f7f9; border-color: #ececf0; }
 html[data-theme="light"] .client-apps-name { color: #1c1c21; }
 html[data-theme="light"] .client-apps-suite, html[data-theme="light"] .client-apps-account { color: #8e8e93; }
@@ -167,3 +168,25 @@ html[data-theme="light"] .chat-empty-hint { color: #8e8e93; }
 html[data-theme="light"] .msg.assistant.typing-bubble { color: #6e6e73; }
 html[data-theme="light"] .typing-stop { background: rgba(0, 0, 0, .08); }
 html[data-theme="light"] .typing-stop:hover { background: rgba(0, 0, 0, .14); color: #1c1c21; }
+html[data-theme="light"] .login-card { background: #ffffff; border-color: #e2e2e8; color: #1c1c21; box-shadow: 0 1px 2px rgba(20, 20, 30, .04); }
+html[data-theme="light"] .login-card-mark { background: #f0f0f4; color: #3a3a42; }
+html[data-theme="light"] .login-card-title { color: #1c1c21; }
+html[data-theme="light"] .login-card-sub, html[data-theme="light"] .login-card-label { color: #6e6e78; }
+html[data-theme="light"] .login-card-close { color: #8a8a94; }
+html[data-theme="light"] .login-card-close:hover { background: #f0f0f4; color: #1c1c21; }
+html[data-theme="light"] .login-card-input { background: #f7f7f9; border-color: #dedee5; color: #1c1c21; }
+html[data-theme="light"] .login-card-input:focus { border-color: #a9a9b4; box-shadow: 0 0 0 3px rgba(120, 120, 135, .14); background: #ffffff; }
+html[data-theme="light"] .login-card-reveal { background: #ececf1; color: #3a3a42; }
+html[data-theme="light"] .login-card-reveal:hover { background: #e2e2e8; }
+html[data-theme="light"] .login-card-remember { color: #3a3a42; }
+html[data-theme="light"] .login-card-remember input { accent-color: #1c1c21; }
+html[data-theme="light"] .login-card-error { color: #c4352f; }
+html[data-theme="light"] .login-card-cancel { border-color: #dcdce3; color: #2a2a31; }
+html[data-theme="light"] .login-card-cancel:hover { background: #f3f3f6; }
+html[data-theme="light"] .login-card-submit { background: #1c1c21; border-color: #1c1c21; color: #ffffff; }
+html[data-theme="light"] .login-card-submit:hover { background: #000000; }
+html[data-theme="light"] .saved-login-meta { color: #6e6e78; }
+html[data-theme="light"] .saved-logins .saved-login-row + .saved-login-row { border-top-color: #e6e6ec; }
+/* Sidebar threads (agent view): the selected row stays a soft grey on white. */
+html[data-theme="light"] .thread-line:hover { background: #f3f3f6; }
+html[data-theme="light"] .thread-line.active { background: #ececef; color: #1c1c21; }

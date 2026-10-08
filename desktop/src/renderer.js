@@ -195,27 +195,48 @@ function showExtensions() {
   body.append(element('p', 'settings-note', 'This browser is Chromium, not Chrome — Google sync and Chrome’s built-in password manager are not included. For passwords and passkeys, install your manager’s extension from the Web Store and sign in inside it.'));
   renderExtensions();
 }
+// Three appearances, in this order: light, blue (white on electric blue) and dark (default).
+// The bottom-left button walks light -> blue -> dark and shows the next one.
+const THEME_ORDER = ['light', 'blue', 'dark'];
+const THEME_LABEL = { light: 'Light', dark: 'Dark', blue: 'Blue' };
+const THEME_VARS = {
+  light: { '--bg': '#f6f6f8', '--text': '#1c1c21', '--muted': '#5e5e68', '--line': '#d5d5dc', '--panel': '#ffffff', '--intelio-surface': '#ffffff' },
+  blue: { '--bg': '#0000e8', '--text': '#ffffff', '--muted': 'rgba(255, 255, 255, 0.74)', '--line': 'rgba(255, 255, 255, 0.24)', '--panel': '#1414ee', '--intelio-surface': '#1414ee' },
+};
+function themeName(theme) {
+  const raw = String(theme || '').trim().toLowerCase();
+  return raw === 'light' || raw === 'blue' ? raw : 'dark';
+}
+function followingTheme(theme) {
+  return THEME_ORDER[(THEME_ORDER.indexOf(themeName(theme)) + 1) % THEME_ORDER.length];
+}
 function applyTheme(theme) {
-  const next = String(theme || '').trim().toLowerCase() === 'light' ? 'light' : 'dark';
+  const next = themeName(theme);
   const root = document.documentElement;
   root.dataset.theme = next;
-  root.style.colorScheme = next;
-  const lightVars = { '--bg': '#f6f6f8', '--text': '#1c1c21', '--muted': '#5e5e68', '--line': '#d5d5dc', '--panel': '#ffffff', '--intelio-surface': '#ffffff' };
-  if (next === 'light') {
-    for (const [key, value] of Object.entries(lightVars)) root.style.setProperty(key, value);
-  } else {
-    for (const [key, value] of Object.entries(lightVars)) {
+  root.style.colorScheme = next === 'light' ? 'light' : 'dark';
+  for (const [name, vars] of Object.entries(THEME_VARS)) {
+    if (name === next) continue;
+    for (const [key, value] of Object.entries(vars)) {
       if (root.style.getPropertyValue(key).trim().toLowerCase() === value) root.style.removeProperty(key);
     }
   }
+  for (const [key, value] of Object.entries(THEME_VARS[next] || {})) root.style.setProperty(key, value);
   const button = $('theme-toggle');
   if (!button) return;
-  const toDark = next === 'light';
-  button.title = toDark ? 'Dark mode' : 'Light mode';
-  button.setAttribute('aria-label', button.title);
-  button.setAttribute('aria-pressed', String(next === 'light'));
-  button.querySelector('.theme-moon')?.classList.toggle('hidden', !toDark);
-  button.querySelector('.theme-sun')?.classList.toggle('hidden', toDark);
+  const after = followingTheme(next);
+  button.title = `${THEME_LABEL[after]} theme`;
+  button.setAttribute('aria-label', `Switch to the ${THEME_LABEL[after]} theme`);
+  button.dataset.theme = next;
+  button.querySelector('.theme-moon')?.classList.toggle('hidden', after !== 'dark');
+  button.querySelector('.theme-sun')?.classList.toggle('hidden', after !== 'light');
+  button.querySelector('.theme-blue')?.classList.toggle('hidden', after !== 'blue');
+  for (const choice of document.querySelectorAll('[data-theme-choice]')) choice.setAttribute('aria-pressed', String(choice.dataset.themeChoice === next));
+}
+function chooseTheme(choice) {
+  const next = themeName(choice);
+  applyTheme(next);
+  command('settings', { theme: next });
 }
 function hostCopy() {
   return state?.host || {
@@ -709,32 +730,68 @@ async function showCookieSettings(body) {
   body.append(list, clearAll, element('hr', 'section-divider'));
   await refresh();
 }
+// Saved logins for every agent: site, username, agent, last used, Delete.
+// Rows come from vault-list, which never carries a password.
+function savedLoginWhen(at) {
+  const ms = Number(at) || 0;
+  if (!ms) return 'Not used yet';
+  const mins = Math.round((Date.now() - ms) / 60000);
+  if (mins < 1) return 'Used just now';
+  if (mins < 60) return `Used ${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `Used ${hours} h ago`;
+  const days = Math.round(hours / 24);
+  return days < 30 ? `Used ${days} d ago` : `Used ${new Date(ms).toLocaleDateString()}`;
+}
+async function paintSavedLogins(vaultList, profile) {
+  const remote = window.IntelioRemote;
+  const agents = (remote?.agentList?.() || []).filter((agent) => agent && agent.id);
+  if (!agents.length) {
+    const only = typeof profile === 'string' && profile ? profile : (remote?.selectedId?.() || state.remoteHermes?.profile || 'intelio');
+    agents.push({ id: only, name: remote?.shownAgent?.(only) || only });
+  }
+  const lists = await Promise.all(agents.map((agent) => Promise.resolve(command('vault-list', { profile: agent.id })).then((result) => (result?.logins || []).map((row) => ({ ...row, agent }))).catch(() => [])));
+  const rows = lists.flat().sort((a, b) => (Number(b.lastUsedAt) || 0) - (Number(a.lastUsedAt) || 0) || String(a.domain).localeCompare(String(b.domain)));
+  vaultList.replaceChildren();
+  if (!rows.length) { vaultList.append(element('p', 'settings-note', 'No saved logins yet. When an agent signs in to a site, choose Remember for this agent.')); return; }
+  for (const row of rows) {
+    const line = element('div', 'setting-row saved-login-row');
+    const main = element('div', 'saved-login-main');
+    main.append(element('strong', 'saved-login-site', row.domain), element('span', 'saved-login-meta', [row.username || 'No username', row.agent.name, savedLoginWhen(row.lastUsedAt)].join(' · ')));
+    const del = element('button', 'text-button saved-login-delete', 'Delete');
+    del.setAttribute('aria-label', `Delete saved login for ${row.domain} (${row.agent.name})`);
+    del.onclick = () => {
+      if (del.dataset.confirm !== '1') { del.dataset.confirm = '1'; del.textContent = 'Delete?'; return; }
+      del.disabled = true;
+      Promise.resolve(command('vault-delete', { profile: row.agent.id, domain: row.domain })).catch(() => {}).then(() => paintSavedLogins(vaultList, profile));
+    };
+    line.append(main, del);
+    vaultList.append(line);
+  }
+}
 function showSettings(profile) {
   openModal('Workspace settings');
   const body = $('modal-body'), field = element('div', 'field');
   const themeRow = element('div', 'setting-row');
   themeRow.append(element('span', '', 'Appearance'));
-  const themeButton = element('button', 'secondary-button', state.theme === 'light' ? 'Light' : 'Dark');
-  themeButton.onclick = () => { const next = state.theme === 'light' ? 'dark' : 'light'; applyTheme(next); command('settings', { theme: next }); };
-  themeRow.append(themeButton);
+  const themePicker = element('div', 'theme-picker');
+  themePicker.setAttribute('role', 'group');
+  themePicker.setAttribute('aria-label', 'Appearance');
+  for (const name of THEME_ORDER) {
+    const choice = element('button', `secondary-button theme-choice theme-choice-${name}`, THEME_LABEL[name]);
+    choice.type = 'button';
+    choice.dataset.themeChoice = name;
+    choice.setAttribute('aria-pressed', String(themeName(state.theme) === name));
+    choice.onclick = () => chooseTheme(name);
+    themePicker.append(choice);
+  }
+  themeRow.append(themePicker);
   body.append(themeRow, element('hr', 'section-divider'));
   const vaultHead = element('h3', '', 'Saved logins');
-  const vaultNote = element('p', 'settings-note', 'Site and username only. Passwords stay in this profile’s encrypted vault.');
-  const vaultList = element('div', 'settings-bots');
+  const vaultNote = element('p', 'settings-note', 'Logins your agents use to sign in. Each one is encrypted on your server and kept for one agent. Passwords are never shown here or sent to the chat.');
+  const vaultList = element('div', 'settings-bots saved-logins');
   body.append(vaultHead, vaultNote, vaultList);
-  const vaultProfile = typeof profile === 'string' && profile ? profile : (window.IntelioRemote?.selectedId?.() || state.remoteHermes?.profile || 'intelio');
-  command('vault-list', { profile: vaultProfile }).then((result) => {
-    const rows = result?.logins || [];
-    if (!rows.length) { vaultList.append(element('p', 'settings-note', 'No saved logins.')); return; }
-    for (const row of rows) {
-      const line = element('div', 'setting-row');
-      line.append(element('span', '', `${row.domain} · ${row.username || ''}`));
-      const del = element('button', 'text-button', 'Delete');
-      del.onclick = () => command('vault-delete', { profile: vaultProfile, domain: row.domain }).then(() => showSettings());
-      line.append(del);
-      vaultList.append(line);
-    }
-  });
+  paintSavedLogins(vaultList, profile);
   window.IntelioUI?.appendSettings(body, { element, command, state, toast });
   window.IntelioHome?.appendSettings?.(body);
   const extensions = element('button', 'secondary-button', 'Manage browser extensions'); extensions.onclick = showExtensions;
@@ -915,9 +972,7 @@ function onThemeToggle() {
   const now = Date.now();
   if (now - themeStamp < 400) return;
   themeStamp = now;
-  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  applyTheme(next);
-  command('settings', { theme: next });
+  chooseTheme(followingTheme(document.documentElement.dataset.theme));
 }
 const themeToggle = $('theme-toggle');
 themeToggle.addEventListener('pointerup', onThemeToggle);

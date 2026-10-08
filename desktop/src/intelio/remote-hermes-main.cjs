@@ -977,11 +977,25 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   async function vault(action, value = {}) {
     const cfg = await config();
     const profile = String(value.profile || cfg.profile || 'intelio');
-    const key = await getKey(profile);
-    if (!key) throw new Error(`No API key saved for Hermes profile "${profile}".`);
-    const origin = vaultOrigin({ ...cfg, vaultOrigin: getPrefs().remoteHermes?.vaultOrigin, vaultPort: getPrefs().remoteHermes?.vaultPort });
-    const paths = { login: '/api/vault/login', logins: '/api/vault/logins', delete: '/api/vault/logins', fill: '/api/vault/fill' };
-    const method = action === 'logins' ? 'GET' : action === 'delete' ? 'DELETE' : 'POST';
+    const cloud = Boolean(cfg?.origin || cfg?.activeMode === 'cloud');
+    const key = await getKey(profile).catch(() => '');
+    if (!key && !cloud) throw new Error(`No API key saved for Hermes profile "${profile}".`);
+    // Cloud mode reaches the vault through app.intelio-ai.com like every other
+    // PWA call; the tailnet port is only used when connected over Tailscale.
+    const explicit = getPrefs().remoteHermes?.vaultOrigin;
+    const origin = cloud && !explicit
+      ? pwaBase(cfg)
+      : vaultOrigin({ ...cfg, vaultOrigin: explicit, vaultPort: getPrefs().remoteHermes?.vaultPort });
+    if (!origin) throw new Error('Vault host unreachable.');
+    const paths = {
+      login: '/api/vault/login',
+      logins: '/api/vault/logins',
+      delete: '/api/vault/logins',
+      fill: '/api/vault/fill',
+      prompts: `/api/vault/prompts?profile=${encodeURIComponent(profile)}`,
+      dismiss: '/api/vault/dismiss',
+    };
+    const method = action === 'logins' || action === 'prompts' ? 'GET' : action === 'delete' ? 'DELETE' : 'POST';
     let body;
     if (action === 'login') {
       body = {
@@ -991,9 +1005,12 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
         password: value.password || '',
         otp: value.otp || '',
         save: value.save === true,
+        submit: value.submit === true,
+        promptId: value.promptId || '',
         selectors: value.selectors || null,
       };
     } else if (action === 'delete') body = { profile, domain: value.domain || '' };
+    else if (action === 'dismiss') body = { profile, promptId: value.promptId || '' };
     else if (action === 'fill') body = { profile, site: value.site || value.domain || '' };
     return postProfileVault({
       origin,
@@ -1002,6 +1019,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
       method,
       path: paths[action] || '/api/vault/fill',
       body,
+      cookieAuth: cloud,
       fetchImpl: selectVaultFetch(cfg),
     });
   }

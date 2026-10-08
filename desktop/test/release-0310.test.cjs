@@ -15,7 +15,7 @@ test('vault profiles come from directories and hermes profile list', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-profiles-'));
   fs.mkdirSync(path.join(root, 'kid-a'));
   const listed = profileIdsFromList('* intelio\nprc\ndefault\nnot a profile name!!\n');
-  const store = createVaultStore({ root, profiles: listed });
+  const store = createVaultStore({ root, profiles: listed, home: fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-profiles-home-')) });
   assert.equal(store.knownProfiles().includes('kid-a'), true);
   assert.equal(store.knownProfiles().includes('prc'), true);
   assert.throws(() => store.saveLogin('stranger', { domain: 'a.example', username: 'a', password: 'x' }), /Unknown profile/);
@@ -24,14 +24,17 @@ test('vault profiles come from directories and hermes profile list', () => {
   assert.equal(JSON.stringify(store.list('kid-a')).includes('kid-secret'), false);
 });
 
-test('a systemd credential supplies the vault key', () => {
+test('a systemd credential supplies the vault master key', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-cred-vault-'));
   const creds = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-cred-dir-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-cred-home-'));
   fs.mkdirSync(path.join(root, 'hhp'));
-  fs.writeFileSync(path.join(creds, 'vault.key.hhp'), Buffer.alloc(32, 7), { mode: 0o600 });
-  const store = createVaultStore({ root, credentialsDir: creds });
+  fs.writeFileSync(path.join(creds, 'intelio-vault.key'), Buffer.alloc(32, 7), { mode: 0o600 });
+  const store = createVaultStore({ root, credentialsDir: creds, home });
   store.saveLogin('hhp', { domain: 'bank.example', username: 'hhp-user', password: 'cred-secret' });
   assert.equal(fs.existsSync(path.join(root, 'hhp', 'vault.key')), false);
+  assert.equal(fs.existsSync(path.join(home, '.config', 'intelio', 'keys', 'vault.key')), false);
+  assert.equal(store.describe().keyFile, 'systemd-credential');
   assert.equal(store.fillerPayload('hhp', 'bank.example').password, 'cred-secret');
   assert.equal(JSON.stringify(store.toolResult('hhp', 'bank.example')).includes('cred-secret'), false);
 });

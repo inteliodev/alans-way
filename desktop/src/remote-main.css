@@ -36,12 +36,12 @@ body:not(.remote-main) #agent-caption-actions { display: flex !important; }
 .session-section { display: flex; align-items: center; gap: 7px; padding: 14px 8px 6px; color: #9d8cff; font-size: 10.5px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; }
 .session-section-mark { width: 7px; height: 7px; border-radius: 2px; background: currentColor; opacity: .85; flex: none; }
 .session-section-filter { color: #8d8d98; letter-spacing: .04em; text-transform: none; font-weight: 550; }
-/* Client chips: All, intelio, PRC, Alignment, HHP, ARLP. Picking one filters sessions and swaps the app row. */
-.client-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 2px 8px; }
-.session-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 999px; border: 1px solid #2c2c33; color: #a9a9b4; font-size: 12px; line-height: 1; }
-.session-chip:hover { color: #f4f4f8; background: #222228; }
-.session-chip[aria-selected="true"] { color: #f4f4f8; background: #26262d; border-color: #7a5cff; }
-.session-chip .session-dot { width: 7px; height: 7px; }
+/* Sessions filter: one compact dropdown (All agents, intelio, PRC, Alignment, HHP, ARLP). It filters sessions and swaps the app row. */
+.session-agent-filter { display: flex; padding: 2px 2px 8px; }
+.session-agent-select { appearance: none; -webkit-appearance: none; color-scheme: dark; min-width: 148px; max-width: 100%; height: 28px; padding: 0 28px 0 10px; border-radius: 8px; border: 1px solid #2c2c33; background: #17171b url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%238d8d98' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 9px center; color: #d9d9e0; font: inherit; font-size: 12.5px; line-height: 1; cursor: pointer; outline: none; }
+.session-agent-select:hover { border-color: #3a3a42; background-color: #1c1c21; color: #f4f4f8; }
+.session-agent-select:focus-visible { border-color: #5a5a64; box-shadow: 0 0 0 2px rgba(255, 255, 255, .08); }
+.session-agent-select option { background: #1c1c21; color: #e8e8ee; }
 /* Client apps: suite icons with a browser sign-in dot. */
 .client-apps { position: relative; margin: 0 0 10px; padding: 9px 10px 10px; border-radius: 12px; background: #17171c; border: 1px solid #25252b; }
 .client-apps.hidden { display: none; }
@@ -53,7 +53,7 @@ body:not(.remote-main) #agent-caption-actions { display: flex !important; }
 .client-apps-row { display: flex; gap: 6px; }
 .client-app { position: relative; flex: 1 1 0; max-width: 44px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; background: #1f1f25; color: #c9c9d2; }
 .client-app:hover { background: #2a2a32; color: #ffffff; }
-.client-app:focus-visible, .client-app-row:focus-visible, .session-chip:focus-visible { outline: 2px solid #7a5cff; outline-offset: 1px; }
+.client-app:focus-visible, .client-app-row:focus-visible { outline: 2px solid #7a5cff; outline-offset: 1px; }
 .client-app-icon { display: inline-flex; }
 .client-app-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .client-app.more .client-app-icon svg { fill: currentColor; stroke: none; }
@@ -188,13 +188,13 @@ body.remote-main #shell.browser-hidden { grid-template-columns: 268px minmax(0, 
    browser took the rest, which looked like the chat closing. */
 body.remote-main #shell.bots-hidden { grid-template-columns: var(--chat-width) 5px minmax(280px, 1fr); }
 body.remote-main #shell.bots-hidden.browser-hidden { grid-template-columns: minmax(0, 1fr) 0 0 !important; }
-body.remote-main .side-caption:not(.threads-caption):not(.watching-caption) { align-items: center; gap: 8px; padding: 18px 12px 10px 14px; }
+body.remote-main .side-caption:not(.threads-caption) { align-items: center; gap: 8px; padding: 18px 12px 10px 14px; }
 /* The tab switch and the agent actions share one 268px row: the bare agent count goes (the list shows them). */
 body.remote-main #bot-count { display: none; }
 body.remote-main #agent-caption-actions { gap: 2px; flex: none; }
 body.remote-main #bot-list { flex: 0 1 auto; max-height: 46%; }
 .sidebar-threads-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.threads-caption, .watching-caption { justify-content: flex-start; padding-top: 4px; padding-bottom: 6px; }
+.threads-caption { justify-content: flex-start; padding-top: 4px; padding-bottom: 6px; }
 .sidebar-threads { list-style: none; margin: 0; padding: 0 8px 8px; overflow: auto; flex: 1; min-height: 0; }
 body.remote-main .remote-split { grid-template-columns: minmax(0, 1fr); }
 body.remote-main .remote-sessions { display: none !important; }
@@ -212,12 +212,11 @@ body.remote-main .side-title { display: none; }
 .lead-name { font-size: 15px; line-height: 1.2; }
 .lead-status { color: #6e6e73; font-size: 12px; }
 .lead-status.offline { color: #c2410c; }
-.sidebar-watching-wrap { padding: 0 8px 8px; }
-.watch-row, .thread-line { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 13px; font-weight: 400; cursor: pointer; }
-.watch-row strong, .thread-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-line { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 13px; font-weight: 400; cursor: pointer; }
+.thread-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-title { flex: 1; min-width: 0; }
-.watch-row span, .watch-eye { color: #8e8e93; }
-.thread-line.active { background: #ececef; }
+.thread-line:hover { background: #1a1a1f; }
+.thread-line.active { background: #22222a; color: #ffffff; }
 .thread-dot { width: 8px; height: 8px; margin-left: auto; border-radius: 50%; background: #7a5cff; flex: none; }
 .sidebar-threads { list-style: none; }
 body.remote-main .chat-header { position: relative; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; grid-template-areas: "toggle pill call" "note note note"; align-items: start; justify-content: stretch; height: auto; min-height: 104px; padding: 8px 8px 4px; overflow: visible; }
@@ -313,3 +312,52 @@ body.remote-main .msg { max-width: min(640px, 82%); }
 .chat-empty { align-self: stretch; margin: auto 0; padding: 24px 0 48px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px; }
 .chat-wordmark { font-family: var(--intelio-font, inherit); font-weight: 500; letter-spacing: -0.045em; line-height: .95; font-size: clamp(44px, 6.5vw, 92px); color: #f5f5f5; }
 .chat-empty-hint { max-width: 420px; margin: 0; color: #8d8d98; font-size: 13px; line-height: 1.55; }
+/* Theme button's Blue icon (a swatch) and the Settings picker. */
+.theme-toggle .theme-blue circle { fill: #0000e8; stroke: rgba(255, 255, 255, 0.7); stroke-width: 1.5; }
+html[data-theme="light"] .theme-toggle .theme-blue circle { stroke: #0000e8; }
+.theme-picker { display: inline-flex; gap: 6px; }
+.theme-picker .theme-choice { margin: 0; padding: 7px 12px; }
+.theme-choice[aria-pressed="true"] { background: #e6e6ea; color: #141418; border-color: #e6e6ea; }
+html[data-theme="light"] .theme-choice[aria-pressed="true"] { background: #1c1c21; color: #ffffff; border-color: #1c1c21; }
+/* Saved-login card under the chat (intelio/login-prompt.cjs). Grey, like the composer. */
+.login-prompts { flex-shrink: 0; padding: 0 16px 6px; }
+.login-prompts.hidden, .login-cards[hidden] { display: none; }
+body.remote-main .login-prompts { padding-left: var(--chat-gutter); padding-right: var(--chat-gutter); }
+.login-cards { display: flex; flex-direction: column; gap: 8px; max-width: 460px; }
+.login-card { border: 1px solid #2c2c33; border-radius: 14px; background: #17171b; color: #e6e6ea; padding: 12px 14px; font-size: 13px; }
+.login-card.is-notice { padding: 10px 12px; }
+.login-card-head { display: flex; align-items: center; gap: 10px; }
+.login-card-mark { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 9px; background: #26262d; color: #d9d9e0; display: flex; align-items: center; justify-content: center; font-weight: 650; font-size: 14px; }
+.login-card.is-notice .login-card-mark { width: 26px; height: 26px; border-radius: 8px; font-size: 12px; }
+.login-card-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.login-card-title { font-weight: 600; font-size: 13px; color: #ededf0; overflow-wrap: anywhere; }
+.login-card-sub { color: #9a9aa4; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.login-card-close { flex: 0 0 auto; border: 0; background: transparent; color: #8d8d98; font-size: 16px; line-height: 1; width: 24px; height: 24px; border-radius: 6px; cursor: pointer; }
+.login-card-close:hover { background: #24242b; color: #e6e6ea; }
+.login-card-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.login-card-field { display: flex; flex-direction: column; gap: 5px; }
+.login-card-label { font-size: 11px; color: #9a9aa4; letter-spacing: .01em; }
+.login-card-input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 10px; border-radius: 9px; border: 1px solid #303038; background: #101014; color: #ededf0; font: inherit; font-size: 13px; outline: none; }
+.login-card-input:focus { border-color: #5a5a66; box-shadow: 0 0 0 3px rgba(160, 160, 175, .16); }
+.login-card-secret { position: relative; display: flex; }
+.login-card-secret .login-card-input { padding-right: 58px; }
+.login-card-reveal { position: absolute; right: 4px; top: 4px; height: 26px; padding: 0 9px; border: 0; border-radius: 7px; background: #23232a; color: #c9c9d1; font-size: 11px; cursor: pointer; }
+.login-card-reveal:hover { background: #2c2c34; }
+.login-card-remember { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #c9c9d1; cursor: pointer; user-select: none; }
+.login-card-remember input { width: 15px; height: 15px; margin: 0; accent-color: #d9d9e0; }
+.login-card-error { margin: 0; font-size: 12px; color: #ff8f8f; }
+.login-card-error[hidden] { display: none; }
+.login-card-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.login-card-cancel, .login-card-submit { height: 32px; padding: 0 14px; border-radius: 9px; font: inherit; font-size: 13px; cursor: pointer; }
+.login-card-cancel { border: 1px solid #34343c; background: transparent; color: #d9d9e0; }
+.login-card-cancel:hover { background: #202026; }
+.login-card-submit { border: 1px solid #e6e6ea; background: #e6e6ea; color: #141418; font-weight: 600; }
+.login-card-submit:hover { background: #ffffff; }
+.login-card-submit[disabled], .login-card-cancel[disabled] { opacity: .55; cursor: default; }
+.login-card-reveal:focus-visible, .login-card-cancel:focus-visible, .login-card-submit:focus-visible, .login-card-close:focus-visible { outline: 2px solid #8e8e9a; outline-offset: 2px; }
+.saved-logins .saved-login-row { align-items: center; padding: 9px 0; }
+.saved-logins .saved-login-row + .saved-login-row { border-top: 1px solid #2a2a31; }
+.saved-login-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
+.saved-logins .saved-login-delete { flex: 0 0 auto; width: auto; margin: 0; padding: 4px 8px; }
+.saved-login-site { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.saved-login-meta { font-size: 12px; color: #9a9aa4; overflow-wrap: anywhere; }

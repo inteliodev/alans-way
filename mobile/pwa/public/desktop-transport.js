@@ -13,7 +13,10 @@
   let vncTried = false;
 
   function readTheme() {
-    try { return localStorage.getItem('intelio-theme') === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
+    try {
+      const saved = localStorage.getItem('intelio-theme');
+      return saved === 'dark' || saved === 'blue' ? saved : 'light';
+    } catch { return 'light'; }
   }
   function readGrid() {
     try {
@@ -422,7 +425,8 @@
       client.scaleViewport = true;
       client.resizeSession = false;
       client.clipViewport = false;
-      client.background = document.documentElement.dataset.theme === 'light' ? '#f6f6f8' : '#101012';
+      const look = document.documentElement.dataset.theme;
+      client.background = look === 'light' ? '#f6f6f8' : look === 'blue' ? '#0000c4' : '#101012';
       const fit = () => fitRemote(client, host);
       client.addEventListener('connect', () => {
         const note = host.querySelector('.intelio-vnc-note');
@@ -459,7 +463,7 @@
     if (rfb && show) fitRemote(rfb, host);
   }
   function applySettings(value) {
-    if (value.theme === 'light' || value.theme === 'dark') {
+    if (value.theme === 'light' || value.theme === 'dark' || value.theme === 'blue') {
       state.theme = value.theme;
       try { localStorage.setItem('intelio-theme', value.theme); } catch { /* the page still paints this choice */ }
     }
@@ -506,6 +510,37 @@
         const json = await fetchJson(`/api/vault/logins?profile=${encodeURIComponent(profile)}`, { profile });
         return { logins: json.logins || [] };
       } catch { return { logins: [] }; }
+    }
+    // Saved logins. Typed values go straight to the vault route; replies
+    // carry no password.
+    if (name === 'fill-login') {
+      const profile = value.profile || 'intelio';
+      return fetchJson('/api/vault/login', {
+        method: 'POST',
+        profile,
+        body: {
+          profile,
+          promptId: value.promptId || '',
+          domain: value.domain || '',
+          username: value.username || '',
+          password: value.password || '',
+          otp: value.otp || '',
+          save: value.save === true,
+          submit: value.submit === true,
+          selectors: value.selectors || null,
+        },
+      });
+    }
+    if (name === 'vault-prompts') {
+      const profile = value.profile || 'intelio';
+      try {
+        const json = await fetchJson(`/api/vault/prompts?profile=${encodeURIComponent(profile)}`, { profile });
+        return { ok: true, prompts: json.prompts || [] };
+      } catch { return { ok: false, prompts: [] }; }
+    }
+    if (name === 'vault-dismiss') {
+      const profile = value.profile || 'intelio';
+      return fetchJson('/api/vault/dismiss', { method: 'POST', profile, body: { profile, promptId: value.promptId || '' } });
     }
     if (name === 'vault-delete') {
       const profile = value.profile || 'intelio';
