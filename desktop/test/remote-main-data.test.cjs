@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { signatureOf } = require('../../mobile/pwa/orbs.cjs');
-const { createRemoteMain, selectHarnessAgents } = require('../src/intelio/remote-main-data.cjs');
+const { createRemoteMain, selectHarnessAgents, agentsFromKeys } = require('../src/intelio/remote-main-data.cjs');
 const { signatureOf: uiSignature, switcherRows, chooseSidebar, SAMPLE } = require('../src/remote-main.js');
 
 const KEYS = {
@@ -280,3 +280,11 @@ test('a slow /api/home answers from the last list at once and does not fall thro
   } finally { server.close(); }
 });
 
+
+test('saved keys list agents beyond the named four (arlp on the Tailscale route)', () => {
+  const agents = agentsFromKeys(['intelio', 'prc', 'alignment', 'hhp', 'arlp', 'vnc', 'kid-a', 'default', 'zeta']);
+  assert.deepEqual(agents.map((agent) => agent.id), ['intelio', 'prc', 'alignment', 'hhp', 'arlp', 'zeta']);
+  assert.equal(agents.find((agent) => agent.id === 'arlp').name, 'ARLP');
+  assert.deepEqual(agentsFromKeys(['arlp']).map((agent) => agent.id), ['arlp']);
+  assert.deepEqual(agentsFromKeys(['vnc']).map((agent) => agent.id), ['intelio']);
+});
