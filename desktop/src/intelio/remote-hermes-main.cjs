@@ -479,7 +479,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return `${scheme}://${host}:${port}`;
   }
 
-  async function pwaRequest(profile, key, pathname, body, { timeoutMs = 1200, expectId = true, query = '', failText = false } = {}) {
+  async function pwaRequest(profile, key, pathname, body, { timeoutMs = 1200, expectId = true, query = '' } = {}) {
     let cfg;
     try { cfg = await config(); } catch { return null; }
     const cloud = Boolean(cfg?.origin || cfg?.activeMode === 'cloud');
@@ -505,12 +505,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
         signal: controller.signal,
         redirect: 'error',
       });
-      if (!response || !response.ok) {
-        if (!failText || !response) return null;
-        let parsed = null;
-        try { parsed = await response.json(); } catch { parsed = null; }
-        throw new Error(String(parsed?.error || 'Claude sign-in did not finish.').slice(0, 200));
-      }
+      if (!response || !response.ok) return null;
       const parsed = await response.json();
       if (!parsed) return null;
       if (expectId && parsed.id !== profile) return null;
@@ -732,15 +727,10 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return { ...card, paused: paused === true, localOnly: true };
   }
 
-  async function modelCall(profile, pathname, body, query = '', options = {}) {
+  async function modelCall(profile, pathname, body, query = '') {
     const id = harnessId(profile) || 'intelio';
     const key = await getKey(id).catch(() => '');
-    const remote = await pwaRequest(id, key, pathname, body, {
-      timeoutMs: options.timeoutMs || 8000,
-      expectId: false,
-      query,
-      failText: options.failText === true,
-    });
+    const remote = await pwaRequest(id, key, pathname, body, { timeoutMs: 8000, expectId: false, query });
     if (!remote) throw new Error('Could not reach the model list.');
     return remote;
   }
@@ -764,13 +754,6 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   async function agentModel(profile, value = {}) {
     const id = harnessId(profile) || 'intelio';
     return modelCall(id, '/api/agent/model', { profile: id, model: value.model, provider: value.provider });
-  }
-
-  async function claudeSignIn(profile, value = {}) {
-    const id = harnessId(profile) || 'intelio';
-    const body = { profile: id, allAgents: value.allAgents === true };
-    if (value.code) body.code = String(value.code);
-    return modelCall(id, '/api/agent/claude-signin', body, '', { timeoutMs: body.code ? 50000 : 20000, failText: true });
   }
 
   function register() {
@@ -811,7 +794,6 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
           case 'model-options': return await modelOptions(value.profile, value.id);
           case 'session-model': return await sessionModel(value.profile, value);
           case 'agent-model': return await agentModel(value.profile, value);
-          case 'claude-signin': return await claudeSignIn(value.profile, value);
           case 'screens': return { data: await listRemoteScreens() };
           case 'send': {
             const id = String(value.id);

@@ -30,17 +30,6 @@ test('the menu keeps signed-in ChatGPT and Claude subscription models and drops 
   assert.deepEqual(groups.map((group) => group.provider), ['openai-codex', 'anthropic']);
   assert.deepEqual(groups[0].models, ['codex-live-a', 'codex-live-b']);
   assert.deepEqual(groups[1].models, ['claude-live-a']);
-  const planned = picker.planGroups([groups[0]]);
-  assert.equal(planned[0].label, 'ChatGPT plan');
-  assert.equal(planned[1].label, 'Claude plan');
-  assert.equal(planned[1].signIn, true);
-  assert.deepEqual(planned[1].models, []);
-  assert.equal(picker.planGroups(groups)[1].signIn, false);
-  const link = 'https://claude.ai/oauth/authorize?code=true&code_challenge=abc&state=xyz';
-  assert.equal(picker.authorizeUrl(`open\n  ${link}\n`), link);
-  assert.equal(picker.authorizeUrl('https://evil.example/oauth/authorize?code_challenge=abc'), '');
-  assert.equal(picker.claudePaste('sk-ant-api03-secret'), false);
-  assert.equal(picker.claudePaste('paste-code-1#state'), true);
   assert.equal(JSON.stringify(groups).includes('ANTHROPIC_API_KEY'), false);
   assert.equal(JSON.stringify(groups).includes('gpt-key-only'), false);
   assert.equal(JSON.stringify(groups).includes('hermes-agent'), false);
@@ -72,10 +61,5 @@ test('the composer pill sits left of the mic and does not ship a model list', ()
   assert.ok(html.indexOf('id="remote-model"') < html.indexOf('id="remote-mic"'));
   assert.match(phone, /form\.append\(plus, input, pill, mic, voice, send\)/);
   assert.match(html, /id="model-pill-label">Model</);
-  const desktop = fs.readFileSync(path.join(__dirname, '../src/remote-main.js'), 'utf8');
-  assert.match(desktop, /Sign in to Claude/);
-  assert.match(desktop, /Use for all agents/);
-  assert.match(phone, /Sign in to Claude/);
-  assert.match(phone, /Use for all agents/);
   for (const file of [html, phone, menu]) assert.equal(file.includes('gpt-6-sol'), false);
 });

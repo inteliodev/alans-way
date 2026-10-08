@@ -118,6 +118,7 @@ body.remote-main .side-title { display: none; }
 .bot-role { flex: none; max-width: 46%; padding: 2px 8px; border-radius: 999px; background: #2a2a30; color: #c5c5d0; font-size: 11px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lead-name { font-size: 16px; }
 .lead-status { color: #6e6e73; font-size: 12px; }
+.lead-status.offline { color: #c2410c; }
 .sidebar-watching-wrap { padding: 0 8px 8px; }
 .watch-row, .thread-line { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 13px; font-weight: 400; cursor: pointer; }
 .watch-row strong, .thread-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -154,11 +155,6 @@ body.remote-main .model-menu { position: absolute; left: 8px; bottom: calc(100% 
 body.remote-main .model-menu button { display: block; width: 100%; text-align: left; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 13px; padding: 8px 10px; }
 body.remote-main .model-menu button[aria-selected="true"] { box-shadow: inset 0 0 0 1.5px #7a5cff; }
 body.remote-main .model-menu .model-label { padding: 6px 10px 2px; font-size: 11px; font-weight: 650; color: #8e8e93; }
-body.remote-main .model-menu.signing { width: min(320px, calc(100vw - 24px)); max-height: min(420px, 70vh); }
-body.remote-main .model-share { display: flex; align-items: center; gap: 8px; padding: 4px 10px; font-size: 12px; }
-body.remote-main .model-hint { margin: 0; padding: 0 10px 6px; font-size: 11px; color: #8e8e93; }
-body.remote-main .model-url { display: block; margin: 4px 10px; font-size: 11px; line-height: 1.35; word-break: break-all; color: #c8befa; }
-body.remote-main .model-code { display: block; width: calc(100% - 12px); margin: 6px; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid #3a3a40; background: transparent; color: inherit; font: inherit; font-size: 13px; }
 body.remote-main #remote-send { background: #1c1c21; color: #fff; }
 .modal.agent-open { align-items: flex-end; }
 .modal-card.agent-dialog { width: min(440px, calc(100vw - 16px)); max-height: min(92vh, 720px); display: flex; flex-direction: column; overflow: hidden; padding: 16px 16px 12px; border-radius: 18px 18px 0 0; }
@@ -206,3 +202,9 @@ html, body { height: 100dvh; max-height: 100dvh; overflow: hidden; }
 .remote-thread { height: 100%; }
 .chat-header, .bops-bar, .composer-note, .remote-status, .tab-bar, .workspace-footer { flex-shrink: 0; }
 .workspace-pane { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+/* Pane actions float over the chat header while the browser pane is hidden (style.css).
+   Keep the header's own buttons clear of them, and show the VPS desktop status there
+   because the pane footer is off-screen in that mode. */
+.pane-status { display: none; align-items: center; gap: 6px; margin-right: 6px; padding: 0 8px; height: 26px; border-radius: 999px; font-size: 11px; color: #8e8e93; white-space: nowrap; }
+#shell.browser-hidden .pane-status { display: inline-flex; }
+#shell.browser-hidden .chat-header { padding-right: calc(var(--pane-actions-w, 0px) + 22px); }

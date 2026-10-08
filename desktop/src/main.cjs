@@ -1213,12 +1213,17 @@ function createWindow() {
   activeTabId = initialDesktopTab(remoteOn);
   win.on('enter-full-screen', broadcast); win.on('leave-full-screen', broadcast);
   win.on('close', (event) => { if (!isQuitting) { event.preventDefault(); win.hide(); } });
+  // The app-name menu and hide/zoom/front roles are macOS conventions; Windows and Linux
+  // get About under Help and Quit under File instead.
+  const isMac = process.platform === 'darwin';
+  const aboutItem = { label: 'About intelio', click: () => dialog.showMessageBox(win, { type: 'info', title: 'About intelio', message: `intelio ${app.getVersion()}`, detail: "Alan's Way by Alex Hansen (MIT). Hermes Agent by Nous Research." }) };
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'intelio', submenu: [{ label: 'About intelio', click: () => dialog.showMessageBox(win, { type: 'info', title: 'About intelio', message: `intelio ${app.getVersion()}`, detail: "Alan's Way by Alex Hansen (MIT). Hermes Agent by Nous Research." }) }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
-    { label: 'File', submenu: [{ label: 'New Browser Tab', accelerator: 'CmdOrCtrl+T', click: () => createTab({}) }, { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => extensionPopup?.browserWindow?.isFocused() ? extensionPopup.destroy() : closeTab(activeTabId) }] },
+    ...(isMac ? [{ label: 'intelio', submenu: [aboutItem, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] }] : []),
+    { label: 'File', submenu: [{ label: 'New Browser Tab', accelerator: 'CmdOrCtrl+T', click: () => createTab({}) }, { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => extensionPopup?.browserWindow?.isFocused() ? extensionPopup.destroy() : closeTab(activeTabId) }, ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit', label: 'Quit intelio' }])] },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     { label: 'View', submenu: [{ label: 'Reload Page', accelerator: 'CmdOrCtrl+R', click: () => tabs.get(activeTabId)?.view.webContents.reload() }, { role: 'togglefullscreen' }, ...(app.isPackaged ? [] : [{ label: 'App Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => win.webContents.toggleDevTools() }])] },
-    { label: 'Window', submenu: [{ label: 'Remote Hermes (VPS)', accelerator: 'CmdOrCtrl+Shift+H', click: () => remoteHermes.open() }, { type: 'separator' }, { role: 'minimize' }, { role: 'zoom' }, { role: 'front' }] },
+    { label: 'Window', submenu: [{ label: 'Remote Hermes (VPS)', accelerator: 'CmdOrCtrl+Shift+H', click: () => remoteHermes.open() }, { type: 'separator' }, { role: 'minimize' }, ...(isMac ? [{ role: 'zoom' }, { role: 'front' }] : [{ role: 'close' }])] },
+    ...(isMac ? [] : [{ label: 'Help', submenu: [aboutItem] }]),
   ]));
   startApi();
   // Read the real pointer position, even over native child views or another app.
@@ -1337,7 +1342,8 @@ else {
       }).catch(() => {});
     }
   });
-  app.on('second-instance', () => { win?.show(); win?.focus(); });
+  // show() alone does not un-minimize on Windows; restore first so relaunching brings the window back.
+  app.on('second-instance', () => { if (!win || win.isDestroyed()) return; if (win.isMinimized()) win.restore(); win.show(); win.focus(); });
   app.on('activate', () => { win?.show(); win?.focus(); });
   app.on('before-quit', () => { isQuitting = true; clearInterval(pointerTimer); clearInterval(activityTimer); clearInterval(idleTimer); clearInterval(vpsTimer); savePreferences(); apiServer?.close(); });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
