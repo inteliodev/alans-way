@@ -6,6 +6,7 @@ const path = require('node:path');
 const { createPwaServer } = require('../../mobile/pwa/server.cjs');
 
 const KEY = 'sample-demo-key-not-real-0001';
+const ARLP_KEY = 'sample-arlp-key-not-real-0003';
 
 function mockHermes() {
   const server = http.createServer((req, res) => {
@@ -354,6 +355,10 @@ test('the Access listener proxies Hermes, the desktop, and bootstrap without log
     accessMode: true,
     accessVerify: async (token) => (token === 'good-assertion' ? { ok: true, login: 'hayden@intelio.co' } : { ok: false }),
     log: (line) => logs.push(line),
+    profileOps: {
+      async list() { return [{ id: 'intelio', name: 'intelio' }, { id: 'arlp', name: 'ARLP' }, { id: '../etc', name: 'bad' }]; },
+      keyFor(id) { return id === 'arlp' ? ARLP_KEY : id === 'intelio' ? KEY : ''; },
+    },
   });
   await app.listen();
   const port = app.local.address().port;
@@ -371,11 +376,15 @@ test('the Access listener proxies Hermes, the desktop, and bootstrap without log
     const parsed = JSON.parse(boot.body);
     assert.equal(parsed.intelio, KEY);
     assert.equal(parsed.vnc, 'desk-secret-not-logged');
+    // Agents created later (arlp) are listed too, so their key reaches the desktop.
+    assert.equal(parsed.arlp, ARLP_KEY);
     const keyed = await request(port, 'GET', '/intelio/bootstrap', { headers: { authorization: `Bearer ${KEY}` } });
     assert.equal(keyed.status, 401);
     assert.equal(logs.join('\n').includes(KEY), false);
     assert.equal(logs.join('\n').includes('desk-secret-not-logged'), false);
     assert.equal(logs.join('\n').includes('good-assertion'), false);
+    assert.equal(logs.join('\n').includes(ARLP_KEY), false);
+    assert.equal(Object.keys(parsed).includes('../etc'), false);
   } finally {
     await new Promise((resolve) => app.close(resolve));
     await new Promise((resolve) => upstream.close(resolve));

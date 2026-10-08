@@ -1683,16 +1683,28 @@
     paintMessages();
     paintPhoneButton();
     if (!ui.sample) loadPhoneReady(id);
-    const keys = ui.keys || [];
+    let keys = ui.keys || [];
+    if (!ui.sample && keys.length && !keys.includes(id)) {
+      // An agent made after the last sign-in (or on another computer): fetch the keys again first.
+      setStatus(`Setting up ${id}…`);
+      let refreshed = null;
+      try { refreshed = await root.remoteHermes.request('refresh-keys', { profile: id }); } catch { refreshed = null; }
+      if (!currentView(seq)) return;
+      if (Array.isArray(refreshed?.profilesWithKeys)) ui.keys = refreshed.profilesWithKeys;
+      keys = ui.keys || [];
+    }
     if (!ui.sample && keys.length && !keys.includes(id)) {
       ui.sessions = [];
       paintSessions();
-      setStatus(`No key saved for ${id}.`);
-      showProfileError(`No key saved for ${id}.`);
+      const why = `Could not set up ${id} on this computer yet. Sign in to intelio again, then pick ${id}.`;
+      setStatus(why);
+      showProfileError(why);
       const input = $('remote-input');
       if (input) input.disabled = true;
       return;
     }
+    const enable = $('remote-input');
+    if (enable) enable.disabled = false;
     setStatus('');
     if (ui.sample) {
       ui.sessions = SAMPLE.sessions.filter((session) => session.profileId === id);

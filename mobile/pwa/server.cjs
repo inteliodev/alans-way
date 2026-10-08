@@ -212,6 +212,9 @@ function createPwaServer({
   filler = null,
   cdpImpl = null,
   selfCheck = null,
+  // A new agent is checked on its own /p/<name>/ route before the create call answers.
+  readyTries = 6,
+  readyDelayMs = 1000,
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
@@ -1108,6 +1111,30 @@ function createPwaServer({
     }
   }
 
+  /** Polls the new profile's own route with its own key until Hermes answers. */
+  async function agentReady(id) {
+    let reason = 'no reply';
+    const tries = Math.max(1, Number(readyTries) || 1);
+    for (let attempt = 0; attempt < tries; attempt += 1) {
+      if (attempt) await new Promise((resolve) => setTimeout(resolve, readyDelayMs));
+      let key = '';
+      try { key = bearerKey(id); } catch { reason = 'no key'; continue; }
+      try {
+        const response = await fetchImpl(hermesUrl(id, '/v1/capabilities'), {
+          headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+          redirect: 'error',
+          signal: timeoutSignal(4000),
+        });
+        if (typeof response.text === 'function') await response.text().catch(() => '');
+        if (response.ok) return { ok: true, reason: '' };
+        reason = `HTTP ${response.status}`;
+        if (response.status === 401) cachedKeys.delete(id);
+      } catch {
+        reason = 'unreachable';
+      }
+    }
+    return { ok: false, reason };
+  }
   function hermesDesktopPath(pathname) {
     if (pathname === '/health' || pathname === '/intelio/bootstrap') return true;
     return /^\/p\/[a-z0-9][a-z0-9_-]{0,63}\/(?:api|v1)\//.test(pathname);
@@ -1116,7 +1143,15 @@ function createPwaServer({
     if (url.pathname === '/intelio/bootstrap') {
       if (!session.access) return send(res, 401, { error: 'Sign in again.' });
       const body = { vnc: vncSecret };
-      for (const name of ['intelio', 'prc', 'alignment', 'hhp']) {
+      // Every listed profile, so an agent created after the first sign-in gets its key too.
+      const names = ['intelio', 'prc', 'alignment', 'hhp'];
+      let listed = [];
+      try { listed = await loadProfiles(); } catch { listed = []; }
+      for (const row of Array.isArray(listed) ? listed : []) {
+        const id = String(row?.id || '');
+        if (/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) && id !== 'vnc' && !names.includes(id) && names.length < 64) names.push(id);
+      }
+      for (const name of names) {
         try { body[name] = bearerKey(name); } catch { body[name] = ''; }
       }
       return send(res, 200, body);
@@ -1371,8 +1406,9 @@ function createPwaServer({
             orb: String(body.orb || ''),
             needsSignIn: false,
             signInNote: '',
-            gatewayNote: 'Ready after the next agent restart',
-            needsGatewayRestart: true,
+            gatewayNote: '',
+            ready: true,
+            needsGatewayRestart: false,
             sample: true,
             label: 'SAMPLE DATA',
           });
@@ -1390,6 +1426,8 @@ function createPwaServer({
             run: profileRun,
           });
         forgetProfiles();
+        const ready = await agentReady(created.id);
+        if (!ready.ok) log(`intelio-pwa new agent ${created.id} not answering yet (${ready.reason})`);
         return send(res, 200, {
           id: created.id,
           name: created.name,
@@ -1398,8 +1436,9 @@ function createPwaServer({
           orb: created.orb || '',
           needsSignIn: created.needsSignIn === true,
           signInNote: created.signInNote || '',
-          gatewayNote: created.gatewayNote || 'Ready after the next agent restart',
-          needsGatewayRestart: true,
+          ready: ready.ok,
+          gatewayNote: ready.ok ? (created.gatewayNote || '') : `${created.name || created.id} was created, but Hermes is not answering for it yet (${ready.reason}). Try it again in a minute.`,
+          needsGatewayRestart: false,
         });
       }
       if (req.method === 'POST' && url.pathname === '/api/gateway/restart') {
