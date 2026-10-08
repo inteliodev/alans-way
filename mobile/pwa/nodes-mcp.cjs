@@ -76,6 +76,7 @@ function createNodesMcp({
     const args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
     if (name === 'list_computers') {
       const rows = hub.listComputers();
+      log(`intelio-nodes call computer=- tool=list_computers ok=true count=${rows.length}`);
       return { content: protocol.textContent(rows.length ? { computers: rows } : { computers: [], note: 'No computers are enrolled yet. Sign in to the intelio app on a computer to enroll it.' }), isError: false };
     }
     if (!protocol.TOOL_NAMES.includes(name)) return null;
@@ -163,4 +164,58 @@ function createNodesMcp({
   };
 }
 
-module.exports = { DEFAULT_PORT, SUPPORTED_VERSIONS, LATEST_VERSION, defaultTokenFile, isLoopbackBind, readToken, createNodesMcp };
+/** server.cjs starts the relay when INTELIO_NODES=1 or the token file exists. */
+function nodesEnabled(env = process.env) {
+  if (String(env.INTELIO_NODES || '').trim() === '1') return true;
+  if (String(env.INTELIO_NODES || '').trim() === '0') return false;
+  try { return fs.statSync(defaultTokenFile(env)).isFile(); } catch { return false; }
+}
+
+/**
+ * Registry + hub + MCP server as one unit for server.cjs. A missing/unsafe token
+ * or a busy port disables only the MCP side (logged); the phone app keeps running.
+ */
+function createNodesRelay({
+  env = process.env,
+  log = (line) => process.stderr.write(`${line}\n`),
+  registryFile,
+  token = '',
+  tokenFile = defaultTokenFile(env),
+  mcpPort = Number(env.INTELIO_NODES_MCP_PORT || DEFAULT_PORT),
+  mcpBind = '127.0.0.1',
+  hubOptions = {},
+} = {}) {
+  const { createNodeRegistry, createNodeHub, defaultRegistryFile } = require('./nodes.cjs');
+  const registry = createNodeRegistry({ file: registryFile || defaultRegistryFile(env) });
+  const hub = createNodeHub({ registry, log, ...hubOptions });
+  let mcp = null;
+  try {
+    mcp = createNodesMcp({ hub, port: mcpPort, bind: mcpBind, token, tokenFile, log });
+  } catch (error) {
+    log(`intelio-nodes mcp disabled: ${String(error.message || error).slice(0, 200)}`);
+  }
+  return {
+    registry,
+    hub,
+    get mcp() { return mcp; },
+    async listen() {
+      hub.watch();
+      if (!mcp) return null;
+      try {
+        const address = await mcp.listen();
+        log(`intelio-nodes mcp listening on ${address.address}:${address.port}`);
+        return address;
+      } catch (error) {
+        log(`intelio-nodes mcp did not start: ${String(error.code || error.message || error).slice(0, 200)}`);
+        mcp = null;
+        return null;
+      }
+    },
+    close() {
+      hub.close();
+      if (mcp) mcp.close();
+    },
+  };
+}
+
+module.exports = { DEFAULT_PORT, SUPPORTED_VERSIONS, LATEST_VERSION, defaultTokenFile, isLoopbackBind, readToken, createNodesMcp, nodesEnabled, createNodesRelay };

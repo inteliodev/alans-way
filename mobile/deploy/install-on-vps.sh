@@ -193,6 +193,23 @@ fi
 
 mkdir -p "$UNIT_DIR" "$ENV_DIR"
 umask 077
+# intelio computers (docs/intelio-node.md): bearer token Hermes uses for the loopback
+# MCP server on 127.0.0.1:8645. Created once, mode 600, never printed.
+NODES_TOKEN_FILE="$ENV_DIR/nodes-mcp.token"
+NODES_MCP_PORT="${INTELIO_NODES_MCP_PORT:-$(env_get INTELIO_NODES_MCP_PORT)}"
+if [[ -n "$NODES_MCP_PORT" ]] && ! [[ "$NODES_MCP_PORT" =~ ^[0-9]+$ && "$NODES_MCP_PORT" -ge 1 && "$NODES_MCP_PORT" -le 65535 ]]; then
+  echo "INTELIO_NODES_MCP_PORT must be 1-65535." >&2
+  exit 1
+fi
+if [[ ! -s "$NODES_TOKEN_FILE" ]]; then
+  node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("hex") + "\n")' > "$NODES_TOKEN_FILE.tmp"
+  chmod 600 "$NODES_TOKEN_FILE.tmp"
+  mv "$NODES_TOKEN_FILE.tmp" "$NODES_TOKEN_FILE"
+  echo "Created $NODES_TOKEN_FILE (mode 600). The token is not printed."
+else
+  chmod 600 "$NODES_TOKEN_FILE"
+  echo "Kept $NODES_TOKEN_FILE (mode 600)."
+fi
 {
   printf 'INTELIO_PWA_BIND=%s\n' "$BIND"
   printf 'INTELIO_PWA_PORT=%s\n' "$PORT"
@@ -219,6 +236,8 @@ umask 077
     printf 'HF_HOME=%s\n' "$HF_HOME"
   fi
   if [[ -n "$PIPER_MODEL" ]]; then printf 'INTELIO_VOICE_PIPER_MODEL=%s\n' "$PIPER_MODEL"; fi
+  printf 'INTELIO_NODES=1\n'
+  if [[ -n "$NODES_MCP_PORT" ]]; then printf 'INTELIO_NODES_MCP_PORT=%s\n' "$NODES_MCP_PORT"; fi
 } > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
@@ -257,4 +276,6 @@ else
 fi
 echo "If this user service should survive logout: sudo loginctl enable-linger \"$USER\""
 echo "Do not add a public firewall rule for this port."
+echo "intelio computers: MCP for Hermes on http://127.0.0.1:${NODES_MCP_PORT:-8645}/mcp (loopback only). Hermes reads the bearer from $NODES_TOKEN_FILE via INTELIO_NODES_MCP_TOKEN in the profile .env."
+echo "Enrolled computers: node $ROOT/mobile/pwa/nodes-cli.cjs list | revoke <name> | rename <name> <new>"
 echo "This installer does not restart hermes-gateway. The phone asks before: systemctl --user restart hermes-gateway"
