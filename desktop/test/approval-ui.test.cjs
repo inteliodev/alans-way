@@ -25,13 +25,13 @@ function fakeDocument() {
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 const PUSH = {
-  command: 'prc wants to push: git push\n\ngit push origin fix/login\n\nin /home/hayden/code/app',
+  command: 'prc wants to push: git push\n\ngit push origin fix/login\n\nin /home/user/code/app',
   description: 'intelio push approval: nothing is pushed unless you allow it.',
   pattern_key: 'mcp_elicitation', run_id: 'run_abc', request_id: 'req1', choices: ['once', 'session', 'always', 'deny'],
 };
 
 test('describe reads the push message from the plugin and the computers relay', () => {
-  assert.deepEqual(approval.describe(PUSH), { kind: 'push', title: 'prc wants to push', what: 'git push', command: 'git push origin fix/login', where: 'in /home/hayden/code/app' });
+  assert.deepEqual(approval.describe(PUSH), { kind: 'push', title: 'prc wants to push', what: 'git push', command: 'git push origin fix/login', where: 'in /home/user/code/app' });
   assert.deepEqual(approval.describe({ command: 'hayden-mac wants to push: gh pr merge\n\ngh pr merge 7 --squash\n\ntyped into terminal session s1' }).where, 'typed into terminal session s1');
   assert.deepEqual(approval.describe({ command: 'rm -rf build' }), { kind: 'other', title: 'Allow this?', what: '', command: 'rm -rf build', where: '' });
   assert.equal(approval.answerable(PUSH), true);
