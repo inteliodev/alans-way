@@ -35,8 +35,8 @@ test('connection mode falls back to auto for anything else', () => {
   assert.equal(normalizeConnectionMode('auto'), 'auto');
   assert.equal(normalizeConnectionMode('Tailscale'), 'tailscale');
   assert.equal(normalizeConnectionMode('cloud'), 'cloud');
-  assert.equal(normalizeConnectionMode('public'), 'auto');
-  assert.equal(normalizeConnectionMode(''), 'auto');
+  assert.equal(normalizeConnectionMode('public'), 'cloud');
+  assert.equal(normalizeConnectionMode(''), 'cloud');
 });
 
 test('cloud targets stay on the Intelio hostnames unless e2e loopback is set', () => {

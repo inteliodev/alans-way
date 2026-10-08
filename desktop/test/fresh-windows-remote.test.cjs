@@ -71,14 +71,14 @@ test('an incomplete remoteHermes object does not wipe the Windows host, and enab
   const missingField = loadPreferences({ text: JSON.stringify({ chatWidth: 400 }), platform: 'win32' });
   assert.equal(missingField.prefs.remoteHermes.host, VPS_HOST);
   assert.equal(missingField.prefs.remoteHermes.enabled, true);
-  assert.equal(missingField.prefs.remoteHermes.connection, 'auto');
+  assert.equal(missingField.prefs.remoteHermes.connection, 'cloud');
   const cloudMode = loadPreferences({ text: JSON.stringify({ remoteHermes: { connection: 'cloud' } }), platform: 'win32' });
   assert.equal(cloudMode.prefs.remoteHermes.connection, 'cloud');
   assert.equal(cloudMode.prefs.remoteHermes.host, VPS_HOST);
   const keptTailscale = loadPreferences({ text: JSON.stringify({ remoteHermes: { connection: 'tailscale' } }), platform: 'win32' });
   assert.equal(keptTailscale.prefs.remoteHermes.connection, 'tailscale');
   const junkMode = loadPreferences({ text: JSON.stringify({ remoteHermes: { connection: 'public' } }), platform: 'win32' });
-  assert.equal(junkMode.prefs.remoteHermes.connection, 'auto');
+  assert.equal(junkMode.prefs.remoteHermes.connection, 'cloud');
   assert.equal(missingField.prefs.chatWidth, 400);
   assert.equal(missingField.prefs.remoteUrl, VNC_URL);
   assert.equal(missingField.prefs.sidebarTab, 'agents');

@@ -248,3 +248,35 @@ test('server display names win; built-in names cover a missing name or a bare sl
   });
   assert.deepEqual(agents.map((agent) => agent.name), ['Outreach', 'HHP', 'Ops Desk']);
 });
+
+test('a slow /api/home answers from the last list at once and does not fall through to /api/profiles', async () => {
+  let delay = 0;
+  let homeHits = 0;
+  const { server, seen, port } = await listen((req, res) => {
+    if (req.url === '/api/home') {
+      homeHits += 1;
+      setTimeout(() => profiles(res), delay);
+      return;
+    }
+    res.statusCode = 404; res.end('{}');
+  });
+  try {
+    const main = createRemoteMain({
+      getConfig: () => ({ enabled: true, host: '127.0.0.1', port, profile: 'intelio' }),
+      getKey: async (profile) => KEYS[profile] || '',
+      keyNames: () => Object.keys(KEYS),
+      probeTimeoutMs: 150,
+    });
+    const first = await main.listAgents();
+    assert.equal(first.agents.length, 4);
+    delay = 400;
+    const started = Date.now();
+    const second = await main.listAgents();
+    assert.ok(Date.now() - started < 100, 'cached list comes back at once');
+    assert.deepEqual(second.agents.map((agent) => agent.id), first.agents.map((agent) => agent.id));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(homeHits, 2, 'one background refresh');
+    assert.equal(seen.some((hit) => hit.url === '/api/profiles'), false, 'a timeout is not treated as a missing route');
+  } finally { server.close(); }
+});
+

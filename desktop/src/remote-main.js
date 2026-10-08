@@ -1740,12 +1740,19 @@
     if (gone) ui.selected = ui.agents[0]?.id || '';
     paintAgents();
     paintHeader();
-    try {
-      const screens = await root.remoteHermes.request('screens');
-      ui.screens = Array.isArray(screens?.data) ? screens.data : [];
-    } catch { ui.screens = []; }
-    paintWatching();
+    // Screens load on their own; chat and sessions never wait for them.
+    loadScreens();
     return gone;
+  }
+
+  function loadScreens() {
+    if (ui.loadingScreens) return ui.loadingScreens;
+    ui.loadingScreens = Promise.resolve()
+      .then(() => root.remoteHermes.request('screens'))
+      .then((screens) => { ui.screens = Array.isArray(screens?.data) ? screens.data : []; })
+      .catch(() => { ui.screens = ui.screens || []; })
+      .finally(() => { ui.loadingScreens = null; paintWatching(); });
+    return ui.loadingScreens;
   }
 
   /** Reloads the selected agent's thread list in place; the open thread stays open. */

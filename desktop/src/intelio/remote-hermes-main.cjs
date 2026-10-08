@@ -479,7 +479,8 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return `${scheme}://${host}:${port}`;
   }
 
-  async function pwaRequest(profile, key, pathname, body, { timeoutMs = 1200, expectId = true, query = '' } = {}) {
+  // The cloud route adds a hop and the server can take several seconds on cards and screens.
+  async function pwaRequest(profile, key, pathname, body, { timeoutMs = 10000, expectId = true, query = '' } = {}) {
     let cfg;
     try { cfg = await config(); } catch { return null; }
     const cloud = Boolean(cfg?.origin || cfg?.activeMode === 'cloud');

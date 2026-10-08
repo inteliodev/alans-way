@@ -14,7 +14,8 @@ const PROBE_TIMEOUT_MS = 4000;
 function normalizeConnectionMode(value) {
   const mode = String(value || '').trim().toLowerCase();
   if (mode === 'auto' || mode === 'tailscale' || mode === 'cloud') return mode;
-  return 'auto';
+  // No saved choice: go straight to the VPS address. Tailscale is opt-in (auto or tailscale).
+  return 'cloud';
 }
 
 function loopbackHttp(value) {

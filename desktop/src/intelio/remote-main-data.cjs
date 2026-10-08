@@ -135,7 +135,7 @@ function selectHarnessAgents(parsed, stored, profile = 'intelio') {
   return agentsFromKeys(stored, profile);
 }
 
-function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = globalThis.fetch, probeTimeoutMs = 3000, sessionFor, net } = {}) {
+function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = globalThis.fetch, probeTimeoutMs = 12000, sessionFor, net } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('fetch is unavailable');
   const client = createRemoteHermesClient({ getConfig, getKey, fetchImpl, sessionFor, net });
 
@@ -167,6 +167,8 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
       return { agents, sample: Boolean(json?.sample), label: json?.sample ? (json.label || 'SAMPLE DATA') : '' };
     } catch (error) {
       if (error?.code === 'CLOUD_ACCESS') throw error;
+      // A timeout means the server is slow, not that the route is missing: don't try the next one.
+      if (controller.signal.aborted) return { timedOut: true };
       return null;
     } finally {
       clearTimeout(timer);
@@ -177,8 +179,29 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
     return Promise.resolve(typeof getConfig === 'function' ? getConfig() : {});
   }
 
+  // The last agent list the server returned, per connection. A refresh answers from it at once
+  // and asks the server in the background, so a slow /api/home never holds up chat.
+  let cachedAgents = null;
+  let cachedFor = '';
+  let pendingAgents = null;
+
   async function listAgents() {
     const raw = await rawConfig();
+    const stamp = `${raw?.origin || ''}|${raw?.host || ''}|${raw?.port || ''}|${storedNames().join(',')}`;
+    if (cachedAgents && cachedFor === stamp) {
+      if (!pendingAgents) {
+        pendingAgents = fetchAgents(raw)
+          // An expired cloud sign-in must surface on the next refresh, not hide behind the cache.
+          .catch((error) => { if (error?.code === 'CLOUD_ACCESS') cachedAgents = null; })
+          .finally(() => { pendingAgents = null; });
+      }
+      return cachedAgents;
+    }
+    return fetchAgents(raw);
+  }
+
+  async function fetchAgents(raw) {
+    const stamp = `${raw?.origin || ''}|${raw?.host || ''}|${raw?.port || ''}|${storedNames().join(',')}`;
     const config = normalizeRemoteConfig(raw || {});
     const stored = storedNames();
     const order = [];
@@ -199,7 +222,13 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
         const root = origin || `http://${host}:${config.port}`;
         for (const path of ['/api/home', '/api/profiles']) {
           const found = await probe(`${root}${path}`, key, raw, keyName);
-          if (found) return { ...found, agents: selectHarnessAgents(found.agents, stored, config.profile || 'intelio') };
+          if (found?.timedOut) break;
+          if (found) {
+            const result = { ...found, agents: selectHarnessAgents(found.agents, stored, config.profile || 'intelio') };
+            cachedAgents = result;
+            cachedFor = stamp;
+            return result;
+          }
         }
       }
     }

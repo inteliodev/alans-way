@@ -28,10 +28,10 @@ test('config normalizes profile and builds the /p/<profile> prefix', () => {
 });
 
 test('windows and macOS first launch default to the VPS; linux stays opt-in', () => {
-  const remote = { enabled: true, host: VPS_HOST, port: 8642, profile: 'intelio', connection: 'auto' };
+  const remote = { enabled: true, host: VPS_HOST, port: 8642, profile: 'intelio', connection: 'cloud' };
   assert.deepEqual(remoteHermesDefaults('win32'), remote);
   assert.deepEqual(remoteHermesDefaults('darwin'), remote);
-  assert.deepEqual(remoteHermesDefaults('linux'), { enabled: false, host: '', port: 8642, profile: 'intelio', connection: 'auto' });
+  assert.deepEqual(remoteHermesDefaults('linux'), { enabled: false, host: '', port: 8642, profile: 'intelio', connection: 'cloud' });
   assert.equal(VPS_HOST, 'intelio-vps.tail9c1007.ts.net');
   assert.equal(VNC_URL, 'http://intelio-vps.tail9c1007.ts.net:6080/vnc.html');
 });
