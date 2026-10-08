@@ -28,6 +28,7 @@ const { renderOrbPng } = require('./orbs.cjs');
 const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
 const { resolveVncUpstream, readVncPassword, bridgeVnc } = require('./vnc-proxy.cjs');
 const { nodesEnabled, createNodesRelay } = require('./nodes-mcp.cjs');
+const { handleComputersApi } = require('./nodes-human.cjs');
 const { refuseUpgrade } = require('../../desktop/src/intelio/node/ws.cjs');
 const { resolveCdpUrl } = require('../../desktop/src/intelio/cdp-fill.cjs');
 const { harnessId, excludedAgent, buildCard, readProfileFiles, writePaused, writeReasoning, writeProfile, cleanColor, backupFile } = require('../../desktop/src/intelio/agent-card.cjs');
@@ -1081,6 +1082,7 @@ function createPwaServer({
   // rest of the app: Access JWT on the Access listener (no profile bearer keys),
   // allowed Tailscale login on the tailnet listener. Device secret is checked by the hub.
   const nodeRelay = nodes ? createNodesRelay({ log, ...nodes }) : null;
+  const computersExtra = null; // stage 2 adds the cloud terminal routes here
   async function acceptNode(req, socket, head, accessListener) {
     if (!nodeRelay) { refuseUpgrade(socket, 404); return; }
     const res = { writeHead() {}, end() {}, setHeader() {} };
@@ -1322,6 +1324,11 @@ function createPwaServer({
         if (token) sessions.delete(token);
         authFor.delete(req);
         return send(res, 200, { ok: true }, { 'set-cookie': 'intelio_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0' });
+      }
+      // intelio computers: the person's Computers list, kill switches and activity log (nodes-human.cjs).
+      if (url.pathname.startsWith('/api/computers')) {
+        const handled = await handleComputersApi({ req, res, url, session, relay: nodeRelay, send, readBody, mutationOk, peerIsSelf, normalizeIp, log, extra: computersExtra });
+        if (handled !== false) return undefined;
       }
       if (req.method === 'GET' && url.pathname === '/api/browser/site') {
         return send(res, 200, { domain: await browserDomain(chosenProfile(req)) });

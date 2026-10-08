@@ -33,7 +33,7 @@ const computerArg = { type: 'string', description: 'Computer name or id (case-in
 const TOOLS = Object.freeze([
   {
     name: 'list_computers',
-    description: 'List the computers enrolled with intelio: name, id, os, user, online, last_seen, version.',
+    description: 'List the computers you can use: the person\'s enrolled computers and "cloud" (the intelio VPS itself). Each row: name, id, os, user, online, last_seen, version; paused means the person turned it off for agents.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {

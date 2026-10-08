@@ -88,7 +88,8 @@ function createNodesMcp({
     if (name === 'list_computers') {
       const rows = hub.listComputers();
       log(`intelio-nodes call computer=- tool=list_computers ok=true count=${rows.length}`);
-      return { content: protocol.textContent(rows.length ? { computers: rows } : { computers: [], note: 'No computers are enrolled yet. Sign in to the intelio app on a computer to enroll it.' }), isError: false };
+      const enrolled = rows.filter((r) => r.kind !== 'cloud').length;
+      return { content: protocol.textContent(enrolled ? { computers: rows } : { computers: rows, note: 'No personal computers are enrolled yet. Sign in to the intelio app on a computer to enroll it.' }), isError: false };
     }
     if (!protocol.TOOL_NAMES.includes(name)) return null;
     return hub.call(args.computer, name, args);
@@ -107,7 +108,7 @@ function createNodesMcp({
           protocolVersion: SUPPORTED_VERSIONS.includes(asked) ? asked : LATEST_VERSION,
           capabilities: { tools: { listChanged: false } },
           serverInfo: SERVER_INFO,
-          instructions: 'Use the person\'s enrolled computers. Call list_computers first; every other tool takes computer (name or id).',
+          instructions: 'Use the person\'s computers: their enrolled laptops/desktops and "cloud" (this VPS). Call list_computers first; every other tool takes computer (name or id). A computer that is offline or turned off for agents returns an error: tell the person, do not retry.',
         });
       }
       case 'ping': return rpcResult(msg.id, {});
@@ -204,10 +205,18 @@ function createNodesRelay({
   mcpPort = Number(env.INTELIO_NODES_MCP_PORT || DEFAULT_PORT),
   mcpBind = '127.0.0.1',
   hubOptions = {},
+  auditFile,
+  cloud,
+  appVersion = '',
 } = {}) {
-  const { createNodeRegistry, createNodeHub, defaultRegistryFile } = require('./nodes.cjs');
+  const { createNodeRegistry, createNodeHub, defaultRegistryFile, defaultAuditFile } = require('./nodes.cjs');
+  const { createCloudComputer, cloudEnabled } = require('./nodes-local.cjs');
   const registry = createNodeRegistry({ file: registryFile || defaultRegistryFile(env) });
-  const hub = createNodeHub({ registry, log, ...hubOptions });
+  let locals = [];
+  if (cloud === true || (cloud !== false && cloudEnabled(env))) {
+    try { locals = [createCloudComputer({ env, version: appVersion })]; } catch (error) { log(`intelio-nodes cloud computer disabled: ${String(error.message || error).slice(0, 200)}`); }
+  }
+  const hub = createNodeHub({ registry, log, auditFile: auditFile === undefined ? defaultAuditFile(env) : auditFile, locals, ...hubOptions });
   let mcp = null;
   try {
     mcp = createNodesMcp({ hub, port: mcpPort, bind: mcpBind, token, tokenFile, log });

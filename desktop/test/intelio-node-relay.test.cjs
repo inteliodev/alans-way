@@ -98,7 +98,7 @@ async function startRelay(t, extra = {}) {
     voice: { status: async () => ({}) },
     log: (line) => logs.push(line),
     fetchImpl: async () => { throw new Error('no upstream in tests'); },
-    nodes: { registryFile, token: TOKEN, mcpPort: 0, ...extra },
+    nodes: { registryFile, token: TOKEN, mcpPort: 0, cloud: false, auditFile: path.join(dir, 'nodes-audit.jsonl'), ...extra },
   });
   await app.listen();
   t.after(() => new Promise((resolve) => app.close(resolve)));
@@ -149,7 +149,7 @@ test('the integrated relay adds no public listener: MCP and the Access listener 
   // A relay asked to bind anything else keeps the phone app running but serves no MCP.
   const logs = [];
   const { createNodesRelay } = require('../../mobile/pwa/nodes-mcp.cjs');
-  const relay = createNodesRelay({ registryFile: path.join(r.dir, 'other.json'), token: TOKEN, mcpPort: 0, mcpBind: ['0', '0', '0', '0'].join('.'), log: (l) => logs.push(l) });
+  const relay = createNodesRelay({ registryFile: path.join(r.dir, 'other.json'), token: TOKEN, mcpPort: 0, cloud: false, auditFile: '', mcpBind: ['0', '0', '0', '0'].join('.'), log: (l) => logs.push(l) });
   try {
     assert.equal(relay.mcp, null);
     assert.ok(logs.some((l) => /mcp disabled: Refusing to listen/.test(l)), logs.join('\n'));
@@ -360,4 +360,111 @@ test('per-call timeout and disconnect mid-call give readable errors', async () =
     hub.close();
     server.close();
   }
+});
+
+function request(port, { method = 'GET', pathname, body, headers = {} }) {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
+    const req = http.request({ hostname: '127.0.0.1', port, method, path: pathname, headers: { ...(payload ? { 'content-type': 'application/json', 'content-length': payload.length } : {}), ...headers } }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => { const text = Buffer.concat(chunks).toString('utf8'); let json = null; try { json = JSON.parse(text); } catch { json = null; } resolve({ status: res.statusCode, json, text }); });
+    });
+    req.on('error', reject);
+    req.end(payload || undefined);
+  });
+}
+
+test('"cloud" (the VPS itself) is a built-in computer: listed first, files and commands work, no elevation, no credentials in its env', { timeout: 30000 }, async (t) => {
+  const prev = { k: process.env.INTELIO_TEST_SECRET_KEY, t: process.env.SOME_API_TOKEN };
+  process.env.INTELIO_TEST_SECRET_KEY = 'never-show-me';
+  process.env.SOME_API_TOKEN = 'never-show-me-either';
+  t.after(() => { process.env.INTELIO_TEST_SECRET_KEY = prev.k; process.env.SOME_API_TOKEN = prev.t; });
+  const r = await startRelay(t, { cloud: true });
+  const rows = JSON.parse((await callTool(r.mcpPort, 'list_computers')).content[0].text);
+  assert.equal(rows.computers[0].name, 'cloud');
+  assert.equal(rows.computers[0].kind, 'cloud');
+  assert.equal(rows.computers[0].online, true);
+  assert.match(rows.note, /No personal computers are enrolled yet/);
+  const dir = tmpdir('intelio-cloud-');
+  fs.writeFileSync(path.join(dir, 'hello.txt'), 'from the vps');
+  const listed = JSON.parse((await callTool(r.mcpPort, 'list_dir', { computer: 'vps', path: dir })).content[0].text);
+  assert.deepEqual(listed.entries.map((e) => e.name), ['hello.txt']);
+  const ran = await callTool(r.mcpPort, 'run_command', { computer: 'cloud', command: process.platform === 'win32' ? 'Get-ChildItem env: | Out-String' : 'env', timeout_s: 20 });
+  assert.equal(ran.isError, false, ran.content[0].text);
+  const out = JSON.parse(ran.content[0].text);
+  assert.equal(out.exit_code, 0);
+  assert.ok(!out.stdout.includes('never-show-me'), 'credential-looking variables are not passed to commands');
+  const sudo = await callTool(r.mcpPort, 'run_command', { computer: 'cloud', command: 'sudo id' });
+  assert.equal(sudo.isError, true);
+  assert.match(sudo.content[0].text, /Refused/);
+  const audit = fs.readFileSync(path.join(r.dir, 'nodes-audit.jsonl'), 'utf8');
+  assert.match(audit, /"computer":"cloud","tool":"list_dir"/);
+  assert.ok(!audit.includes('from the vps'), 'no file contents in the audit');
+});
+
+test('kill switch per computer: a paused computer refuses agent calls until resumed; the cloud computer too', { timeout: 30000 }, async (t) => {
+  const r = await startRelay(t, { cloud: true });
+  const node = await fakeNode(r.tailnetUrl, { name: 'Laptop', handler: (msg) => protocol.frames.ok(msg.id, protocol.textContent({ ok: true })) });
+  assert.equal(node.first.type, 'welcome');
+  r.app.nodes.hub.setPaused('laptop', true);
+  const refused = await callTool(r.mcpPort, 'computer_info', { computer: 'Laptop' });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content[0].text, /turned off for agents/);
+  const rows = JSON.parse((await callTool(r.mcpPort, 'list_computers')).content[0].text).computers;
+  assert.equal(rows.find((c) => c.name === 'Laptop').paused, true);
+  r.app.nodes.hub.setPaused('laptop', false);
+  assert.equal((await callTool(r.mcpPort, 'computer_info', { computer: 'Laptop' })).isError, false);
+  r.app.nodes.hub.setPaused('cloud', true);
+  assert.match((await callTool(r.mcpPort, 'list_dir', { computer: 'cloud', path: '/' })).content[0].text, /turned off for agents/);
+  // Survives a relay restart: the state is in nodes.json.
+  assert.equal(JSON.parse(fs.readFileSync(r.registryFile, 'utf8')).local.cloud.paused_at.length > 0, true);
+  r.app.nodes.hub.setPaused('cloud', false);
+  node.ws.close();
+});
+
+test('person-only computers API: Access session or tailnet login; never a profile key, never the VPS itself, same-origin POSTs', { timeout: 30000 }, async (t) => {
+  let self = false;
+  const r = await startRelay(t, { cloud: true });
+  r.app.close(() => {});
+  // Fresh server with a controllable self check.
+  const dir = tmpdir('intelio-human-');
+  const app = createPwaServer({
+    bind: '127.0.0.1', port: 0, localPort: 0, upstream: 'http://127.0.0.1:9', accessMode: true,
+    accessVerify: async (a) => (a === GOOD_JWT ? { ok: true, login: 'hayden@intelio.co' } : { ok: false }),
+    identify: async () => ({ ok: true, login: 'inteliodev@github' }),
+    selfCheck: async () => self,
+    vaultRoot: dir, profileOps: { keyFor: () => 'profile-key' }, voice: { status: async () => ({}) }, log: () => {},
+    fetchImpl: async () => { throw new Error('no upstream'); },
+    nodes: { registryFile: path.join(dir, 'nodes.json'), token: TOKEN, mcpPort: 0, cloud: true, auditFile: path.join(dir, 'audit.jsonl') },
+  });
+  await app.listen();
+  t.after(() => new Promise((resolve) => app.close(resolve)));
+  const access = app.local.address().port;
+  const tailnet = app.server.address().port;
+  const jwt = { 'cf-access-jwt-assertion': GOOD_JWT };
+  const listed = await request(access, { pathname: '/api/computers', headers: jwt });
+  assert.equal(listed.status, 200, listed.text);
+  assert.equal(listed.json.computers[0].name, 'cloud');
+  assert.equal((await request(access, { pathname: '/api/computers' })).status, 401);
+  // A profile bearer key (what agents hold) is not a person.
+  const keyed = await request(access, { pathname: '/api/computers', headers: { authorization: 'Bearer profile-key' } });
+  assert.ok(keyed.status === 401 || keyed.status === 403, `profile key got ${keyed.status}`);
+  // Tailnet: allowed login works; the VPS itself is refused.
+  assert.equal((await request(tailnet, { pathname: '/api/computers' })).status, 200);
+  self = true;
+  assert.equal((await request(tailnet, { pathname: '/api/computers' })).status, 403);
+  assert.equal((await request(tailnet, { method: 'POST', pathname: '/api/computers/pause', body: { computer: 'cloud', paused: true }, headers: { origin: `http://127.0.0.1:${tailnet}` } })).status, 403);
+  self = false;
+  // POST needs a same-origin Origin.
+  assert.equal((await request(access, { method: 'POST', pathname: '/api/computers/pause', body: { computer: 'cloud', paused: true }, headers: jwt })).status, 403);
+  const paused = await request(access, { method: 'POST', pathname: '/api/computers/pause', body: { computer: 'cloud', paused: true }, headers: { ...jwt, origin: `http://127.0.0.1:${access}` } });
+  assert.equal(paused.status, 200, paused.text);
+  assert.equal(paused.json.paused, true);
+  assert.equal((await request(access, { pathname: '/api/computers', headers: jwt })).json.computers[0].paused, true);
+  const audit = await request(access, { pathname: '/api/computers/audit?limit=5', headers: jwt });
+  assert.equal(audit.status, 200);
+  assert.equal(audit.json.entries.at(-1).tool, 'kill_switch_off');
+  const unknown = await request(access, { method: 'POST', pathname: '/api/computers/pause', body: { computer: 'nope', paused: true }, headers: { ...jwt, origin: `http://127.0.0.1:${access}` } });
+  assert.equal(unknown.status, 404);
 });

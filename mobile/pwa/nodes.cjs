@@ -72,7 +72,7 @@ function createNodeRegistry({ file = defaultRegistryFile(), now = () => Date.now
     return data;
   }
   function save(data) {
-    writeAtomic(file, `${JSON.stringify({ version: 1, devices: data.devices }, null, 2)}\n`);
+    writeAtomic(file, `${JSON.stringify({ version: 1, devices: data.devices, ...(data.local && Object.keys(data.local).length ? { local: data.local } : {}) }, null, 2)}\n`);
   }
   const iso = () => new Date(now()).toISOString();
 
@@ -152,6 +152,27 @@ function createNodeRegistry({ file = defaultRegistryFile(), now = () => Date.now
       save(data);
       return publicDevice(hit.device);
     },
+    /** Kill-switch state of a built-in computer (the VPS itself), kept next to the devices. */
+    localState(id) {
+      const data = load();
+      return { ...((data.local && data.local[id]) || {}) };
+    },
+    setLocalPaused(id, paused) {
+      const data = load();
+      data.local = data.local && typeof data.local === 'object' ? data.local : {};
+      data.local[id] = { ...(data.local[id] || {}), paused_at: paused ? iso() : null };
+      save(data);
+      return { ...data.local[id] };
+    },
+    /** Relay-side kill switch: a paused computer stays connected but every agent call is refused. */
+    setPaused(ref, paused) {
+      const data = load();
+      const hit = resolveIn(data, ref);
+      if (!hit.device) throw new Error(hit.error);
+      hit.device.paused_at = paused ? iso() : null;
+      save(data);
+      return publicDevice(hit.device);
+    },
     rename(ref, name) {
       const clean = String(name || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 64);
       if (!clean) throw new Error('Give a new name.');
@@ -166,6 +187,45 @@ function createNodeRegistry({ file = defaultRegistryFile(), now = () => Date.now
   };
 }
 
+function defaultAuditFile(env = process.env) {
+  return String(env.INTELIO_NODES_AUDIT_FILE || '').trim() || path.join(configDir(env), 'nodes-audit.jsonl');
+}
+
+const AUDIT_ROTATE_BYTES = 10 * 1024 * 1024;
+
+/** Relay audit: one JSON line per agent call (computer, tool, argument summary, result size). No contents, no secrets. */
+function createRelayAudit(file) {
+  if (!file) return () => {};
+  return function append(entry) {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      try { if (fs.statSync(file).size > AUDIT_ROTATE_BYTES) fs.renameSync(file, `${file}.1`); } catch { /* new file */ }
+      fs.appendFileSync(file, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
+    } catch { /* auditing never breaks a call */ }
+  };
+}
+
+/** The last n audit entries, newest last. Reads at most the final 2 MB. */
+function readAuditTail(file, n = 200) {
+  let text = '';
+  try {
+    const st = fs.statSync(file);
+    const size = Math.min(st.size, 2 * 1024 * 1024);
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(size);
+      fs.readSync(fd, buf, 0, size, st.size - size);
+      text = buf.toString('utf8');
+    } finally { fs.closeSync(fd); }
+  } catch { return []; }
+  const rows = [];
+  for (const line of text.split('\n').slice(-(n + 1))) {
+    if (!line.trim()) continue;
+    try { rows.push(JSON.parse(line)); } catch { /* partial first line */ }
+  }
+  return rows.slice(-n);
+}
+
 function lastSeenLabel(device) {
   return device && device.last_seen ? `last seen ${device.last_seen}` : 'never seen';
 }
@@ -177,8 +237,12 @@ function createNodeHub({
   pingMs = protocol.PING_MS,
   staleMs = protocol.STALE_MS,
   helloTimeoutMs = HELLO_TIMEOUT_MS,
+  auditFile = '',
+  locals = [],
 } = {}) {
   if (!registry) throw new Error('createNodeHub needs a registry.');
+  const appendAudit = createRelayAudit(auditFile);
+  const busy = new Map(); // device id -> { count, tool, since }
   const live = new Map(); // device id -> conn
   const pending = new Set(); // sockets before hello
   let seq = 0;
@@ -260,8 +324,44 @@ function createNodeHub({
     return `${device.name} is offline (${lastSeenLabel(device)}).`;
   }
 
-  function listComputers() {
-    return registry.list().map((d) => ({
+  /** Built-in computers (the VPS itself) first, then enrolled ones. */
+  function localDevices() {
+    return locals.map((l) => {
+      let state = {};
+      try { state = registry.localState(l.device.id); } catch { state = {}; }
+      return { ...l.device, local: true, paused_at: state.paused_at || null, last_seen: new Date(now()).toISOString() };
+    });
+  }
+  function resolveRef(ref) {
+    const want = String(ref || '').trim().toLowerCase();
+    if (want) {
+      for (const d of localDevices()) {
+        const names = [d.id, d.name, ...(d.aliases || [])].map((x) => String(x || '').toLowerCase());
+        if (names.includes(want)) return { device: d };
+      }
+    }
+    const hit = registry.resolve(ref);
+    if (!hit.device && want && locals.length) {
+      return { error: `${hit.error.replace(/\.$/, '')}. Built in: ${locals.map((l) => l.device.name).join(', ')}.` };
+    }
+    return hit;
+  }
+
+  function listComputers({ detail = false } = {}) {
+    const builtIn = localDevices().map((d) => ({
+      name: d.name,
+      id: d.id,
+      os: d.os,
+      user: d.user,
+      online: true,
+      last_seen: d.last_seen,
+      version: d.version,
+      kind: 'cloud',
+      note: d.note,
+      ...(d.paused_at ? { paused: true } : {}),
+      ...(detail ? { in_use: busy.has(d.id), current_tool: busy.get(d.id)?.tool || '' } : {}),
+    }));
+    return builtIn.concat(registry.list().map((d) => ({
       name: d.name,
       id: d.id,
       os: d.os,
@@ -269,27 +369,69 @@ function createNodeHub({
       online: live.has(d.id),
       last_seen: live.has(d.id) ? new Date(now()).toISOString() : d.last_seen,
       version: d.version,
-    }));
+      ...(d.paused_at ? { paused: true } : {}),
+      ...(detail ? { in_use: busy.has(d.id), current_tool: busy.get(d.id)?.tool || '', enrolled_at: d.enrolled_at } : {}),
+    })));
+  }
+
+  /** Kill switch for one computer (enrolled or built-in). */
+  function setPaused(ref, paused) {
+    const hit = resolveRef(ref);
+    if (!hit.device) throw new Error(hit.error);
+    if (hit.device.local) registry.setLocalPaused(hit.device.id, paused);
+    else registry.setPaused(hit.device.id, paused);
+    log(`intelio-nodes ${paused ? 'paused' : 'resumed'} id=${hit.device.id} name=${hit.device.name}`);
+    appendAudit({ time: new Date(now()).toISOString(), computer: hit.device.name, tool: paused ? 'kill_switch_off' : 'kill_switch_on', ok: true, by: 'person' });
+    return { id: hit.device.id, name: hit.device.name, paused: Boolean(paused) };
+  }
+
+  function markBusy(id, tool) {
+    const row = busy.get(id) || { count: 0, tool: '', since: now() };
+    row.count += 1;
+    row.tool = tool;
+    busy.set(id, row);
+    return () => { const r = busy.get(id); if (!r) return; r.count -= 1; if (r.count <= 0) busy.delete(id); };
   }
 
   /** Returns { content, isError } — MCP tool result shape. Never throws. */
   async function call(ref, tool, args = {}, { timeoutMs } = {}) {
     const started = now();
     const audit = (computer, ok, bytes, note = '') => {
-      log(`intelio-nodes call computer=${computer} tool=${tool} args=${JSON.stringify(protocol.summarizeArgs(tool, args, 'relay'))} ok=${ok} bytes=${bytes} ms=${now() - started}${note ? ` note=${note}` : ''}`);
+      const summary = protocol.summarizeArgs(tool, args, 'relay');
+      log(`intelio-nodes call computer=${computer} tool=${tool} args=${JSON.stringify(summary)} ok=${ok} bytes=${bytes} ms=${now() - started}${note ? ` note=${note}` : ''}`);
+      appendAudit({ time: new Date(started).toISOString(), computer, tool, args: summary, ok, result_bytes: bytes, ms: now() - started, ...(note ? { note } : {}) });
     };
     const errorResult = (text) => ({ content: [{ type: 'text', text }], isError: true });
     if (!protocol.NODE_TOOLS.includes(tool)) return errorResult(`Unknown tool ${tool}.`);
     let found;
-    try { found = registry.resolve(args && args.computer); } catch (error) { return errorResult(String(error.message)); }
+    try { found = resolveRef(args && args.computer); } catch (error) { return errorResult(String(error.message)); }
     if (!found.device) { audit(String(args && args.computer || '').slice(0, 64), false, 0, 'unknown'); return errorResult(found.error); }
     const device = found.device;
+    if (device.paused_at) {
+      audit(device.name, false, 0, 'paused');
+      return errorResult(`${device.name} is turned off for agents in the intelio app (its kill switch). Tell the person; do not retry until they turn it back on.`);
+    }
+    if (device.local) {
+      const local = locals.find((l) => l.device.id === device.id);
+      const done = markBusy(device.id, tool);
+      try {
+        const { computer: _c, ...localArgs } = args || {};
+        const out = await local.run(tool, localArgs);
+        if (out.ok) { const content = Array.isArray(out.content) ? out.content : []; audit(device.name, true, protocol.contentSize(content)); return { content, isError: false }; }
+        audit(device.name, false, 0);
+        return errorResult(String(out.error || 'The computer reported an error.'));
+      } catch (error) {
+        audit(device.name, false, 0, 'error');
+        return errorResult(String(error && error.message || error));
+      } finally { done(); }
+    }
     const conn = live.get(device.id);
     if (!conn || conn.ws.closed) { audit(device.name, false, 0, 'offline'); return errorResult(offlineText(device)); }
     const id = `c${++seq}`;
     const { computer: _computer, ...nodeArgs } = args || {};
     const wait = timeoutMs || protocol.callTimeoutMs(tool, nodeArgs);
     let timer;
+    const done = markBusy(device.id, tool);
     try {
       const msg = await new Promise((resolve, reject) => {
         conn.calls.set(id, { resolve, reject });
@@ -311,6 +453,7 @@ function createNodeHub({
       return errorResult(String(error.message || error));
     } finally {
       clearTimeout(timer);
+      done();
     }
   }
 
@@ -360,12 +503,16 @@ function createNodeHub({
     for (const conn of [...live.values()]) { try { conn.ws.close(1001, 'relay stopping'); } catch { /* closed */ } drop(conn, 'relay stopping'); }
   }
 
-  return { accept, call, listComputers, recheck, watch, close, live, registry };
+  function close2() { for (const l of locals) { try { l.close?.(); } catch { /* closing */ } } }
+  return { accept, call, listComputers, setPaused, resolveRef, recheck, watch, close: () => { close(); close2(); }, live, registry, busy, auditFile, locals };
 }
 
 module.exports = {
   configDir,
   defaultRegistryFile,
+  defaultAuditFile,
+  createRelayAudit,
+  readAuditTail,
   hashSecret,
   verifySecret,
   writeAtomic,
