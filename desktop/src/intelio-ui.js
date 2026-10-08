@@ -1,0 +1,178 @@
+/** Intelio profile, brand, and Hermes pin surfaces. Upstream Hermes strings stay as they are. */
+(function intelioUi() {
+  const $ = (id) => document.getElementById(id);
+  function text(id, value) { const node = $(id); if (node) node.textContent = value; }
+  function visibleName(raw) {
+    const value = String(raw || '').trim();
+    const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+    return known[value.toLowerCase()] || (value.toLowerCase() === 'intelio' ? 'intelio' : value);
+  }
+
+  function apply(state) {
+    const intelio = state?.intelio;
+    if (!intelio) return;
+    document.title = 'intelio';
+    text('product-title', 'intelio');
+    const mark = $('intelio-mark');
+    if (mark && intelio.brand?.mark) { mark.src = intelio.brand.mark; mark.hidden = false; }
+    const tokens = intelio.brand?.tokens || {};
+    const root = document.documentElement;
+    const light = String(state.theme || '').trim().toLowerCase() === 'light';
+    if (!light) {
+      if (tokens.background) root.style.setProperty('--bg', tokens.background);
+      if (tokens.foreground) root.style.setProperty('--text', tokens.foreground);
+      if (tokens.surface) root.style.setProperty('--intelio-surface', tokens.surface);
+      if (tokens.line) root.style.setProperty('--line', tokens.line);
+    }
+    if (tokens.font) root.style.setProperty('--intelio-font', `"${tokens.font}", "Geist Sans", ui-sans-serif, system-ui, sans-serif`);
+    const profileLabel = visibleName(intelio.profileName || intelio.profile || '');
+    text('intelio-profile', intelio.ok ? `Profile · ${profileLabel || 'intelio'}` : `Profile · ${intelio.error || 'not loaded'}`);
+    const hermes = intelio.hermes || {};
+    const pin = hermes.pinCommit ? hermes.pinCommit.slice(0, 12) : 'missing';
+    const launch = (intelio.launchArgv || []).join(' ') || 'hermes';
+    text('hermes-pin', intelio.ok ? `${launch} · pin ${pin} · ${hermes.summary || 'unavailable'}` : 'Hermes pin unavailable');
+  }
+
+  function remoteModeOn(remote) {
+    if (!remote || remote.enabled !== true) return false;
+    if (String(remote.host || '').trim()) return true;
+    if (remote.activeMode === 'cloud') return true;
+    return Array.isArray(remote.profilesWithKeys) && remote.profilesWithKeys.length > 0;
+  }
+
+  function vpsHermesLine(remote) {
+    const version = String(remote && remote.versionLabel || '').trim();
+    return version ? `VPS Hermes ${version}` : 'VPS Hermes version is still loading.';
+  }
+
+  function remoteOn(state) {
+    return remoteModeOn(state?.remoteHermes);
+  }
+
+  function appendVpsHermes(body, { element, state }) {
+    const remote = state?.remoteHermes || {};
+    const line = state?.hermesStatus?.label || vpsHermesLine(remote);
+    body.append(element('h3', '', 'VPS Hermes'));
+    body.append(element('p', 'settings-note', line));
+    const where = [remote.host ? `${remote.host}:${remote.port || 8642}` : '', remote.profile ? `profile ${visibleName(remote.profile)}` : ''].filter(Boolean).join(' · ');
+    if (where) body.append(element('p', 'settings-note', where));
+    body.append(element('hr', 'section-divider'));
+  }
+
+  function appendSettings(body, { element, command, state, toast }) {
+    if (remoteOn(state)) {
+      appendVpsHermes(body, { element, state });
+      appendRemoteHermes(body, { element, command, toast, state });
+      return;
+    }
+    const intelio = state?.intelio || {};
+    body.append(element('h3', '', 'intelio profile'));
+    if (!intelio.ok) body.append(element('p', 'settings-note', intelio.error || 'The intelio profile did not load.'));
+    const lines = [
+      intelio.profileName ? `Profile name: ${visibleName(intelio.profileName)}` : '',
+      intelio.profileDir ? `Directory: ${intelio.profileDir}` : '',
+      `Hermes command: ${(intelio.launchArgv || ['hermes']).join(' ')}`,
+      intelio.hermes ? `Pin ${intelio.hermes.pinCommit || 'missing'} · ${intelio.hermes.summary || 'unavailable'}` : '',
+      intelio.hermes?.version ? `Installed Hermes: ${intelio.hermes.version.split('\n')[0]}` : '',
+      intelio.pinVerifiedOn ? `Verified ${intelio.pinVerifiedOn}` : '',
+      `Safety: YOLO off, consequential actions ask-first, credentials vault-blind.`,
+      `Browsing zone: ${intelio.browsingOrigins?.length ? intelio.browsingOrigins.join(', ') : 'not set — upstream tab rules only'}`,
+      `Allowed folders: ${intelio.allowedFolders?.length ? intelio.allowedFolders.join(', ') : 'none'}`,
+      intelio.panels?.length ? `Panels: ${intelio.panels.join(', ')}` : '',
+      intelio.skills?.length ? `Skills: ${intelio.skills.join(', ')}` : 'Skills are listed on the profile and are not installed into Hermes from this app.',
+    ].filter(Boolean);
+    for (const line of lines) body.append(element('p', 'settings-note', line));
+    const field = element('div', 'field');
+    const label = element('label', '', 'intelio profile directory');
+    label.htmlFor = 'intelio-profile-dir';
+    const input = element('input');
+    input.id = 'intelio-profile-dir';
+    input.value = intelio.profileDir || '';
+    input.spellcheck = false;
+    field.append(label, input);
+    const load = element('button', 'secondary-button', 'Load profile');
+    load.onclick = async () => {
+      const result = await command('reload-intelio', { profileDir: input.value.trim() });
+      if (result?.intelio?.ok) toast(`Loaded intelio profile ${visibleName(result.intelio.profileName)}.`);
+    };
+    const recheck = element('button', 'secondary-button', 'Recheck Hermes pin');
+    recheck.onclick = async () => {
+      const result = await command('reload-intelio', {});
+      if (result?.intelio) toast(result.intelio.hermes?.summary || result.intelio.error || 'Hermes pin rechecked.');
+    };
+    body.append(field, load, recheck, element('hr', 'section-divider'));
+    appendRemoteHermes(body, { element, command, toast, state });
+  }
+
+  /** Remote Hermes (VPS): this app as a client of the single Hermes on the VPS, over Tailscale only. */
+  function appendRemoteHermes(body, { element, command, toast, state }) {
+    body.append(element('h3', '', 'Remote Hermes (VPS)'));
+    const remote = state?.remoteHermes;
+    if (remote && (remote.host || remote.versionLabel || remote.activeMode)) {
+      const pathName = remote.activeMode === 'cloud' ? 'intelio cloud' : remote.activeMode === 'tailscale' ? 'Tailscale' : '';
+      if (pathName) body.append(element('p', 'settings-note path-note', pathName));
+      const host = remote.host ? `${remote.host}:${remote.port || 8642}` : '';
+      body.append(element('p', 'settings-note', ['VPS Hermes', host, remote.versionLabel || ''].filter(Boolean).join(' · ')));
+    }
+    body.append(element('p', 'settings-note', 'When Remote Hermes is on, the main window lists each profile and chats through that profile’s VPS sessions. Connection is Auto, Tailscale, or intelio cloud (app.intelio-ai.com). Auto tries the Tailscale host for a few seconds and, if it does not answer, uses intelio cloud. intelio cloud opens a sign-in window for the one-time email code. The sign-in cookie stays in the app session and is not saved in preferences. The Tailscale host must be a tailnet address (a Tailscale CGNAT address or *.ts.net) or 127.0.0.1 for an SSH tunnel. The import file remote-hermes-key.import can hold several lines, one profile=key per line. A legacy API_SERVER_KEY= line, or a single raw key, is the intelio key. A vnc= line is the VPS desktop password, stored the same way and sent when the desktop asks. It is not a profile, and it is not put in the viewer URL. Each profile only accepts its own key. intelio encrypts them and deletes that file. You do not type the keys or the desktop password. A new machine can receive the same keys after intelio cloud sign-in.'));
+    const modeField = element('div', 'field');
+    const modeLabel = element('label', '', 'Connection');
+    modeLabel.htmlFor = 'remote-hermes-connection';
+    const mode = element('select');
+    mode.id = 'remote-hermes-connection';
+    for (const [value, text] of [['auto', 'Auto'], ['tailscale', 'Tailscale'], ['cloud', 'intelio cloud (app.intelio-ai.com)']]) {
+      const option = element('option', '', text);
+      option.value = value;
+      mode.append(option);
+    }
+    modeField.append(modeLabel, mode);
+    body.append(modeField);
+    const status = element('p', 'settings-note', 'Loading…');
+    const tail = element('p', 'settings-note', 'Checking Tailscale…');
+    tail.id = 'remote-hermes-tailscale';
+    const make = (id, labelText, value, type = 'text') => {
+      const field = element('div', 'field');
+      const label = element('label', '', labelText); label.htmlFor = id;
+      const input = element('input'); input.id = id; input.type = type; input.value = value ?? ''; input.spellcheck = false; input.autocomplete = 'off';
+      field.append(label, input); body.append(field); return input;
+    };
+    const host = make('remote-hermes-host', 'VPS host (Tailscale)', '');
+    const port = make('remote-hermes-port', 'Port', '8642');
+    const profile = make('remote-hermes-profile', 'Hermes profile', 'intelio');
+    const key = make('remote-hermes-key', 'API key for this profile (write-only)', '', 'password');
+    key.placeholder = 'unchanged';
+    const install = element('button', 'secondary-button', 'Install Tailscale');
+    install.hidden = true;
+    install.onclick = () => command('remote-hermes-install-tailscale', {}).catch((e) => { status.textContent = e.message; });
+    const show = (s) => {
+      host.value = s.host || ''; port.value = s.port || 8642; profile.value = visibleName(s.profile || 'default');
+      mode.value = s.connection === 'tailscale' || s.connection === 'cloud' ? s.connection : 'auto';
+      status.textContent = s.error || `${s.hasKey ? 'Key saved' : 'No key saved'} for profile ${visibleName(s.profile || 'default')}.${s.encryptionAvailable ? '' : ' OS encryption unavailable: keys cannot be saved.'}`;
+      if (s.tailscale) {
+        tail.textContent = s.tailscale.detail || '';
+        install.hidden = Boolean(s.tailscale.connected);
+        install.textContent = s.tailscale.installed ? 'Open Tailscale download' : 'Install Tailscale';
+      }
+    };
+    command('remote-hermes-state', {}).then(show).catch((e) => { status.textContent = e.message; });
+    const save = element('button', 'secondary-button', 'Save');
+    save.onclick = async () => {
+      try {
+        const profileId = { intelio: 'intelio', Intelio: 'intelio', PRC: 'prc', Alignment: 'alignment', HHP: 'hhp' }[profile.value.trim()] || profile.value.trim().toLowerCase();
+        let s = await command('remote-hermes-config', { host: host.value.trim(), port: Number(port.value), profile: profileId, enabled: true, connection: mode.value });
+        if (key.value) { s = await command('remote-hermes-key', { key: key.value, profile: s.profile }); key.value = ''; }
+        show(s); toast('Remote Hermes settings saved.');
+      } catch (e) { status.textContent = e.message; }
+    };
+    const test = element('button', 'secondary-button', 'Test connection');
+    test.onclick = async () => {
+      try { const r = await command('remote-hermes-test', {}); status.textContent = `Reachable (HTTP ${r.health?.status}). Session chat streaming: ${r.sessionChat ? 'yes' : 'no'}.`; }
+      catch (e) { status.textContent = e.message; }
+    };
+    const open = element('button', 'secondary-button', 'Open Remote Hermes');
+    open.onclick = () => command('open-remote-hermes', {}).catch((e) => { status.textContent = e.message; });
+    body.append(status, tail, install, save, test, open, element('hr', 'section-divider'));
+  }
+
+  window.IntelioUI = { apply, appendSettings };
+}());

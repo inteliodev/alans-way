@@ -1,3 +1,5 @@
+const path = require('node:path');
+const { fileURLToPath } = require('node:url');
 const PERMISSIONS = Object.freeze({ geolocation: 'Precise location', 'geolocation-approximate': 'General area', notifications: 'Notifications', camera: 'Camera', microphone: 'Microphone', 'clipboard-read': 'Read clipboard' });
 
 function originOf(value) {
@@ -79,4 +81,42 @@ function createSitePermissions({ getPreferences, savePreferences, canRequest, pr
   }
   return { install, set, reset };
 }
-module.exports = { createSitePermissions, originOf, PERMISSIONS };
+
+function mediaTypesOf(details = {}) {
+  if (Array.isArray(details.mediaTypes) && details.mediaTypes.length) return details.mediaTypes;
+  if (details.mediaType) return [details.mediaType];
+  return ['audio'];
+}
+
+/** file:// pages inside the app directory. Browser tabs and other origins are not included. */
+function appMediaPage(pageUrl, rootDir) {
+  try {
+    const url = new URL(String(pageUrl || ''));
+    if (url.protocol !== 'file:' || url.username || url.password) return false;
+    const file = path.resolve(fileURLToPath(url));
+    const root = path.resolve(String(rootDir || ''));
+    return file === root || file.startsWith(root + path.sep);
+  } catch { return false; }
+}
+
+/**
+ * Grant microphone capture for the app's own pages only.
+ * Camera, remote sites, and every other permission stay denied on this session.
+ */
+function installAppMicrophone(session, owns) {
+  function allow(wc, permission, details) {
+    try {
+      if (permission !== 'media') return false;
+      if (!wc || (typeof wc.isDestroyed === 'function' && wc.isDestroyed())) return false;
+      if (typeof owns !== 'function' || owns(wc) !== true) return false;
+      const types = mediaTypesOf(details);
+      return types.length > 0 && types.every((type) => type === 'audio');
+    } catch { return false; }
+  }
+  session.setPermissionCheckHandler((wc, permission, _origin, details = {}) => allow(wc, permission, details));
+  session.setPermissionRequestHandler((wc, permission, callback, details = {}) => {
+    callback(allow(wc, permission, details));
+  });
+}
+
+module.exports = { createSitePermissions, originOf, PERMISSIONS, installAppMicrophone, appMediaPage, mediaTypesOf };

@@ -4,6 +4,14 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  # windows-installer.yml calls this workflow and builds only after it passes.
+  workflow_call:
+
+concurrency:
+  # When called, github.workflow is the caller's name. The "tests-" prefix keeps
+  # this group distinct from the caller's own group so the two never deadlock.
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -11,6 +19,7 @@ permissions:
 jobs:
   desktop:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: desktop
@@ -21,6 +30,12 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # pwa-vnc.test.cjs drives a real websockify between the phone proxy and an RFB server.
+      # The Python loader the desktop tests call needs PyYAML (the runner's system python3 had it via apt).
+      - run: python -m pip install websockify "PyYAML>=6"
       - run: npm ci
       - run: npm run check
 
@@ -30,6 +45,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         python: ['3.11', '3.12']
+    timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +64,9 @@ jobs:
       - name: Exercise installed CLI and real local protocol
         run: python scripts/smoke_installed.py
       - name: Test installed package
-        run: python -m unittest discover -s tests -v
+        run: |
+          python -m pip install 'PyYAML>=6' 'pytest>=8'
+          python -m unittest discover -s tests -v
+          python -m pytest --rootdir intelio/vendor/intelio-harness intelio/vendor/intelio-harness/tests
       - name: Publication safety checks
         run: python scripts/check_publication.py

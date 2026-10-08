@@ -1,4 +1,10 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, dialog, clipboard, shell, nativeTheme, screen, nativeImage, session } = require('electron');
+if (process.argv.includes('--smoke-test')) {
+  process.on('uncaughtException', (error) => {
+    process.stderr.write(`${error && error.stack || error}\n`);
+    process.exit(1);
+  });
+}
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, dialog, clipboard, shell, nativeTheme, screen, nativeImage, session, safeStorage, net } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -9,18 +15,42 @@ const { normalizeUrl, parseRemoteUrl, isSshTarget, requireActor, requireAgentRea
 const { createAvatarStore } = require('./avatar-store.cjs');
 const { createAgentInput, tintScript, botAccent } = require('./agent-input.cjs');
 const { createActivityTracker } = require('./activity.cjs');
-const { createSitePermissions } = require('./site-permissions.cjs');
+const { createSitePermissions, installAppMicrophone, appMediaPage } = require('./site-permissions.cjs');
 const { snapshotExpression, settleSnapshot, checkpointExpression, restoreExpression } = require('./browser-page.cjs');
 const { createVpsBrowser } = require('./vps-browser.cjs');
 const { createExtensionStore } = require('./extension-store.cjs');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
+const { applyLinuxDemo, rendererSandbox } = require('./intelio/linux-demo.cjs');
+const { agentNavigationDecision } = require('./intelio/safety.cjs');
+const { loadIntelio, publicIntelioState, pngIcon } = require('./intelio/bridge.cjs');
+const { agents, agentsSetup } = require('./intelio/forks.cjs');
+const { setupRemoteHermes } = require('./intelio/remote-hermes-main.cjs');
+const { loadPreferences, initialDesktopTab, resolveUserDataDir } = require('./intelio/preferences.cjs');
+const { createVaultStore } = require('./intelio/vault.cjs');
+const { usesRemoteVault } = require('./intelio/remote-vault.cjs');
+const { buildFill, publicFill, fieldValue } = require('./intelio/login-fill.cjs');
+const { normalizeTheme, themeVars } = require('./intelio/theme.cjs');
+const { hostLabels, hermesChecklist } = require('./intelio/host-labels.cjs');
+const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
 
-app.enableSandbox();
-app.setName("alans-way-localapp");
-// Keep existing sessions and connector discovery stable when the product name changes.
-app.setPath('userData', process.env.HERMES_WORKSPACE_DATA
-  ? path.resolve(process.env.HERMES_WORKSPACE_DATA)
-  : path.join(app.getPath('appData'), 'Hermes Workspace'));
+if (!applyLinuxDemo(app)) app.enableSandbox();
+app.setName('intelio');
+if (process.platform === 'win32') app.setAppUserModelId('co.intelio.alans-way');
+// Keep existing sessions and the saved theme when the exe name or product name changes.
+// setName does not retarget userData; pin the historical folder and pin it again on ready.
+function pinUserData() {
+  const dir = resolveUserDataDir({
+    platform: process.platform,
+    env: process.env,
+    home: app.getPath('home'),
+    appData: app.getPath('appData'),
+  });
+  fs.mkdirSync(dir, { recursive: true });
+  app.setPath('userData', dir);
+  app.setPath('sessionData', dir);
+  return dir;
+}
+pinUserData();
 const ROOT = __dirname;
 const NEWTAB_URL = pathToFileURL(path.join(ROOT, 'newtab.html')).href;
 const TELEGRAM = 'https://web.telegram.org/a/';
@@ -39,6 +69,8 @@ const API_TOKEN = crypto.randomBytes(32).toString('hex');
 // early enough that its last step (wait caps at 30s) still answers in time.
 const BATCH_BUDGET_MS = 50000;
 let isQuitting = false;
+let intelioSession = null;
+let remoteHermes = null; // Remote Hermes (VPS) client mode, see src/intelio/remote-hermes*.cjs
 let backgroundCaptureQueue = Promise.resolve();
 const avatarStore = createAvatarStore({ root: ROOT, nativeImage, dialog, getWindow: () => win, getPreferences: () => prefs });
 const agentInput = createAgentInput({ command: browserCommand,
@@ -58,20 +90,20 @@ const sitePermissions = createSitePermissions({ getPreferences: () => prefs, sav
   }
 });
 let pointerTimer, activityTimer, idleTimer;
+let tailscaleFirstRun = false;
 
 function readPreferences() {
-  const defaults = { bots: [], order: [], hidden: [], selectedBotId: '', accountId: '', remoteUrl: '', chatWidth: 490, preview: true, previewPos: null, showBots: true, showBrowser: true, savedTabs: [], avatarLibrary: [], avatarPreferences: {}, locationDefault: 'approximate', sitePermissions: {}, browserExtensions: [], vpsBrowser: {}, agentIdleMinutes: 15, agentLastTabs: {}, handoffs: [],
-    overseerBots: String(process.env.HERMES_OVERSEER_BOTS || '').split(',').map((id) => id.trim()).filter((id) => id && id.length <= 100) };
   const file = path.join(app.getPath('userData'), 'preferences.json');
-  let text;
-  try { text = fs.readFileSync(file, 'utf8'); } catch { return { ...defaults, remoteUrl: process.env.HERMES_WORKSPACE_VPS_URL || '' }; }
-  try { return { ...defaults, ...JSON.parse(text) }; }
-  catch {
+  let bytes = null;
+  try { bytes = fs.readFileSync(file); } catch { bytes = null; }
+  const loaded = loadPreferences({ bytes, platform: process.platform, env: process.env });
+  if (loaded.missing && process.platform === 'win32') tailscaleFirstRun = true;
+  if (loaded.corrupt) {
     // Keep the unreadable file: the next save would otherwise erase every bot,
     // permission and extension record with defaults.
     try { fs.renameSync(file, `${file}.corrupt-${Date.now()}`); } catch {}
-    return { ...defaults, remoteUrl: process.env.HERMES_WORKSPACE_VPS_URL || '' };
   }
+  return loaded.prefs;
 }
 function writePrivateJson(file, data) {
   fs.writeFileSync(`${file}.tmp`, JSON.stringify(data, null, 2), { mode: 0o600 });
@@ -118,9 +150,40 @@ function selectAgent(id) {
   activeTabId = viewingVps ? 'vps' : nextLocal;
   applyLayout();
 }
+function assertIntelioAgentUrl(url) {
+  if (!intelioSession?.ok) throw Object.assign(new Error('intelio profile is not loaded; agent browsing is paused.'), { status: 403 });
+  const decision = agentNavigationDecision(url, {
+    origins: intelioSession.browsingOrigins,
+    appPages: [NEWTAB_URL, 'about:blank', ''],
+  });
+  if (!decision.ok) throw Object.assign(new Error(decision.error), { status: decision.status });
+}
+function intelioTitle() {
+  return 'intelio';
+}
+function currentTheme() { return normalizeTheme(prefs?.theme); }
+let pushedTelegramTheme = '';
+function applyThemeChrome() {
+  const theme = currentTheme();
+  nativeTheme.themeSource = theme;
+  const background = theme === 'light' ? '#f6f6f8' : (intelioSession?.public?.brand?.tokens?.background || '#0a0a0a');
+  if (win && !win.isDestroyed()) win.setBackgroundColor(background);
+  if (remoteView && !remoteView.webContents.isDestroyed()) remoteView.setBackgroundColor(theme === 'light' ? '#f3f3f6' : '#101011');
+  if (theme === pushedTelegramTheme) return;
+  pushedTelegramTheme = theme;
+  if (telegramView && !telegramView.webContents.isDestroyed()) telegramView.webContents.send('workspace:theme', theme);
+}
+function applyIntelioChrome() {
+  if (!win || win.isDestroyed()) return;
+  win.setTitle(intelioTitle());
+  applyThemeChrome();
+  try { win.setIcon(nativeImage.createFromBuffer(pngIcon())); } catch { /* icon is cosmetic; the profile report still stands */ }
+}
 function getState() {
-  return { name: app.getName(), version: app.getVersion(), bots: prefs.bots.map(bot => ({ ...bot, activity: activity.get(bot.id), hue: botAccent(bot.id).hue })), order: prefs.order, hidden: prefs.hidden,
-    selectedBotId: prefs.selectedBotId, chatWidth: prefs.chatWidth, preview: prefs.preview, previewPos: prefs.previewPos, showBots: prefs.showBots, showBrowser: prefs.showBrowser, remoteUrl: prefs.remoteUrl,
+  const intelio = publicIntelioState(intelioSession);
+  const remote = remoteHermes?.publicState?.() || null;
+  return { name: app.getName(), version: app.getVersion(), intelio, bots: prefs.bots.map(bot => ({ ...bot, activity: activity.get(bot.id), hue: botAccent(bot.id).hue })), order: prefs.order, hidden: prefs.hidden,
+    selectedBotId: prefs.selectedBotId, chatWidth: prefs.chatWidth, preview: prefs.preview, previewPos: prefs.previewPos, showBots: prefs.showBots, showBrowser: prefs.showBrowser, remoteUrl: typeof remoteHermes?.viewerUrl === 'function' ? remoteHermes.viewerUrl() : prefs.remoteUrl,
     remoteStatus, remoteControl: prefs.remoteControl === true, telegramStatus, tabs: [...tabs.values()].map(describeTab),
     vpsBrowser: prefs.vpsBrowser, vpsBrowserStatus, handoffs: prefs.handoffs, macSshHost: prefs.macSshHost || '',
     primaryBotId: prefs.primaryBotId || (prefs.overseerBots || [])[0] || '', primaryBotPref: prefs.primaryBotId || '', overseerBots: prefs.overseerBots || [],
@@ -128,7 +191,16 @@ function getState() {
     autoOpenLinks: prefs.autoOpenLinks !== false,
     activeTabId, browserContentsId: tabs.get(activeTabId)?.view.webContents.id || null, browserTabId: activeTabId === 'vps' ? (tabs.has(browserReturnTabId) ? browserReturnTabId : 'home') : activeTabId, avatarLibrary: avatarStore.library(), avatarPreferences: prefs.avatarPreferences,
     locationDefault: prefs.locationDefault, sitePermissions: prefs.sitePermissions, extensions: extensionStore?.list() || [],
-    fullscreen: win?.isFullScreen() || false, api: { url: apiPort ? `http://127.0.0.1:${apiPort}` : '', ready: !!apiPort, error: apiError } };
+    fullscreen: win?.isFullScreen() || false, api: { url: apiPort ? `http://127.0.0.1:${apiPort}` : '', ready: !!apiPort, error: apiError },
+    remoteHermesNotice: remoteHermes?.startupNotice?.() || '',
+    remoteHermes: remote,
+    hermesStatus: hermesChecklist({ remoteHermes: remote, intelio }),
+    sidebarTab: prefs.sidebarTab === 'sessions' ? 'sessions' : 'agents',
+    screenGrid: prefs.screenGrid || 1,
+    activeScreen: prefs.activeScreen || 0,
+    platform: process.platform,
+    host: hostLabels(process.platform),
+    theme: currentTheme() };
 }
 let lastBotWorkSignature = '';
 // Bots with agent tabs that are dispatching, navigating, or recently acted
@@ -173,7 +245,7 @@ function backgroundHost(width = 900, height = 700) {
     // during load and has no viewport before its first show. Keep inactive
     // tabs visible inside a separate window that can never accept native focus.
     backgroundWindow = new BrowserWindow({ show: false, focusable: false, frame: false, skipTaskbar: true,
-      width, height, webPreferences: { sandbox: true, backgroundThrottling: false } });
+      width, height, webPreferences: { sandbox: rendererSandbox(), backgroundThrottling: false } });
   } else {
     const [currentWidth, currentHeight] = backgroundWindow.getContentSize();
     if (width > currentWidth || height > currentHeight) backgroundWindow.setContentSize(Math.max(width, currentWidth), Math.max(height, currentHeight));
@@ -232,6 +304,12 @@ function configureContents(contents, isTelegram = false) {
     else if (!isTelegram && !/^https?:\/\//i.test(url) && url !== 'about:blank') {
       if (!isExtensionUrl(url)) event.preventDefault();
       else { const tab = [...tabs.values()].find(item => item.view.webContents === contents); if (tab) { tab.extensionPage = true; changeController(tab.id, 'human'); } }
+    } else if (!isTelegram) {
+      const tab = [...tabs.values()].find(item => item.view.webContents === contents);
+      if (tab?.controller === 'agent') {
+        try { assertIntelioAgentUrl(url); }
+        catch (error) { event.preventDefault(); tab.error = error.message; broadcast(); }
+      }
     }
   });
   contents.on('before-input-event', (event, input) => {
@@ -282,8 +360,9 @@ async function resolveFavicon(tab, favicons) {
 function createTab({ url = 'about:blank', botId = prefs.selectedBotId || 'shared', controller = 'human', options, skipLoad = false, activate = true, extensionPage = false } = {}) {
   if (tabs.size >= 40) throw new Error('Close a tab before opening another.');
   const targetUrl = pageUrl(url, extensionPage);
+  if (controller === 'agent') assertIntelioAgentUrl(targetUrl);
   const view = new WebContentsView({ ...(options?.webContents ? { webContents: options.webContents } : {}),
-    webPreferences: { ...options?.webPreferences, preload: undefined, partition: 'persist:browser', contextIsolation: true, nodeIntegration: false, sandbox: true,
+    webPreferences: { ...options?.webPreferences, preload: undefined, partition: 'persist:browser', contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox(),
       webSecurity: true, backgroundThrottling: false } });
   view.setBackgroundColor('#0b0b0c');
   const tab = { id: crypto.randomUUID(), view, botId: String(botId).slice(0, 100), controller, extensionPage, epoch: 1, title: 'New tab', loading: false, allowedBots: [], refs: new Set(), generation: 0, queue: Promise.resolve() };
@@ -339,6 +418,7 @@ function changeController(id, controller) {
   const tab = tabs.get(id);
   if (!tab) throw new Error('Tab not found.');
   if (tab.extensionPage && controller === 'agent') throw new Error('Extension account pages stay under your control.');
+  if (controller === 'agent') assertIntelioAgentUrl(tab.view.webContents.getURL());
   tab.controller = controller === 'agent' ? 'agent' : 'human';
   if (tab.controller === 'agent') tab.agentSince = Date.now();
   if (tab.controller === 'agent' && tab.botId === 'shared' && prefs.selectedBotId) tab.botId = prefs.selectedBotId;
@@ -387,12 +467,53 @@ async function openBot(id) {
     telegramView.webContents.reload();
   }
 }
+let loginVault = null;
+function loginVaultStore() {
+  if (!loginVault) loginVault = createVaultStore({ root: process.env.INTELIO_VAULT_ROOT || path.join(app.getPath('home'), '.hermes', 'profiles') });
+  return loginVault;
+}
+function vaultProfile(value) {
+  return value?.profile || prefs.remoteHermes?.profile || 'intelio';
+}
+async function remoteVault(action, value) {
+  if (typeof remoteHermes?.vault !== 'function') return { ok: false, filled: false, error: 'Remote vault is not connected.' };
+  return remoteHermes.vault(action, value || {});
+}
+async function rememberLogin(value) {
+  if (usesRemoteVault(prefs)) return remoteVault('login', value);
+  try {
+    const instruction = buildFill(value || {});
+    let saved = false;
+    if (value?.save === true && fieldValue(instruction, 'password') && instruction.domain) {
+      loginVaultStore().saveLogin(vaultProfile(value), {
+        domain: instruction.domain,
+        username: fieldValue(instruction, 'username'),
+        password: fieldValue(instruction, 'password'),
+        otp: fieldValue(instruction, 'otp'),
+        selectors: value.selectors,
+      });
+      saved = true;
+    }
+    return { ok: true, saved, ...publicFill(instruction) };
+  } catch (error) {
+    const message = String(error?.message || '');
+    if (/password|otp|secret/i.test(message)) return { ok: false, filled: false };
+    return { ok: false, filled: false, error: message.slice(0, 120) };
+  }
+}
 function registerIpc() {
+  remoteHermes.register();
+  ipcMain.on('workspace:theme-sync', (event) => { event.returnValue = currentTheme(); });
   ipcMain.handle('workspace:get', (event) => { trustSender(event); return getState(); });
   ipcMain.on('workspace:layout', (event, value) => { try { trustSender(event); layout = value || {}; applyLayout(); } catch {} });
   ipcMain.handle('workspace:command', async (event, command, value = {}) => {
     trustSender(event);
     switch (command) {
+      case 'remote-hermes-state': case 'remote-hermes-config': case 'remote-hermes-key': case 'remote-hermes-test': case 'open-remote-hermes': case 'remote-hermes-sign-in': {
+        const result = await remoteHermes.command(command, value);
+        if (command === 'remote-hermes-config' || command === 'remote-hermes-key' || command === 'remote-hermes-sign-in') broadcast();
+        return result;
+      }
       case 'create-tab': return describeTab(createTab({ url: value.url || 'about:blank' }));
       case 'close-tab':
         if (isVpsTab(value.id)) { if(activeTabId===value.id)prefs.remoteControl=false; await vpsBrowser.request(`/v1/tabs/${value.id}`,'DELETE',undefined,{human:true}); vpsTabs.delete(value.id); if(activeTabId===value.id)activeTabId='home'; applyLayout(); } else closeTab(value.id); break;
@@ -513,8 +634,27 @@ function registerIpc() {
       }
       case 'set-site-permission': sitePermissions.set(value); break;
       case 'reset-site-permissions': sitePermissions.reset(); break;
+      case 'reload-intelio': {
+        const requested = typeof value?.profileDir === 'string' ? value.profileDir.trim() : '';
+        const next = requested ? loadIntelio({ profileDir: requested, prefs }) : loadIntelio({ argv: process.argv, prefs });
+        intelioSession = next;
+        if (next.ok && requested) prefs.intelioProfile = requested;
+        applyIntelioChrome();
+        if (!next.ok) { broadcast(); throw new Error(next.error || 'intelio profile failed to load.'); }
+        break;
+      }
+      case 'fill-login': return rememberLogin(value);
+      case 'vault-list':
+        if (usesRemoteVault(prefs)) return remoteVault('logins', value);
+        return { logins: loginVaultStore().list(vaultProfile(value)) };
+      case 'vault-delete':
+        if (usesRemoteVault(prefs)) return remoteVault('delete', value);
+        return { logins: loginVaultStore().remove(vaultProfile(value), value.domain) };
+      case 'fill-saved-login':
+        if (usesRemoteVault(prefs)) return remoteVault('fill', value);
+        return loginVaultStore().toolResult(vaultProfile(value), value.site);
       case 'settings':
-        if (typeof value.macSshHost === 'string' && value.macSshHost.trim() && !isSshTarget(value.macSshHost.trim())) throw new Error('Enter the Mac SSH address as user@host or host, with no spaces or symbols.');
+        if (typeof value.macSshHost === 'string' && value.macSshHost.trim() && !isSshTarget(value.macSshHost.trim())) throw new Error(hostLabels(process.platform).sshInvalid);
         if (value.vpsBrowser && typeof value.vpsBrowser === 'object') { prefs.vpsBrowser={sshHost:String(value.vpsBrowser.sshHost || '').trim(),scriptPath:String(value.vpsBrowser.scriptPath || '').trim(),sudo:value.vpsBrowser.sudo===true}; vpsBrowserStatus='connecting'; refreshVpsTabs(); }
         if (Number.isFinite(value.agentIdleMinutes)) prefs.agentIdleMinutes = Math.max(1, Math.min(240, value.agentIdleMinutes));
         if (typeof value.remoteUrl === 'string') { parseRemoteUrl(value.remoteUrl); prefs.remoteUrl = value.remoteUrl; remoteStatus = 'disconnected'; prefs.remoteControl = false; }
@@ -524,9 +664,14 @@ function registerIpc() {
         if (typeof value.macSshHost === 'string') prefs.macSshHost = value.macSshHost.trim();
         if (typeof value.autoOpenLinks === 'boolean') prefs.autoOpenLinks = value.autoOpenLinks;
         if (typeof value.primaryBotId === 'string') prefs.primaryBotId = prefs.bots.some((bot) => bot.id === value.primaryBotId) || value.primaryBotId === '' ? value.primaryBotId : prefs.primaryBotId;
+        if (typeof value.intelioProfile === 'string') prefs.intelioProfile = value.intelioProfile.trim();
         if (['ask', 'block', 'approximate'].includes(value.locationDefault)) prefs.locationDefault = value.locationDefault;
+        if (value.sidebarTab === 'agents' || value.sidebarTab === 'sessions') prefs.sidebarTab = value.sidebarTab;
+        if (value.theme === 'light' || value.theme === 'dark') prefs.theme = value.theme;
+        if ([1, 2, 3, 4].includes(Number(value.screenGrid))) prefs.screenGrid = Number(value.screenGrid);
+        if (Number.isInteger(Number(value.activeScreen)) && Number(value.activeScreen) >= 0 && Number(value.activeScreen) < 4) prefs.activeScreen = Number(value.activeScreen);
         if (Number.isFinite(value.chatWidth)) prefs.chatWidth = Math.max(320, Math.min(680, value.chatWidth));
-        savePreferences(); applyLayout(); break;
+        savePreferences(); applyThemeChrome(); applyLayout(); break;
       case 'preview-move': {
         // The mini VM window floats anywhere inside the workspace pane.
         const x = Number(value.x), y = Number(value.y);
@@ -543,6 +688,9 @@ function registerIpc() {
       case 'preview-drop': if (win && !win.isDestroyed()) win.webContents.send('workspace:preview-drop'); break;
       case 'remote-control': prefs.remoteControl = value.enabled === true; break;
       case 'remote-status': remoteStatus = String(value.status).slice(0, 50); break;
+      case 'remote-vnc-password':
+        if (event.sender !== remoteView?.webContents) throw new Error('Untrusted workspace request.');
+        return remoteHermes?.vncPassword?.() || '';
       case 'remote-paste': if (!prefs.remoteControl || remoteStatus!=='connected') throw new Error('Take control of the connected VPS desktop first.'); return clipboard.readText().slice(0,20000);
       case 'fullscreen': win.setFullScreen(!win.isFullScreen()); break;
       case 'open-settings': win.webContents.send('workspace:settings'); break;
@@ -555,8 +703,8 @@ function registerIpc() {
         const macSsh = (prefs.macSshHost || '').trim();
         const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
         clipboard.writeText([
-          "# Alan's Way setup — paste into a terminal on the host running your Hermes gateway",
-          `curl -fsSL https://raw.githubusercontent.com/capthvnsen/alans-way-agents/main/setup.sh | bash -s -- --bot-id ${q(botId)}${bot ? ` --bot-name ${q(bot.name.replace(/'/g, ''))}` : ''}${macSsh ? ` --mac-ssh ${q(macSsh)}` : ''} --restart`,
+          "# intelio setup — paste into a terminal on the host running your Hermes gateway",
+          `curl -fsSL ${agentsSetup} | bash -s -- --bot-id ${q(botId)}${bot ? ` --bot-name ${q(bot.name.replace(/'/g, ''))}` : ''}${macSsh ? ` --mac-ssh ${q(macSsh)}` : ''} --restart`,
           '# The bootstrap installs the plugin + hook, configures the browser connector,',
           '# offers to bind the primary route, restarts the gateway, and verifies itself.',
         ].join('\n'));
@@ -565,9 +713,10 @@ function registerIpc() {
       case 'agent-prompt': {
         const botId = String(value?.botId || prefs.selectedBotId || '').replace(/[^0-9A-Za-z_-]/g, '');
         const macSsh = (prefs.macSshHost || '').trim();
-        clipboard.writeText(`Set up Alan's Way on this machine and connect it to my Mac.
-1. If Tailscale isn't installed or connected here, install it (tailscaled + \`tailscale up\`). Tell me this machine's tailnet name/IP when done. My Mac's SSH address is: ${macSsh || '<my-mac-tailscale>'}.
-2. Fetch the bootstrap: git clone https://github.com/capthvnsen/alans-way-agents (or \`git -C alans-way-agents pull\` if already cloned).
+        const labels = hostLabels(process.platform);
+        clipboard.writeText(`${labels.promptLead}
+1. If Tailscale isn't installed or connected here, install it (tailscaled + \`tailscale up\`). Tell me this machine's tailnet name/IP when done. ${labels.promptSsh} ${macSsh || '<my-mac-tailscale>'}.
+2. Fetch the bootstrap: git clone ${agents} (or \`git -C alans-way-agents pull\` if already cloned).
 3. Run: ./alans-way-agents/setup.sh --bot-id '${botId || '<telegram-bot-id>'}' --mac-ssh '${macSsh || '<my-mac-tailscale>'}' --restart — answer its prompts; if it asks to bind a primary route, pick the bot matching this chat.
 4. Report: plugin status, whether the browser host started, the workspace_browser block location, and anything it flagged. Then run ./alans-way-agents/setup.sh --verify and paste me the summary.
 5. If the VPS needs a desktop/VNC stack for the browser host and none exists, tell me the exact apt commands it printed — don't install the display stack on your own.`);
@@ -577,8 +726,9 @@ function registerIpc() {
         const host = (prefs.vpsBrowser?.sshHost || '').trim();
         const mac = (prefs.macSshHost || '').trim();
         if (!host) throw new Error('Save a VPS browser SSH host first.');
-        if (!mac) throw new Error('Enter this Mac’s SSH address as your VPS reaches it.');
-        if (!isSshTarget(mac)) throw new Error('The saved Mac SSH address is invalid. Re-enter it as user@host or host.');
+        const labels = hostLabels(process.platform);
+        if (!mac) throw new Error(labels.sshMissing);
+        if (!isSshTarget(mac)) throw new Error(labels.sshSavedInvalid);
         return new Promise((resolve) => {
           const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=yes', host,
             `ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=yes ${mac} 'echo AGENT_PATH_OK'`], { timeout: 30000 });
@@ -587,7 +737,7 @@ function registerIpc() {
           child.stderr.on('data', chunk => { out += chunk; });
           child.on('error', () => resolve({ ok: false, detail: 'Could not start ssh — check local ssh access.' }));
           child.on('close', code => resolve(out.includes('AGENT_PATH_OK')
-            ? { ok: true, detail: 'VPS reaches this Mac over ssh — agents can route here.' }
+            ? { ok: true, detail: hostLabels(process.platform).sshOk }
             : { ok: false, detail: `Path check failed (exit ${code}). ${out.trim().slice(0, 300)}` }));
         });
       }
@@ -877,6 +1027,7 @@ async function performAction(tab, body, botId, depth = 0) {
     await agentInput.clear(tab);
     requireActor(tab, botId, body.epoch, true, overseer);
     const target = pageUrl(body.url);
+    assertIntelioAgentUrl(target);
     // loadURL resolves only at did-finish-load — far past the connector's own
     // abort. Cap the wait at commit+settle; the caller reads `loading` and can
     // snapshot to follow a still-loading page.
@@ -1013,18 +1164,26 @@ function startApi() {
   });
 }
 function createWindow() {
-  nativeTheme.themeSource = 'dark';
-  win = new BrowserWindow({ width: 1550, height: 980, minWidth: 1120, minHeight: 680, backgroundColor: '#09090a', title: app.getName(),
-    titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 18 },
-    webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
-  telegramView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'telegram-preload.bundle.cjs'), partition: 'persist:telegram', contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  const bootTheme = currentTheme();
+  nativeTheme.themeSource = bootTheme;
+  const windowOptions = { width: 1550, height: 980, minWidth: 1120, minHeight: 680, backgroundColor: bootTheme === 'light' ? '#f6f6f8' : (intelioSession?.public?.brand?.tokens?.background || '#0a0a0a'), title: intelioTitle(), icon: nativeImage.createFromBuffer(pngIcon()),
+    webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } };
+  if (process.platform === 'darwin') { windowOptions.titleBarStyle = 'hiddenInset'; windowOptions.trafficLightPosition = { x: 18, y: 18 }; }
+  win = new BrowserWindow(windowOptions);
+  installAppMicrophone(win.webContents.session, (wc) => appMediaPage(wc?.getURL?.(), ROOT));
+  win.on('page-title-updated', (event) => {
+    event.preventDefault();
+    win.setTitle(intelioTitle());
+  });
+  telegramView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'telegram-preload.bundle.cjs'), partition: 'persist:telegram', contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } });
   telegramView.setBackgroundColor('#09090a');
   configureContents(telegramView.webContents, true);
   telegramView.webContents.on('did-start-loading', () => { lastBotWorkSignature = ''; activity.clear(); broadcast(); });
+  telegramView.webContents.on('did-finish-load', () => { pushedTelegramTheme = ''; applyThemeChrome(); });
   telegramView.webContents.on('render-process-gone', () => { telegramStatus = 'offline'; activity.clear(); broadcast(); });
   telegramView.webContents.on('did-fail-load', (_e, code, _desc, _url, main) => { if (main && code !== -3) { telegramStatus = 'offline'; activity.clear(); broadcast(); } });
   win.contentView.addChildView(telegramView);
-  remoteView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  remoteView = new WebContentsView({ webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), partition: 'persist:intelio-cloud', contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } });
   remoteView.setBackgroundColor('#101011');
   remoteView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   remoteView.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -1035,29 +1194,49 @@ function createWindow() {
   });
   win.contentView.addChildView(remoteView);
   registerIpc();
+  const stampTheme = (contents) => {
+    if (!contents || contents.isDestroyed()) return;
+    const theme = currentTheme();
+    const vars = themeVars(theme);
+    const paint = vars
+      ? `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.colorScheme=${JSON.stringify(theme)};${Object.entries(vars).map(([key, value]) => `document.documentElement.style.setProperty(${JSON.stringify(key)},${JSON.stringify(value)})`).join(';')}`
+      : `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.colorScheme=${JSON.stringify(theme)}`;
+    contents.executeJavaScript(paint).catch(() => {});
+  };
+  win.webContents.on('did-finish-load', () => stampTheme(win.webContents));
+  remoteView.webContents.on('did-finish-load', () => stampTheme(remoteView.webContents));
   win.loadFile(path.join(ROOT, 'index.html'));
   remoteView.webContents.loadFile(path.join(ROOT, 'remote.html'));
-  telegramView.webContents.loadURL(prefs.selectedBotId ? `${TELEGRAM}#${prefs.selectedBotId}` : TELEGRAM).catch(() => {});
+  const remoteOn = Boolean(prefs?.remoteHermes?.enabled && prefs?.remoteHermes?.host);
+  if (!remoteOn) telegramView.webContents.loadURL(prefs.selectedBotId ? `${TELEGRAM}#${prefs.selectedBotId}` : TELEGRAM).catch(() => {});
   for (const item of prefs.savedTabs.slice(0, 12)) { try { createTab({ url: item.url, botId: item.botId, activate: false }); } catch {} }
-  activeTabId = 'home';
+  activeTabId = initialDesktopTab(remoteOn);
   win.on('enter-full-screen', broadcast); win.on('leave-full-screen', broadcast);
   win.on('close', (event) => { if (!isQuitting) { event.preventDefault(); win.hide(); } });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: app.getName(), submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: 'intelio', submenu: [{ label: 'About intelio', click: () => dialog.showMessageBox(win, { type: 'info', title: 'About intelio', message: `intelio ${app.getVersion()}`, detail: "Alan's Way by Alex Hansen (MIT). Hermes Agent by Nous Research." }) }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { label: 'File', submenu: [{ label: 'New Browser Tab', accelerator: 'CmdOrCtrl+T', click: () => createTab({}) }, { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => extensionPopup?.browserWindow?.isFocused() ? extensionPopup.destroy() : closeTab(activeTabId) }] },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     { label: 'View', submenu: [{ label: 'Reload Page', accelerator: 'CmdOrCtrl+R', click: () => tabs.get(activeTabId)?.view.webContents.reload() }, { role: 'togglefullscreen' }, ...(app.isPackaged ? [] : [{ label: 'App Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => win.webContents.toggleDevTools() }])] },
-    { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { role: 'front' }] },
+    { label: 'Window', submenu: [{ label: 'Remote Hermes (VPS)', accelerator: 'CmdOrCtrl+Shift+H', click: () => remoteHermes.open() }, { type: 'separator' }, { role: 'minimize' }, { role: 'zoom' }, { role: 'front' }] },
   ]));
   startApi();
   // Read the real pointer position, even over native child views or another app.
   // This never installs a global input hook or moves the system cursor.
+  // Every 100 ms, and only when the position actually changed, so an idle
+  // pointer costs no IPC.
+  let lastPointer = '';
   pointerTimer = setInterval(() => {
     if (!win || win.isDestroyed() || !win.isVisible() || win.isMinimized()) return;
+    if (win.webContents.isDestroyed() || win.webContents.isCrashed()) return;
     const point = screen.getCursorScreenPoint(), bounds = win.getContentBounds();
     const zoom = win.webContents.getZoomFactor();
-    win.webContents.send('workspace:pointer', { x: (point.x - bounds.x) / zoom, y: (point.y - bounds.y) / zoom });
-  }, 50);
+    const next = { x: (point.x - bounds.x) / zoom, y: (point.y - bounds.y) / zoom };
+    const signature = `${Math.round(next.x)},${Math.round(next.y)}`;
+    if (signature === lastPointer) return;
+    lastPointer = signature;
+    win.webContents.send('workspace:pointer', next);
+  }, 100);
   pointerTimer.unref();
   activityTimer = setInterval(() => { if (activity.expire() || JSON.stringify(computeBotWork()) !== lastBotWorkSignature) broadcast(); }, 500);
   activityTimer.unref();
@@ -1070,10 +1249,38 @@ function createWindow() {
   }, 30000).unref();
   vpsTimer=setInterval(refreshVpsTabs,5000);vpsTimer.unref();refreshVpsTabs();
 }
-if (!app.requestSingleInstanceLock()) app.quit();
+if (process.argv.includes('--smoke-test')) {
+  const { runPackagedSmoke } = require('./intelio/smoke.cjs');
+  app.whenReady().then(() => {
+    let code = 1;
+    try {
+      code = runPackagedSmoke();
+      process.stdout.write(code === 0 ? 'smoke ok\n' : 'smoke failed\n');
+    } catch (error) {
+      process.stderr.write(`${error && error.stack || error}\n`);
+      code = 1;
+    }
+    app.exit(code);
+  }).catch((error) => {
+    process.stderr.write(`${error && error.stack || error}\n`);
+    app.exit(1);
+  });
+} else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.whenReady().then(async () => {
-    app.setAccessibilitySupportEnabled(true); prefs = readPreferences(); prefs.remoteControl = false;
+    app.setAccessibilitySupportEnabled(true);
+    pinUserData();
+    prefs = readPreferences();
+    prefs.remoteControl = false;
+    if (process.env.INTELIO_E2E === '1') {
+      process.stderr.write('intelio e2e: skip profile loader\n');
+      intelioSession = { ok: false, error: 'e2e', browsingOrigins: [], public: { ok: false, error: 'Profile skipped for the packaged check.', brand: { windowTitle: 'intelio', tokens: {} }, hermes: {} } };
+    } else {
+      intelioSession = loadIntelio({ argv: process.argv, prefs });
+    }
+    remoteHermes = setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, getPrefs: () => prefs, savePreferences, getMainWindow: () => win, root: ROOT, rendererSandbox,
+      icon: nativeImage.createFromBuffer(pngIcon()), background: intelioSession?.public?.brand?.tokens?.background, session, net });
+    remoteHermes.watchVersion(() => broadcast());
     try { parseRemoteUrl(prefs.remoteUrl); } catch { prefs.remoteUrl = ''; }
     fs.mkdirSync(app.getPath('userData'), { recursive: true });
     const browserSession = session.fromPartition('persist:browser');
@@ -1082,7 +1289,7 @@ else {
       selectTab: wc => { if (isQuitting || registeringExtensionTab) return; const tab = [...tabs.values()].find(item => item.view.webContents === wc); if (tab) { activeTabId = tab.id; prefs.remoteControl = false; applyLayout(); broadcast(); } else BrowserWindow.fromWebContents(wc)?.show(); },
       removeTab: (wc, window) => { if (isQuitting) return; const tab = [...tabs.values()].find(item => item.view.webContents === wc); if (tab) closeTab(tab.id); else if (window !== win && window !== backgroundWindow && !window?.isDestroyed()) window?.close(); },
       createWindow: async details => {
-        const popup = new BrowserWindow({ parent: win, width: details.width || 640, height: details.height || 720, webPreferences: { session: browserSession, sandbox: true, contextIsolation: true, nodeIntegration: false } });
+        const popup = new BrowserWindow({ parent: win, width: details.width || 640, height: details.height || 720, webPreferences: { session: browserSession, sandbox: rendererSandbox(), contextIsolation: true, nodeIntegration: false } });
         extensionHost.addTab(popup.webContents, popup); configureContents(popup.webContents);
         const url = Array.isArray(details.url) ? details.url[0] : details.url || 'about:blank';
         await popup.loadURL(isExtensionUrl(url) ? url : normalizeUrl(url)); return popup;
@@ -1102,7 +1309,33 @@ else {
     });
     extensionStore = createExtensionStore({ root: app.getPath('userData'), session: browserSession, dialog, nativeImage, getWindow: () => win, getPreferences: () => prefs, savePreferences, onChanged: broadcast,
       canInstall: frame => [...tabs.values()].some(tab => tab.id === activeTabId && tab.controller === 'human' && tab.view.webContents.mainFrame === frame && !layout.obscured) });
-    await extensionStore.installStore(); createWindow(); await extensionStore.restore(); broadcast();
+    if (process.env.INTELIO_E2E === '1') process.stderr.write('intelio e2e: open window\n');
+    else await extensionStore.installStore();
+    createWindow();
+    if (process.env.INTELIO_E2E !== '1') await extensionStore.restore();
+    broadcast();
+    if (process.env.INTELIO_E2E === '1') process.stderr.write('intelio e2e: window ready\n');
+    if (tailscaleFirstRun && process.env.INTELIO_E2E !== '1') {
+      const remoteReady = (async () => {
+        const start = Date.now();
+        while (Date.now() - start < 8000) {
+          const remote = remoteHermes?.publicState?.() || {};
+          if (remote.activeMode === 'cloud' || remote.activeMode === 'tailscale') return remote;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return remoteHermes?.publicState?.() || {};
+      })();
+      Promise.all([checkTailscale(), remoteReady]).then(async ([status, remote]) => {
+        if (remote?.activeMode === 'cloud' || remote?.connection === 'cloud') return;
+        const prompt = firstRunMessage(status);
+        if (!prompt || !win || win.isDestroyed()) return;
+        const buttons = prompt.install ? ['Install Tailscale', 'Later'] : ['OK'];
+        const answer = await dialog.showMessageBox(win, {
+          type: 'info', buttons, defaultId: 0, cancelId: buttons.length - 1, message: prompt.message, detail: prompt.detail,
+        });
+        if (prompt.install && answer.response === 0) await shell.openExternal(status.installUrl);
+      }).catch(() => {});
+    }
   });
   app.on('second-instance', () => { win?.show(); win?.focus(); });
   app.on('activate', () => { win?.show(); win?.focus(); });

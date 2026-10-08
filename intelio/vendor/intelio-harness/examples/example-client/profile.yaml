@@ -1,0 +1,8 @@
+# Sample profile. This is not a real client.
+name: Example Client
+panels:
+  - sample-panel
+skills:
+  - sample-skill
+allowed_folders:
+  - sample-notes

@@ -5,9 +5,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { assertLoopbackBrowser } = require('../src/intelio/sidecar.cjs');
 const root =
   process.env.HERMES_VPS_BROWSER_DATA || path.join(os.homedir(), '.local', 'share', 'hermes-alans-way', 'browser');
 const config = JSON.parse(fs.readFileSync(path.join(root, 'config.json')));
+assertLoopbackBrowser(config);
 const endpoint = new URL(config.cdpUrl);
 if (endpoint.protocol !== 'http:' || endpoint.hostname !== '127.0.0.1')
   throw new Error('Use loopback Chromium debugging.');

@@ -81,7 +81,7 @@ npm start
 npm run package:mac
 ```
 
-The package command builds an Apple Silicon Mac app in `dist/alans-way-localapp-darwin-arm64`. It includes a custom icon and the Node MCP connector. This is a local development build; signed/notarized public distribution is a later release step. Building and running locally does not require a paid developer account.
+The package command builds an Apple Silicon Mac app in `dist/Intelio-darwin-arm64`. It includes a custom icon and the Node MCP connector. This is a local development build; signed/notarized public distribution is a later release step. Building and running locally does not require a paid developer account.
 
 With the app open, `node test/browser-smoke.cjs` exercises the real MCP protocol against its own local test page. It checks typing, clicking, screenshots, popups, shared cookies, bot ownership, and stale epochs. It asks you to click Take over and Give to agent to verify the human control boundary. It sends no Telegram messages and operates no third-party forms.
 
@@ -96,7 +96,7 @@ App data lives in `~/Library/Application Support/Hermes Workspace/`. The product
 ## Companion integration
 
 This app lives in `desktop/` in the hermes-companion repository. The
-[agents repo](https://github.com/capthvnsen/alans-way-agents) owns the VPS
+[agents repo](https://github.com/inteliodev/alans-way-agents) owns the VPS
 side — `setup.sh` there is a one-command bootstrap that installs the plugin,
 wires the browser connector, restarts the gateway, and binds the primary
 route (including the path for a Hermes that has never configured Telegram).

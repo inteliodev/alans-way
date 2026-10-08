@@ -1,0 +1,149 @@
+name: windows-installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/intelio-harness-layer-8db4
+      - cursor/intelio-0310-filler-8db4
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  # Installers are built and attached to the draft only after the full test
+  # suite passes for the same commit.
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  nsis:
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install and build the per-user installer
+        run: |
+          npm ci
+          npm run package:win
+      - name: Smoke-test the packaged app
+        timeout-minutes: 3
+        run: |
+          $exe = Join-Path $pwd "dist\win-unpacked\intelio.exe"
+          if (-not (Test-Path $exe)) { throw "packaged exe missing: $exe" }
+          $p = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -Wait -PassThru
+          if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0) { throw "smoke exit $($p.ExitCode)" }
+      - name: End-to-end main window against a fake Hermes
+        timeout-minutes: 8
+        run: |
+          node scripts/packaged-window-e2e.cjs
+      - name: Upload the e2e screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intelio-e2e-main-window
+          path: desktop/dist/e2e-*.png
+          if-no-files-found: ignore
+      - name: Upload the unsigned installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Intelio-Setup
+          path: desktop/dist/Intelio-Setup-*.exe
+          if-no-files-found: error
+      - name: Attach a private draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            TAG="v${VERSION}-intelio-windows"
+          fi
+          NOTES="Unsigned intelio ${VERSION} draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: arm64 zip of intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
+          TITLE="intelio ${VERSION}"
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$TAG" dist/Intelio-Setup-*.exe --repo "$GITHUB_REPOSITORY" --clobber && exit 0
+            else
+              gh release create "$TAG" dist/Intelio-Setup-*.exe \
+                --repo "$GITHUB_REPOSITORY" \
+                --draft \
+                --title "$TITLE" \
+                --notes "$NOTES" && exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+
+  mac-zip:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Build the unsigned Apple Silicon app zip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip
+          npm ci
+          npm run package:mac
+          node scripts/zip-mac-app.cjs
+          unzip -t dist/Intelio-*-mac-arm64.zip >/dev/null
+      - name: Upload the macOS zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: Intelio-mac-arm64
+          path: desktop/dist/Intelio-*-mac-arm64.zip
+          if-no-files-found: error
+      - name: Attach the macOS zip to the private draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            TAG="v${VERSION}-intelio-windows"
+          fi
+          NOTES="Unsigned intelio ${VERSION} draft. Windows: Intelio-Setup EXE (NSIS, x64). SmartScreen: More info, then Run anyway. macOS: arm64 zip of intelio.app, unsigned. Private draft only — do not publish this release. See docs/intelio-windows-and-mobile.md."
+          TITLE="intelio ${VERSION}"
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$TAG" dist/Intelio-*-mac-arm64.zip --repo "$GITHUB_REPOSITORY" --clobber && exit 0
+            else
+              gh release create "$TAG" dist/Intelio-*-mac-arm64.zip \
+                --repo "$GITHUB_REPOSITORY" \
+                --draft \
+                --title "$TITLE" \
+                --notes "$NOTES" && exit 0
+            fi
+            sleep 10
+          done
+          exit 1

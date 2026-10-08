@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#070708">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="intelio">
+  <title>intelio</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon-192.png" sizes="192x192">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <script>
+    (function () {
+      var saved = '';
+      try { saved = localStorage.getItem('intelio-theme') || ''; } catch (e) { saved = ''; }
+      var theme = saved === 'dark' ? 'dark' : 'light';
+      document.documentElement.dataset.theme = theme;
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', theme === 'light' ? '#f4f4f6' : '#070708');
+      var apple = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+      if (apple) apple.setAttribute('content', theme === 'light' ? 'default' : 'black-translucent');
+      if (window.matchMedia && window.matchMedia('(min-width: 1000px)').matches) location.replace('/desktop/');
+    })();
+  </script>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/thinking-orbs.js"></script>
+  <script src="/bops.js"></script>
+  <script src="/transcript.js"></script>
+  <script src="/ui/intelio/model-picker.cjs"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

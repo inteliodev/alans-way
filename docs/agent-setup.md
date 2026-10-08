@@ -8,7 +8,7 @@ token. Add specialists only when there is a clear independent role.
 
 ## Workspace behavior
 
-Install the [Alan's Way agent plugin](https://github.com/capthvnsen/alans-way-agents)
+Install the [Alan's Way agent plugin](https://github.com/inteliodev/alans-way-agents)
 on the gateway host — its bundled `workspace-operations` skill covers browser
 and handoff behavior for this release, including human takeover and the limits
 of execution handoff. A short pointer in the profile's user-managed `SOUL.md`

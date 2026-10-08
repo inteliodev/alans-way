@@ -1,0 +1,13 @@
+# Data pin for a separate Hermes install.
+# This file is not Hermes source. `hermes update` does not edit it.
+# This repository changes the pin only when this file changes.
+#
+# The pin is the build the server runs: the inteliodev/hermes-agent fork,
+# branch intelio/pinned, commit d9ef91e. It carries local commits on top of
+# upstream NousResearch/hermes-agent main at 7dab93b06e2bb3757dc18229169efcee1b5b47a3.
+# That upstream base is recorded here only; it is not the pin. The loader
+# schema has no field for it.
+upstream: NousResearch/hermes-agent
+repository: https://github.com/inteliodev/hermes-agent
+commit: "d9ef91e9d5a00c185fabc47d332994ab2280480a"
+verified_on: "2026-10-07"

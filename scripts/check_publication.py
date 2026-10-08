@@ -28,7 +28,11 @@ EXAMPLE_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
 FORBIDDEN_SUFFIXES = {".db", ".sqlite", ".sqlite3", ".pem", ".key", ".patch", ".diff", ".log"}
 FORBIDDEN_IMPORTS = {"gateway", "tui_gateway", "hermes_cli", "hermes_state", "run_agent", "model_tools", "tools", "agent"}
 BINARY_ASSETS = {"desktop/assets/icon.png": b"\x89PNG\r\n\x1a\n", "desktop/assets/icon.icns": b"icns",
-                 "desktop/src/newtab-backdrop.png": b"\x89PNG\r\n\x1a\n"}
+                 "desktop/src/newtab-backdrop.png": b"\x89PNG\r\n\x1a\n",
+                 "desktop/src/fonts/geist-sans.woff2": b"wOF2",
+                 "desktop/src/fonts/geist-mono.woff2": b"wOF2",
+                 "intelio/vendor/intelio-harness/brand/fonts/geist-sans.woff2": b"wOF2",
+                 "intelio/vendor/intelio-harness/brand/fonts/geist-mono.woff2": b"wOF2"}
 AVATAR_ASSETS = frozenset(f"desktop/assets/avatars/{name}.png" for name in (
     "apollo", "artemis", "athena", "faun", "hades", "hermes", "medusa",
     "minotaur", "poseidon", "zeus",
@@ -48,7 +52,7 @@ def inspect_text(path: str, text: str) -> list[dict]:
     name = Path(path).name.casefold()
     findings = []
     if (Path(path).suffix.casefold() in FORBIDDEN_SUFFIXES
-            or name == ".env" or name.startswith(".env.")
+            or name == ".env" or (name.startswith(".env.") and name != ".env.example")
             or name in {"credentials.json", "auth.json", "tokens.json"}):
         findings.append({"file": path, "line": 0, "rule": "runtime-or-private-artifact"})
     for number, line in enumerate(text.splitlines(), 1):

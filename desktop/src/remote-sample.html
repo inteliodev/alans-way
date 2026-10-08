@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>intelio</title>
+  <link rel="stylesheet" href="style.css"><link rel="stylesheet" href="intelio.css"><link rel="stylesheet" href="avatars.css"><link rel="stylesheet" href="remote-main.css">
+  <style>html{--chat-width:490px}</style>
+</head>
+<body class="remote-main">
+  <div id="shell">
+    <aside class="sidebar">
+      <div class="side-title"><span class="intelio-wordmark"><span id="product-title">intelio</span></span></div>
+      <p id="intelio-profile" class="intelio-profile">VPS Hermes · sample</p>
+      <p id="hermes-pin" class="intelio-profile">SAMPLE DATA</p>
+      <div class="side-caption"><span>YOUR AGENTS</span><span class="caption-actions"><span id="bot-count" class="cap-count">0</span></span></div>
+      <div id="bot-list" class="bot-list"></div>
+      <div id="empty-bots" class="empty-bots hidden"><span class="outline-mark">◔</span><h3>Agents on the VPS</h3><p>Loading agents from Hermes…</p></div>
+    </aside>
+    <section class="chat-pane">
+      <header class="chat-header"><div class="chat-pill"><span id="chat-avatar" class="small-avatar"></span><span id="chat-title">VPS Hermes</span></div></header>
+      <div id="telegram-slot" class="telegram-slot hidden"></div>
+      <div id="remote-chat" class="remote-chat">
+        <p id="remote-banner" class="remote-banner hidden"></p>
+        <div class="remote-split">
+          <ul id="remote-sessions" class="remote-sessions"></ul>
+          <div class="remote-thread">
+            <div id="remote-messages" class="remote-messages"></div>
+            <form id="remote-composer" class="remote-composer"><input id="remote-input" placeholder="Message this agent" aria-label="Message" disabled><button type="submit" id="remote-send" disabled>Send</button></form>
+          </div>
+        </div>
+        <p id="remote-status" class="remote-status"></p>
+      </div>
+    </section>
+    <div class="splitter" role="separator" aria-orientation="vertical"></div>
+    <section class="workspace-pane">
+      <div class="tab-bar"><div class="tabs"><div class="tab active" role="tab"><span class="tab-title">New tab</span></div></div></div>
+      <div class="browser-toolbar"><span class="address-symbol">⌕</span><input value="" placeholder="Search or enter a URL" aria-label="Browser address" disabled></div>
+      <div class="browser-slot">
+        <div class="home">
+          <div class="home-symbol"><span></span><span></span></div>
+          <h1>A place to get things done.</h1>
+          <p>Talk to your agents. Browse on your computer.<br>Keep their computer in view.</p>
+          <div class="home-bottom"><span class="status-dot"></span><span>Local Chromium. Your own computer.</span></div>
+        </div>
+      </div>
+      <footer class="workspace-footer"><span>Ready</span><span>Remote Hermes · main window</span></footer>
+    </section>
+  </div>
+  <script src="thinking-orbs.js"></script>
+  <script src="remote-main.js"></script>
+  <script src="remote-sample.js"></script>
+</body>
+</html>

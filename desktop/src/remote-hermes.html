@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>Remote Hermes (VPS)</title>
+  <link rel="stylesheet" href="remote-hermes.css">
+</head>
+<body>
+  <aside id="rh-sidebar">
+    <header>
+      <h1>Remote Hermes</h1>
+      <p id="rh-status" class="muted">Connecting…</p>
+    </header>
+    <div class="row">
+      <select id="rh-source" aria-label="Session source">
+        <option value="">All surfaces</option>
+        <option value="telegram">Telegram</option>
+        <option value="api_server">App / API</option>
+        <option value="cli">CLI</option>
+        <option value="cron">Cron</option>
+      </select>
+      <button id="rh-new" title="New chat on the VPS">New</button>
+    </div>
+    <ul id="rh-sessions" aria-label="Sessions"></ul>
+  </aside>
+  <main>
+    <header id="rh-title" class="muted">Pick a session. Telegram chats with this profile appear here too.</header>
+    <section id="rh-messages" aria-live="polite"></section>
+    <form id="rh-composer">
+      <textarea id="rh-input" rows="3" placeholder="Message the VPS Hermes…" disabled></textarea>
+      <div class="row">
+        <span id="rh-activity" class="muted"></span>
+        <button type="button" id="rh-cancel" hidden>Stop</button>
+        <button type="submit" id="rh-send" disabled>Send</button>
+      </div>
+    </form>
+  </main>
+  <script src="intelio/transcript.cjs"></script>
+  <script src="remote-hermes-ui.js"></script>
+</body>
+</html>

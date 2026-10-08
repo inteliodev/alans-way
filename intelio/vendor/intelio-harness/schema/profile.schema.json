@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/inteliodev/intelio-harness/schema/profile.schema.json",
+  "title": "Intelio profile",
+  "description": "Intelio-owned profile schema. A profile directory holds one profile.yaml that matches this document.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "panels", "skills", "allowed_folders"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Display name of this profile."
+    },
+    "panels": {
+      "type": "array",
+      "description": "Panel names this profile opens.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "skills": {
+      "type": "array",
+      "description": "Skill names this profile enables.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "allowed_folders": {
+      "type": "array",
+      "description": "Folder names inside the profile directory that this profile may use. Relative names only.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(?!/)(?!.*\\.\\.)(?!.*:)(?!.*\\\\).+"
+      }
+    }
+  }
+}

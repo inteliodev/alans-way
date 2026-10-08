@@ -1,6 +1,20 @@
 const { contextBridge, ipcRenderer } = require('electron');
+try {
+  const theme = ipcRenderer.sendSync('workspace:theme-sync');
+  if (theme === 'light' || theme === 'dark') {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  }
+} catch { /* first paint stays dark when the sync channel is not ready */ }
 const { injectBrowserAction } = require('electron-chrome-extensions/browser-action');
 if (location.protocol === 'file:' && location.pathname.endsWith('/index.html')) injectBrowserAction();
+// Main window and the plain Remote Hermes window. The API key stays in the main process.
+if (location.protocol === 'file:' && (location.pathname.endsWith('/index.html') || location.pathname.endsWith('/remote-hermes.html'))) {
+  contextBridge.exposeInMainWorld('remoteHermes', {
+    request: (name, value) => ipcRenderer.invoke('remote-hermes', name, value),
+    onEvent: (callback) => { ipcRenderer.on('remote-hermes:event', (_event, value) => callback(value)); },
+  });
+}
 contextBridge.exposeInMainWorld('workspace', {
   getState: () => ipcRenderer.invoke('workspace:get'),
   command: (name, value) => ipcRenderer.invoke('workspace:command', name, value),

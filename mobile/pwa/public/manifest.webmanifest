@@ -1,0 +1,14 @@
+{
+  "name": "intelio",
+  "short_name": "intelio",
+  "description": "intelio on your phone. Add to Home Screen from app.intelio-ai.com.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f4f6",
+  "theme_color": "#f4f4f6",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

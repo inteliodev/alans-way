@@ -1,0 +1,7 @@
+# Read by Alan's Way only. python -m intelio_harness ignores this file,
+# so profile.yaml can stay inside the real schema (additionalProperties: false).
+hermes_profile: example
+browsing_origins: []
+safety:
+  yolo: false
+  consequential: ask

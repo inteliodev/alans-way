@@ -1,0 +1,11 @@
+# Example Intelio profile. Valid against intelio-harness schema/profile.schema.json.
+# Secrets belong in an uncommitted .env next to this file. The loader never reads .env.
+# Alan's Way extras (Hermes profile name, browsing zone, safety) live in alans-way.yaml.
+name: Example
+panels:
+  - telegram
+  - browser
+  - vps
+skills: []
+allowed_folders:
+  - files

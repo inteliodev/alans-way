@@ -1,6 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createSitePermissions } = require('../src/site-permissions.cjs');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const { createSitePermissions, installAppMicrophone, appMediaPage, mediaTypesOf } = require('../src/site-permissions.cjs');
 
 function fixture(initial = {}, answer = false) {
   let prefs = JSON.parse(JSON.stringify(initial)), prompts = 0, saved, eligible = true, url = 'https://www.google.com/';
@@ -67,6 +69,31 @@ test('simultaneous same-site requests share one dialog', async () => {
   let finish; const f = fixture({locationDefault:'ask'}, () => new Promise(resolve => { finish = resolve; }));
   const requests = [f.request(), f.request()]; await new Promise(resolve => setImmediate(resolve));
   finish(false); assert.deepEqual(await Promise.all(requests), [false, false]); assert.equal(f.prompts, 1);
+});
+test('the app microphone is granted only for intelio pages and audio', async () => {
+  const root = path.resolve(__dirname, '../src');
+  const page = pathToFileURL(path.join(root, 'index.html')).href;
+  const session = { setPermissionRequestHandler(fn) { this.request = fn; }, setPermissionCheckHandler(fn) { this.check = fn; } };
+  installAppMicrophone(session, (wc) => appMediaPage(wc?.getURL?.(), root));
+  const own = { getURL: () => page, isDestroyed: () => false };
+  const other = { getURL: () => 'https://example.com/', isDestroyed: () => false };
+  const dead = { getURL: () => page, isDestroyed: () => true };
+  assert.deepEqual(mediaTypesOf({}), ['audio']);
+  assert.deepEqual(mediaTypesOf({ mediaType: 'video' }), ['video']);
+  assert.equal(session.check(own, 'media', '', {}), true);
+  assert.equal(session.check(own, 'media', '', { mediaTypes: ['audio'] }), true);
+  assert.equal(session.check(own, 'media', '', { mediaTypes: ['video'] }), false);
+  assert.equal(session.check(own, 'media', '', { mediaTypes: ['audio', 'video'] }), false);
+  assert.equal(session.check(own, 'geolocation', '', {}), false);
+  assert.equal(session.check(other, 'media', '', { mediaTypes: ['audio'] }), false);
+  assert.equal(session.check(dead, 'media', '', { mediaTypes: ['audio'] }), false);
+  assert.equal(appMediaPage(page, root), true);
+  assert.equal(appMediaPage(pathToFileURL('/tmp/not-intelio.html').href, root), false);
+  assert.equal(appMediaPage('https://app.intelio-ai.com/desktop/', root), false);
+  assert.equal(appMediaPage('file://user:pass@localhost/tmp/a', root), false);
+  assert.equal(await new Promise((resolve) => session.request(own, 'media', resolve, { mediaTypes: ['audio'] })), true);
+  assert.equal(await new Promise((resolve) => session.request(own, 'media', resolve, { mediaTypes: ['video'] })), false);
+  assert.equal(await new Promise((resolve) => session.request(other, 'media', resolve, { mediaTypes: ['audio'] })), false);
 });
 test('unsupported permissions and opaque/credential-bearing origins are denied', async () => {
   const f = fixture({locationDefault:'ask'}, true);
