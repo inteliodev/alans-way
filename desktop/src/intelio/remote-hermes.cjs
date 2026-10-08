@@ -251,6 +251,11 @@ function createRemoteHermesClient({ getConfig, getKey, fetchImpl = globalThis.fe
     createSession: (title, { profile } = {}) => request('POST', '/api/sessions', { body: title ? { title: String(title).slice(0, 200) } : {}, profile }),
     updateSession: (id, fields, { profile } = {}) => request('PATCH', `/api/sessions/${encodeURIComponent(id)}`, { body: fields, profile }),
     deleteSession: (id, { profile } = {}) => request('DELETE', `/api/sessions/${encodeURIComponent(id)}`, { profile }),
+    // Answer an approval.request from the chat stream: 'once' (allow this one command) or 'deny'.
+    runApproval: (runId, choice, requestId, { profile } = {}) => request('POST', `/v1/runs/${encodeURIComponent(runId)}/approval`, {
+      body: { choice: choice === 'once' ? 'once' : 'deny', ...(requestId ? { request_id: String(requestId).slice(0, 256) } : {}) },
+      profile,
+    }),
     optional(method, path, options) {
       return request(method, path, options).catch(() => null);
     },

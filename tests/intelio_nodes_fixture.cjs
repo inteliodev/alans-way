@@ -20,14 +20,16 @@ async function main() {
   const relay = http.createServer();
   relay.on('upgrade', (req, socket, head) => hub.accept(req, socket, head, { login: 'python-test' }));
   await new Promise((resolve) => relay.listen(0, '127.0.0.1', resolve));
-  const mcp = createNodesMcp({ hub, port: 0, token, log: () => {} });
+  const mcp = createNodesMcp({ hub, port: 0, token, log: () => {}, approvalWait: Number(process.env.INTELIO_TEST_APPROVAL_WAIT_MS || 20000) });
   const address = await mcp.listen();
 
   const ws = await connectWebSocket(`ws://127.0.0.1:${relay.address().port}/node/connect`);
   ws.on('message', (text) => {
     const msg = JSON.parse(text);
     if (msg.type !== 'call') return;
-    if (msg.tool === 'computer_info') ws.send(JSON.stringify(protocol.frames.ok(msg.id, protocol.textContent({ hostname: 'PY-TEST-PC', os: 'Fixture OS', user: 'tester' }))));
+    if (msg.tool === 'run_command') ws.send(JSON.stringify(protocol.frames.ok(msg.id, protocol.textContent({ ran: msg.args.command, push_approval: Boolean(msg.args.push_approval) }))));
+    else if (msg.tool === 'send_input') ws.send(JSON.stringify(protocol.frames.ok(msg.id, protocol.textContent({ typed: msg.args.text, push_approval: Boolean(msg.args.push_approval) }))));
+    else if (msg.tool === 'computer_info') ws.send(JSON.stringify(protocol.frames.ok(msg.id, protocol.textContent({ hostname: 'PY-TEST-PC', os: 'Fixture OS', user: 'tester' }))));
     else if (msg.tool === 'start_session') {
       // Stage 2 terminal sessions: a canned session that has printed a banner.
       ws.send(JSON.stringify(protocol.frames.ok(msg.id, protocol.textContent({ session_id: 's_0123456789ab', pid: 4242, pty: true, command: msg.args.command || '(login shell)', cwd: msg.args.cwd || '/home/tester' }))));

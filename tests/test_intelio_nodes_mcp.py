@@ -139,6 +139,61 @@ class IntelioNodesMcpTest(unittest.TestCase):
         self.assertTrue(getattr(missing, "is_error", getattr(missing, "isError", None)))
         self.assertIn("No computer named nope", missing.content[0].text)
 
+    async def _push(self, command, answer, tool="run_command", args=None):
+        """run_command through a client whose elicitation callback answers `answer` (None: no callback)."""
+        from mcp import types
+
+        asked = []
+
+        async def on_elicit(context, params):
+            asked.append(params.message)
+            return types.ElicitResult(action=answer, content={} if answer == "accept" else None)
+
+        async with _client(self.url, self.token) as streams:
+            kwargs = {"elicitation_callback": on_elicit} if answer else {}
+            async with ClientSession(streams[0], streams[1], **kwargs) as session:
+                await session.initialize()
+                call_args = args or {"command": command, "cwd": "~/code/app"}
+                result = await session.call_tool(tool, {"computer": "py-test-pc", **call_args})
+        return asked, result
+
+    def _is_error(self, result):
+        return getattr(result, "is_error", getattr(result, "isError", None))
+
+    def test_push_asks_through_elicitation_and_carries_the_stamp(self):
+        asked, result = asyncio.run(asyncio.wait_for(self._push("git push origin main", "accept"), timeout=60))
+        self.assertEqual(len(asked), 1)
+        self.assertIn("Py-Test-PC wants to push: git push", asked[0])
+        self.assertIn("git push origin main", asked[0])
+        self.assertFalse(self._is_error(result))
+        self.assertEqual(json.loads(result.content[0].text), {"ran": "git push origin main", "push_approval": True})
+
+    def test_push_typed_into_a_terminal_session_asks_too(self):
+        args = {"session_id": "s_0123456789ab", "text": "git push --force-with-lease"}
+        asked, result = asyncio.run(asyncio.wait_for(self._push(None, "accept", "send_input", args), timeout=60))
+        self.assertEqual(len(asked), 1)
+        self.assertIn("typed into terminal session s_0123456789ab", asked[0])
+        self.assertFalse(self._is_error(result))
+        self.assertEqual(json.loads(result.content[0].text), {"typed": "git push --force-with-lease", "push_approval": True})
+
+    def test_push_declined_never_reaches_the_computer(self):
+        asked, result = asyncio.run(asyncio.wait_for(self._push("gh pr merge 7 --squash", "decline"), timeout=60))
+        self.assertEqual(len(asked), 1)
+        self.assertTrue(self._is_error(result))
+        self.assertIn("did not allow this push", result.content[0].text)
+
+    def test_push_without_an_elicitation_client_is_refused(self):
+        asked, result = asyncio.run(asyncio.wait_for(self._push("git push", None), timeout=60))
+        self.assertEqual(asked, [])
+        self.assertTrue(self._is_error(result))
+        self.assertIn("cannot ask him", result.content[0].text)
+
+    def test_ordinary_command_does_not_ask(self):
+        asked, result = asyncio.run(asyncio.wait_for(self._push("git status && git commit -m push", "decline"), timeout=60))
+        self.assertEqual(asked, [])
+        self.assertFalse(self._is_error(result))
+        self.assertEqual(json.loads(result.content[0].text)["push_approval"], False)
+
     def test_wrong_bearer_is_refused(self):
         with self.assertRaises(BaseException):
             asyncio.run(asyncio.wait_for(self._session("0" * 64), timeout=30))

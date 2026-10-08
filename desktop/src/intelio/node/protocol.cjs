@@ -63,7 +63,7 @@ const TOOLS = Object.freeze([
   },
   {
     name: 'read_file',
-    description: 'Read a file on a computer. text returns up to 1 MB, base64 up to 10 MB; offset/limit are bytes.',
+    description: 'Read a file on a computer. text returns up to 1 MB, base64 up to 10 MB; offset/limit are bytes. Secrets (SSH private keys, credential and cookie stores, .env/auth files) are refused.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -110,7 +110,7 @@ const TOOLS = Object.freeze([
   },
   {
     name: 'run_command',
-    description: 'Run a shell command on a computer as the signed-in user (Windows: PowerShell; macOS/Linux: login shell). Never elevates: sudo/runas/admin prompts are refused unless the person at that computer approves. stdout/stderr max 200 KB each.',
+    description: 'Run a shell command on a computer as the signed-in user (Windows: PowerShell; macOS/Linux: login shell). Never elevates: sudo/runas/admin prompts are refused unless the person at that computer approves. A push (git push, gh pr merge, gh repo sync ...) first asks Hayden; if he does not allow it, do not retry another way. Secrets (SSH private keys, credential stores, .env/auth files) are refused. stdout/stderr max 200 KB each.',
     inputSchema: {
       type: 'object',
       properties: {

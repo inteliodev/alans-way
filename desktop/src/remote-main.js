@@ -1888,6 +1888,7 @@
           paintBops();
         }
       }
+      if (event === 'approval.request' && sessionId === ui.sessionId) { showApproval(sessionId, data || {}); return; }
       if (sessionId !== ui.sessionId || !ui.streaming) return;
       if (event === 'assistant.delta' && typeof data?.delta === 'string') {
         ui.streamRaw = `${ui.streamRaw || ''}${data.delta}`;
@@ -1921,6 +1922,35 @@
       const pane = $('remote-messages');
       if (pane) pane.scrollTop = pane.scrollHeight;
     });
+  }
+
+  /**
+   * Hermes asks before a push (Hayden's rule: "anything push is an approval").
+   * One quiet row in the thread with Allow / Don't allow; the answer goes to
+   * POST /v1/runs/<run_id>/approval as 'once' or 'deny' (intelio/approval-ui.cjs).
+   */
+  function showApproval(sessionId, data) {
+    const api = root.IntelioApproval;
+    const pane = $('remote-messages');
+    if (!api || !pane || !api.answerable(data)) return;
+    const key = String(data.request_id || data.run_id);
+    if (pane.querySelector?.(`.approval-row[data-key="${key.replace(/[^A-Za-z0-9_-]/g, '')}"]`)) return;
+    const profile = ui.selected;
+    const row = api.render(root.document, data, {
+      onAnswer: (choice) => root.remoteHermes.request('approve', { profile, runId: data.run_id, requestId: data.request_id, choice }),
+    });
+    row.dataset.key = key.replace(/[^A-Za-z0-9_-]/g, '');
+    row.dataset.session = sessionId;
+    if (ui.liveTools && ui.liveTools.parentNode === pane) pane.insertBefore(row, ui.liveTools);
+    else pane.append(row);
+    pane.scrollTop = pane.scrollHeight;
+  }
+
+  /** The turn ended: a prompt nobody answered is no longer waiting. */
+  function settleApprovals() {
+    const api = root.IntelioApproval;
+    const rows = $('remote-messages')?.querySelectorAll?.('.approval-row:not([data-settled])') || [];
+    for (const row of rows) api?.settle(row, 'expired');
   }
 
   async function runHandoff(handoff, token) {
@@ -2204,6 +2234,7 @@
       }
       ui.spokenProse = '';
       ui.busy = false;
+      settleApprovals();
       ui.streaming = null;
       ui.liveTools?.remove?.();
       ui.liveTools = null;

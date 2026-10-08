@@ -18,6 +18,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { acceptWebSocket } = require('../../desktop/src/intelio/node/ws.cjs');
 const protocol = require('../../desktop/src/intelio/node/protocol.cjs');
+const policy = require('../../desktop/src/intelio/node/policy.cjs');
 
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 32 };
 const HELLO_TIMEOUT_MS = 10000;
@@ -239,6 +240,9 @@ function createNodeHub({
   helloTimeoutMs = HELLO_TIMEOUT_MS,
   auditFile = '',
   locals = [],
+  // Activity hook: called with { kind: 'push_approval', computer, tool, pushes, outcome, time }.
+  // server.cjs points it at desktop/src/intelio/activity-log.cjs appendActivity once that lands (PR #32).
+  onActivity = null,
 } = {}) {
   if (!registry) throw new Error('createNodeHub needs a registry.');
   const appendAudit = createRelayAudit(auditFile);
@@ -397,8 +401,39 @@ function createNodeHub({
     return () => { const r = busy.get(id); if (!r) return; r.count -= 1; if (r.count <= 0) busy.delete(id); };
   }
 
+  const PUSH_TEXT = {
+    unavailable: (what) => `Refused: this pushes (${what}). A push needs Hayden's approval, and this connection cannot ask him. Ask him in chat; he can run it himself.`,
+    decline: (what) => `Hayden did not allow this push (${what}). Do not try it another way; tell him what you wanted to push and why.`,
+    cancel: (what) => `Nobody answered the push approval in time (${what}), so nothing was pushed. Ask Hayden in chat first, then try once more when he is there.`,
+  };
+
+  /**
+   * A push asks Hayden first (his rule: "anything push is an approval").
+   * `approve({ title, message, computer, pushes })` comes from the MCP layer
+   * (elicitation through Hermes) and resolves 'accept' | 'decline' | 'cancel'.
+   * No approve function, an error, or anything but 'accept' refuses.
+   */
+  async function askPush(device, tool, args, pushes, approve) {
+    const what = [...new Set(pushes)].join(', ');
+    const text = policy.commandTextFor(tool, args).trim();
+    const where = tool === 'send_input' ? `typed into terminal session ${String(args.session_id || '').slice(0, 40)}` : `in ${String(args.cwd || '~').slice(0, 200)}`;
+    const message = `${device.name} wants to push: ${what}\n\n${text.length > 600 ? `${text.slice(0, 600)}…` : text}\n\n${where}`;
+    let answer = 'unavailable';
+    if (typeof approve === 'function') {
+      try { answer = String(await approve({ title: 'Allow this push?', message, computer: device.name, pushes })); } catch { answer = 'cancel'; }
+    }
+    const outcome = answer === 'accept' ? 'allowed' : answer === 'decline' ? 'declined' : answer === 'unavailable' ? 'unavailable' : 'unanswered';
+    const time = new Date(now()).toISOString();
+    log(`intelio-nodes push-approval computer=${device.name} tool=${tool} pushes=${JSON.stringify(pushes)} outcome=${outcome}`);
+    appendAudit({ time, computer: device.name, tool: 'push_approval', args: { for: tool, pushes }, ok: outcome === 'allowed', note: outcome, by: answer === 'accept' || answer === 'decline' ? 'person' : 'relay' });
+    if (typeof onActivity === 'function') { try { onActivity({ kind: 'push_approval', time, computer: device.name, tool, pushes, outcome }); } catch { /* hook */ } }
+    if (answer === 'accept') return { allowed: true, stamp: { id: crypto.randomBytes(12).toString('hex'), at: time } };
+    const key = answer === 'decline' ? 'decline' : answer === 'unavailable' ? 'unavailable' : 'cancel';
+    return { allowed: false, text: PUSH_TEXT[key](what) };
+  }
+
   /** Returns { content, isError } — MCP tool result shape. Never throws. */
-  async function call(ref, tool, args = {}, { timeoutMs } = {}) {
+  async function call(ref, tool, args = {}, { timeoutMs, approve } = {}) {
     const started = now();
     const audit = (computer, ok, bytes, note = '') => {
       const summary = protocol.summarizeArgs(tool, args, 'relay');
@@ -407,20 +442,40 @@ function createNodeHub({
     };
     const errorResult = (text) => ({ content: [{ type: 'text', text }], isError: true });
     if (!protocol.NODE_TOOLS.includes(tool)) return errorResult(`Unknown tool ${tool}.`);
-    let found;
-    try { found = resolveRef(args && args.computer); } catch (error) { return errorResult(String(error.message)); }
-    if (!found.device) { audit(String(args && args.computer || '').slice(0, 64), false, 0, 'unknown'); return errorResult(found.error); }
-    const device = found.device;
-    if (device.paused_at) {
-      audit(device.name, false, 0, 'paused');
-      return errorResult(`${device.name} is turned off for agents in the intelio app (its kill switch). Tell the person; do not retry until they turn it back on.`);
+    // push_approval is the relay's own stamp: never taken from the agent.
+    const { computer: _computer, push_approval: _forged, ...nodeArgs } = args || {};
+    let device;
+    const ready = () => {
+      let found;
+      try { found = resolveRef(args && args.computer); } catch (error) { return errorResult(String(error.message)); }
+      if (!found.device) { audit(String(args && args.computer || '').slice(0, 64), false, 0, 'unknown'); return errorResult(found.error); }
+      device = found.device;
+      if (device.paused_at) {
+        audit(device.name, false, 0, 'paused');
+        return errorResult(`${device.name} is turned off for agents in the intelio app (its kill switch). Tell the person; do not retry until they turn it back on.`);
+      }
+      if (!device.local) {
+        const conn = live.get(device.id);
+        if (!conn || conn.ws.closed) { audit(device.name, false, 0, 'offline'); return errorResult(offlineText(device)); }
+      }
+      return null;
+    };
+    const notReady = ready();
+    if (notReady) return notReady;
+    const pushes = policy.findPushes(policy.commandTextFor(tool, nodeArgs));
+    if (pushes.length) {
+      const decision = await askPush(device, tool, nodeArgs, pushes, approve);
+      if (!decision.allowed) { audit(device.name, false, 0, 'push_not_allowed'); return errorResult(decision.text); }
+      // The wait can be minutes: the kill switch or the connection may have changed.
+      const changed = ready();
+      if (changed) return changed;
+      nodeArgs.push_approval = decision.stamp;
     }
     if (device.local) {
       const local = locals.find((l) => l.device.id === device.id);
       const done = markBusy(device.id, tool);
       try {
-        const { computer: _c, ...localArgs } = args || {};
-        const out = await local.run(tool, localArgs);
+        const out = await local.run(tool, nodeArgs);
         if (out.ok) { const content = Array.isArray(out.content) ? out.content : []; audit(device.name, true, protocol.contentSize(content)); return { content, isError: false }; }
         audit(device.name, false, 0);
         return errorResult(String(out.error || 'The computer reported an error.'));
@@ -430,9 +485,7 @@ function createNodeHub({
       } finally { done(); }
     }
     const conn = live.get(device.id);
-    if (!conn || conn.ws.closed) { audit(device.name, false, 0, 'offline'); return errorResult(offlineText(device)); }
     const id = `c${++seq}`;
-    const { computer: _computer, ...nodeArgs } = args || {};
     const wait = timeoutMs || protocol.callTimeoutMs(tool, nodeArgs);
     let timer;
     const done = markBusy(device.id, tool);

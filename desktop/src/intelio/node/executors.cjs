@@ -21,6 +21,7 @@ const { LIMITS } = require('./protocol.cjs');
 const { detectElevation, shellElevates } = require('./elevation.cjs');
 const { runSearch, globToRegExp, compilePattern: compileSearchPattern } = require('./search.cjs');
 const { createSessionManager } = require('./sessions.cjs');
+const policy = require('./policy.cjs');
 
 class ToolError extends Error {}
 
@@ -93,9 +94,15 @@ function createExecutors({
   screenshot = null,
   computerName = () => os.hostname(),
   sessionOptions = {},
+  // Secrets are never read or written (policy.cjs). Tests may pass their own.
+  protector = policy.createProtector({ home, platform, env }),
+  // Extra environment for a command the relay stamped as an approved push (the
+  // cloud computer passes the VPS push guard's one-time grant here).
+  approvedPushEnv = null,
 } = {}) {
   const caseless = platform === 'win32' || platform === 'darwin';
   const sessions = createSessionManager({ platform, home, env, limits, ...sessionOptions });
+  const typedLines = new Map(); // session_id -> text typed since the last Enter (push check)
 
   /** Same native-confirm flow for run_command, start_session and send_input. */
   async function requireApproval(text) {
@@ -106,6 +113,30 @@ function createExecutors({
     if (!approved) {
       throw new ToolError(`Refused: ${elevation.reason}. intelio never elevates on its own; the person at ${computerName()} did not approve it. Ask them to run it themselves, or to approve it when the prompt appears on that computer.`);
     }
+  }
+
+  /** Refuses a protected path, checking the path as given and where it really points (symlinks). */
+  async function guardPath(target, op) {
+    let hit = protector.check(target, op);
+    if (!hit) {
+      let real = '';
+      try { real = await fsp.realpath(target); } catch {
+        // A new file: check where its folder really is.
+        try { real = path.join(await fsp.realpath(path.dirname(target)), path.basename(target)); } catch { real = ''; }
+      }
+      if (real && real !== target) hit = protector.check(real, op);
+    }
+    if (hit) throw new ToolError(hit.text);
+  }
+
+  /** run_command / start_session / send_input text: refuse secrets by name, and pushes without the relay's stamp. */
+  function guardCommand(tool, args, cwd) {
+    const text = policy.commandTextFor(tool, args);
+    const secret = policy.commandSecretRefusal(text, { protector, home, cwd, platform });
+    if (secret) throw new ToolError(`${secret.text} (The command names a protected path.)`);
+    const pushes = policy.findPushes(text);
+    if (pushes.length && !policy.hasPushApproval(args)) throw new ToolError(policy.pushRefusal(pushes));
+    return pushes;
   }
 
   function resolvePath(raw, field = 'path') {
@@ -247,6 +278,7 @@ function createExecutors({
 
     async read_file(args) {
       const file = resolvePath(args.path);
+      await guardPath(file, 'read');
       const encoding = args.encoding === 'base64' ? 'base64' : 'text';
       const cap = encoding === 'base64' ? limits.readBase64Bytes : limits.readTextBytes;
       const offset = intArg(args.offset, { min: 0, fallback: 0 });
@@ -279,6 +311,7 @@ function createExecutors({
 
     async write_file(args) {
       const file = resolvePath(args.path);
+      await guardPath(file, 'write');
       if (typeof args.content !== 'string') throw new ToolError('content must be a string.');
       const encoding = args.encoding === 'base64' ? 'base64' : 'text';
       const data = encoding === 'base64' ? Buffer.from(args.content, 'base64') : Buffer.from(args.content, 'utf8');
@@ -300,6 +333,8 @@ function createExecutors({
       const maxResults = intArg(args.max_results, { min: 1, max: limits.searchMax, fallback: limits.searchDefault });
       const budgetS = intArg(args.timeout_s, { min: 1, max: limits.searchMaxS, fallback: limits.searchDefaultS });
       try { await fsp.stat(root); } catch (error) { throw fsError(error, root); }
+      if (protector.blocksFolder(root)) throw new ToolError(protector.check(root, 'search').text);
+      await guardPath(root, 'read');
       // Runs in a worker thread: a slow regex can never freeze the app, and the
       // deadline or the kill switch terminates it (see search.cjs).
       let out;
@@ -314,17 +349,19 @@ function createExecutors({
           fileBytes: limits.searchFileBytes,
           lineChars: limits.searchLineChars,
           platform,
+          protectedSkips: protector.searchSkips(),
         }, { signal: ctx.signal });
       } catch (error) {
         throw error && error.code ? fsError(error, root) : new ToolError(String(error && error.message || error).slice(0, 300));
       }
-      const matches = out.matches;
+      const matches = out.matches.filter((m) => !protector.check(m.path, 'read'));
       const truncated = matches.length >= maxResults || Boolean(out.timed_out) || Boolean(out.aborted);
       const result = { root, matches, truncated, files_scanned: out.files_scanned || 0 };
       if (out.skipped_cloud_only) {
         result.skipped_cloud_only = out.skipped_cloud_only;
         result.cloud_note = 'Skipped files that are online-only (OneDrive/iCloud placeholders); reading them would download them. read_file one to fetch it.';
       }
+      if (out.skipped_protected || matches.length < out.matches.length) result.protected_note = 'Skipped secrets (SSH keys, credential and cookie stores); agents cannot read those.';
       if (out.timed_out) result.note = `Stopped after ${budgetS} s (timeout_s); results are partial. Narrow root, name_glob or pattern.`;
       if (out.aborted) result.note = 'Stopped: intelio access was turned off on this computer.';
       return { content: [json(result)], meta: { count: matches.length, ...(out.timed_out ? { timed_out: true } : {}) } };
@@ -334,6 +371,7 @@ function createExecutors({
       const command = String(args.command || '');
       if (!command.trim()) throw new ToolError('command is required.');
       const shell = shellFor(args.shell);
+      const pushes = guardCommand('run_command', args, args.cwd ? resolvePath(args.cwd, 'cwd') : home);
       await requireApproval(command);
       const cwd = args.cwd ? resolvePath(args.cwd, 'cwd') : home;
       const timeoutS = intArg(args.timeout_s, { min: 1, max: limits.runMaxS, fallback: limits.runDefaultS });
@@ -344,8 +382,9 @@ function createExecutors({
       return new Promise((resolve, reject) => {
         let child;
         try {
+          const runEnv = pushes.length && typeof approvedPushEnv === 'function' ? { ...env, ...approvedPushEnv({ command, pushes }) } : env;
           child = spawn(file, argv, {
-            cwd, env, windowsHide: true, windowsVerbatimArguments: Boolean(verbatim),
+            cwd, env: runEnv, windowsHide: true, windowsVerbatimArguments: Boolean(verbatim),
             detached: platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
           });
         } catch (error) { reject(new ToolError(`Could not start ${file}: ${error.message}`)); return; }
@@ -401,9 +440,11 @@ function createExecutors({
 
     async start_session(args) {
       const command = args.command == null ? '' : String(args.command);
-      if (command.trim()) await requireApproval(command);
       const cwd = args.cwd ? resolvePath(args.cwd, 'cwd') : home;
-      const started = sessions.start({ command, cwd, cols: args.cols, rows: args.rows, env: args.env });
+      const pushes = guardCommand('start_session', args, cwd);
+      if (command.trim()) await requireApproval(command);
+      const extraEnv = pushes.length && typeof approvedPushEnv === 'function' ? approvedPushEnv({ command, pushes }) : null;
+      const started = sessions.start({ command, cwd, cols: args.cols, rows: args.rows, env: extraEnv ? { ...(args.env || {}), ...extraEnv } : args.env });
       const hint = started.pty ? '' : ' No terminal (pipes only): full-screen programs may misbehave.';
       return {
         content: [json({ ...started, hint: `Read with read_output (session_id ${started.session_id}); type with send_input.${hint}` })],
@@ -412,8 +453,24 @@ function createExecutors({
     },
 
     async send_input(args) {
-      const text = args.text == null ? '' : String(args.text);
+      let text = args.text == null ? '' : String(args.text);
+      const id = String(args.session_id || '');
+      // A push typed in pieces ("git pu" then "sh") is still a push: check the line so far.
+      const line = `${typedLines.get(id) || ''}${text}`;
+      const pushes = guardCommand('send_input', { ...args, text: line }, home);
       if (text.trim()) await requireApproval(text);
+      if (pushes.length && typedLines.get(id)) {
+        throw new Error('Refused: type the whole push command in one send_input (this one continues a line typed earlier). Clear the line first (keys ["ctrl-u"]).');
+      }
+      const keys = Array.isArray(args.keys) ? args.keys.map((k) => String(k).trim().toLowerCase().replace(/[+_ ]/g, '-').replace(/^(?:control|c)-/, 'ctrl-')) : [];
+      const ends = /[\r\n]/.test(text) || (args.enter !== undefined ? Boolean(args.enter) : Boolean(text)) || keys.some((k) => ['enter', 'ctrl-c', 'ctrl-u', 'ctrl-d', 'ctrl-m', 'ctrl-j'].includes(k));
+      if (ends) typedLines.delete(id); else typedLines.set(id, line.slice(-4096));
+      if (pushes.length && typeof approvedPushEnv === 'function') {
+        // The shell already runs: hand it the one-time grant for this command (cloud / VPS push guard).
+        const extra = approvedPushEnv({ command: line, pushes });
+        const prefix = Object.entries(extra || {}).map(([k, v]) => `export ${k}=${String(v).replace(/[^A-Za-z0-9_-]/g, '')}; `).join('');
+        if (prefix) text = `${prefix}${text}`;
+      }
       const sent = sessions.send(args.session_id, { text, enter: args.enter, keys: args.keys });
       return { content: [json(sent)], meta: { session_id: sent.session_id } };
     },
@@ -451,6 +508,8 @@ function createExecutors({
     run,
     handlers,
     resolvePath,
+    guardPath,
+    guardCommand,
     tools: Object.keys(handlers),
     sessions,
     /** Kill every terminal session (kill switch off, revoke, app quit). */

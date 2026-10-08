@@ -49,12 +49,21 @@ function compilePattern(pattern) {
  * Cloud-only placeholders (OneDrive Files On-Demand, iCloud "dataless" files) are
  * skipped instead of read: reading one downloads the whole file first.
  */
-async function walk({ root, pattern, nameGlob, caseless, maxResults, deadline, fileBytes, lineChars, platform }, emit = () => {}, stopped = () => false) {
+async function walk({ root, pattern, nameGlob, caseless, maxResults, deadline, fileBytes, lineChars, platform, protectedSkips }, emit = () => {}, stopped = () => false) {
   const regex = pattern ? compilePattern(pattern) : null;
   const nameRe = nameGlob ? globToRegExp(nameGlob, caseless) : null;
   const segments = root.split(/[\\/]+/).map((s) => (caseless ? s.toLowerCase() : s));
   const insideSkipped = segments.includes('node_modules') || segments.includes('.git');
   const skip = (name) => !insideSkipped && (name === 'node_modules' || name === '.git');
+  // Secrets (policy.cjs createProtector().searchSkips()): never opened, not even to drop the result later.
+  const ps = protectedSkips || { dirs: [], files: [], names: [] };
+  const keyOf = (p) => (caseless ? p.toLowerCase() : p);
+  const skipDirs = new Set(ps.dirs || []);
+  const skipFiles = new Set(ps.files || []);
+  const skipNames = new Set(ps.names || []);
+  let skippedProtected = 0;
+  const secretDir = (full) => { if (skipDirs.has(keyOf(full))) { skippedProtected += 1; return true; } return false; };
+  const secretFile = (full) => { if (skipFiles.has(keyOf(full)) || skipNames.has(path.basename(full))) { skippedProtected += 1; return true; } return false; };
   const checkCloud = platform === 'win32' || platform === 'darwin';
   let found = 0;
   let filesScanned = 0;
@@ -99,7 +108,7 @@ async function walk({ root, pattern, nameGlob, caseless, maxResults, deadline, f
 
   let rootStat;
   try { rootStat = await fsp.stat(root); } catch (error) { const e = new Error(error.code || 'stat failed'); e.code = error.code; throw e; }
-  if (!rootStat.isDirectory()) { await visitFile(root); flush(); }
+  if (!rootStat.isDirectory() && !secretFile(root)) { await visitFile(root); flush(); }
   const stack = rootStat.isDirectory() ? [root] : [];
   while (stack.length && found < maxResults && !over()) {
     const dir = stack.pop();
@@ -109,8 +118,9 @@ async function walk({ root, pattern, nameGlob, caseless, maxResults, deadline, f
     const subdirs = [];
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) { if (!skip(entry.name)) subdirs.push(full); continue; }
+      if (entry.isDirectory()) { if (!skip(entry.name) && !secretDir(full)) subdirs.push(full); continue; }
       if (!entry.isFile()) continue;
+      if (secretFile(full)) continue;
       if (over()) break;
       await visitFile(full);
       flush(); // stream per file, so a later file that hangs cannot swallow earlier matches
@@ -119,7 +129,7 @@ async function walk({ root, pattern, nameGlob, caseless, maxResults, deadline, f
     for (let i = subdirs.length - 1; i >= 0; i -= 1) stack.push(subdirs[i]);
   }
   flush();
-  return { files_scanned: filesScanned, skipped_cloud_only: skippedCloudOnly, timed_out: timedOut, found };
+  return { files_scanned: filesScanned, skipped_cloud_only: skippedCloudOnly, skipped_protected: skippedProtected, timed_out: timedOut, found };
 }
 
 /** Worker entry: workerData holds the walk options; posts {type:'matches'} batches then {type:'done'}. */

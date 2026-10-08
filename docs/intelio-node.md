@@ -34,9 +34,11 @@ and the existing alans-way plugin; no Hermes source is changed, so Hermes update
 
 ## MCP transport (relay side)
 
-Streamable HTTP, JSON responses (no SSE required): `POST /mcp` with JSON-RPC 2.0;
+Streamable HTTP, JSON responses: `POST /mcp` with JSON-RPC 2.0;
 methods `initialize`, `notifications/initialized` (202, no body), `tools/list`, `tools/call`,
-`ping`. Missing/wrong bearer -> HTTP 401. Protocol version: echo the client's requested
+`ping`. One exception: a `tools/call` that pushes answers as an SSE stream that first carries an
+`elicitation/create` request (see "Pushes and secrets"); the client POSTs the JSON-RPC response
+back (202) and the stream then ends with the tool result. Missing/wrong bearer -> HTTP 401. Protocol version: echo the client's requested
 version if supported, else the latest the relay supports. Must work with the official Python
 `mcp` client (`mcp.client.streamable_http.streamablehttp_client`), which is what Hermes uses.
 
@@ -82,6 +84,45 @@ Paths: absolute, or `~`-relative to the user's home. Shell: Windows = PowerShell
   `~/.config/intelio/nodes-audit.jsonl` (Settings → All agent activity).
 - Managed work computers (ARLP PC on the Alliance network) are held off; see "Managed
   computers" below.
+
+## Pushes and secrets (Hayden, Oct 8 2026: "It can read and drive on computers yes anything push is an approval")
+
+Reads, file changes, commands and driving the computer run without asking. Two exceptions:
+
+**A push asks Hayden first.** `run_command` text (and, with terminal sessions, `start_session` /
+`send_input` text) is checked for pushes with `desktop/src/intelio/node/policy.cjs` `findPushes`:
+`git push` (any form, incl. `git -C`, `--no-verify`, inside `sh -c` or `ssh host`), `git lfs/subtree
+push`, `gh pr merge`, `gh repo sync`, `gh repo create --push`, `gh release create`, and `gh api`
+writes to refs, merges, contents or releases. The relay (`mobile/pwa/nodes.cjs` `askPush`) asks
+through MCP elicitation, so Hermes shows its own approval prompt on the surface Hayden is using:
+an inline Allow / Don't allow row in the intelio app (desktop and phone,
+`desktop/src/intelio/approval-ui.cjs`) or the approval buttons in Telegram. Allow covers that one
+command once. Don't allow, no answer within `INTELIO_PUSH_APPROVAL_WAIT_S` (150 s), a client that
+cannot elicit, or any error refuses it with a message telling the agent not to retry another way.
+On allow the relay stamps the call (`push_approval`); it drops any stamp an agent sends. The
+computer refuses a push without the stamp, so an older relay can never push. On "cloud" an
+approved push also gets a one-time grant for the VPS push guard (alans-way-agents
+`push-approval`). Every decision is audited (`tool: push_approval`, note allowed / declined /
+unanswered / unavailable) and goes to the intelio activity log when
+`desktop/src/intelio/activity-log.cjs` is present (`kind: connector`, `action: push`).
+
+**Secrets are never read or written.** `read_file`, `write_file` and `search_files` refuse
+protected paths, checked as given and by real path (symlinks): SSH private keys (public keys,
+`known_hosts`, `config` and `authorized_keys` stay readable; nothing in `~/.ssh` is writable),
+`~/.gnupg`, keychains, browser cookie and password stores (`Cookies`, `Login Data`, `key4.db`,
+`logins.json` ...), `~/.aws/credentials`, gcloud/azure, `gh` `hosts.yml`, `.git-credentials`,
+`.netrc`, `.npmrc`, `.pypirc`, docker/kube configs, Claude and Codex logins, `~/.config/intelio`,
+the push grants, `$HERMES_HOME/.env` and `auth.json` (and each profile's), `/etc/shadow`,
+`gshadow`, `sudoers`, SSH host keys, `/etc/ssl/private`, `/root`, macOS `dslocal`, Windows
+Credentials / Protect / Vault and `System32\config` (SAM, SECURITY). A search walks past them.
+Commands that name one (`cat ~/.ssh/id_ed25519`, `cp ~/.hermes/.env /tmp`) are refused too; `ssh -i
+KEY` and `ssh-add` use a key without showing it and are allowed. The command check is best
+effort: a script can still reach a file without naming it. The list and the containment check
+are adapted from Herald OS `bridge/permissions.py` (MIT, Copyright (c) 2026 Luke The Dev).
+
+Limits: a push started indirectly (a script, `npm run release`, a coding tool run through
+`run_command`) is not seen on a personal computer, because the node checks the command text, not
+what it starts. On the VPS the push guard covers that case.
 
 ## Device identity and revocation
 
