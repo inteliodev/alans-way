@@ -319,3 +319,45 @@ html[data-theme="light"] .theme-toggle .theme-blue circle { stroke: #0000e8; }
 .theme-picker .theme-choice { margin: 0; padding: 7px 12px; }
 .theme-choice[aria-pressed="true"] { background: #e6e6ea; color: #141418; border-color: #e6e6ea; }
 html[data-theme="light"] .theme-choice[aria-pressed="true"] { background: #1c1c21; color: #ffffff; border-color: #1c1c21; }
+/* Saved-login card under the chat (intelio/login-prompt.cjs). Grey, like the composer. */
+.login-prompts { flex-shrink: 0; padding: 0 16px 6px; }
+.login-prompts.hidden, .login-cards[hidden] { display: none; }
+body.remote-main .login-prompts { padding-left: var(--chat-gutter); padding-right: var(--chat-gutter); }
+.login-cards { display: flex; flex-direction: column; gap: 8px; max-width: 460px; }
+.login-card { border: 1px solid #2c2c33; border-radius: 14px; background: #17171b; color: #e6e6ea; padding: 12px 14px; font-size: 13px; }
+.login-card.is-notice { padding: 10px 12px; }
+.login-card-head { display: flex; align-items: center; gap: 10px; }
+.login-card-mark { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 9px; background: #26262d; color: #d9d9e0; display: flex; align-items: center; justify-content: center; font-weight: 650; font-size: 14px; }
+.login-card.is-notice .login-card-mark { width: 26px; height: 26px; border-radius: 8px; font-size: 12px; }
+.login-card-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.login-card-title { font-weight: 600; font-size: 13px; color: #ededf0; overflow-wrap: anywhere; }
+.login-card-sub { color: #9a9aa4; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.login-card-close { flex: 0 0 auto; border: 0; background: transparent; color: #8d8d98; font-size: 16px; line-height: 1; width: 24px; height: 24px; border-radius: 6px; cursor: pointer; }
+.login-card-close:hover { background: #24242b; color: #e6e6ea; }
+.login-card-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.login-card-field { display: flex; flex-direction: column; gap: 5px; }
+.login-card-label { font-size: 11px; color: #9a9aa4; letter-spacing: .01em; }
+.login-card-input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 10px; border-radius: 9px; border: 1px solid #303038; background: #101014; color: #ededf0; font: inherit; font-size: 13px; outline: none; }
+.login-card-input:focus { border-color: #5a5a66; box-shadow: 0 0 0 3px rgba(160, 160, 175, .16); }
+.login-card-secret { position: relative; display: flex; }
+.login-card-secret .login-card-input { padding-right: 58px; }
+.login-card-reveal { position: absolute; right: 4px; top: 4px; height: 26px; padding: 0 9px; border: 0; border-radius: 7px; background: #23232a; color: #c9c9d1; font-size: 11px; cursor: pointer; }
+.login-card-reveal:hover { background: #2c2c34; }
+.login-card-remember { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #c9c9d1; cursor: pointer; user-select: none; }
+.login-card-remember input { width: 15px; height: 15px; margin: 0; accent-color: #d9d9e0; }
+.login-card-error { margin: 0; font-size: 12px; color: #ff8f8f; }
+.login-card-error[hidden] { display: none; }
+.login-card-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.login-card-cancel, .login-card-submit { height: 32px; padding: 0 14px; border-radius: 9px; font: inherit; font-size: 13px; cursor: pointer; }
+.login-card-cancel { border: 1px solid #34343c; background: transparent; color: #d9d9e0; }
+.login-card-cancel:hover { background: #202026; }
+.login-card-submit { border: 1px solid #e6e6ea; background: #e6e6ea; color: #141418; font-weight: 600; }
+.login-card-submit:hover { background: #ffffff; }
+.login-card-submit[disabled], .login-card-cancel[disabled] { opacity: .55; cursor: default; }
+.login-card-reveal:focus-visible, .login-card-cancel:focus-visible, .login-card-submit:focus-visible, .login-card-close:focus-visible { outline: 2px solid #8e8e9a; outline-offset: 2px; }
+.saved-logins .saved-login-row { align-items: center; padding: 9px 0; }
+.saved-logins .saved-login-row + .saved-login-row { border-top: 1px solid #2a2a31; }
+.saved-login-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
+.saved-logins .saved-login-delete { flex: 0 0 auto; width: auto; margin: 0; padding: 4px 8px; }
+.saved-login-site { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.saved-login-meta { font-size: 12px; color: #9a9aa4; overflow-wrap: anywhere; }
