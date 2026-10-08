@@ -52,28 +52,28 @@ test('commandTextFor and hasPushApproval read only what runs and only the relay 
 });
 
 test('protected paths: secrets refused, public SSH files and ordinary files allowed', () => {
-  const p = policy.createProtector({ home: '/home/h', platform: 'linux', env: {} });
+  const p = policy.createProtector({ home: '/home/user', platform: 'linux', env: {} });
   const refused = [
-    ['/home/h/.ssh/id_ed25519', 'read'], ['/home/h/.ssh/config', 'write'], ['/home/h/.ssh/authorized_keys', 'write'],
-    ['/home/h/.gnupg/private-keys-v1.d/x.key', 'read'], ['/home/h/.hermes/.env', 'read'], ['/home/h/.hermes/auth.json', 'write'],
-    ['/home/h/.hermes/profiles/prc/.env', 'read'], ['/home/h/.hermes/profiles/arlp/auth.json', 'read'],
-    ['/home/h/.config/gh/hosts.yml', 'read'], ['/home/h/.claude/.credentials.json', 'read'], ['/home/h/.codex/auth.json', 'read'],
-    ['/home/h/.config/intelio/nodes-mcp.token', 'read'], ['/home/h/.local/state/intelio/push-grants/x.json', 'write'],
-    ['/home/h/.config/google-chrome/Default/Cookies', 'read'], ['/home/h/.mozilla/firefox/x.default/logins.json', 'read'],
+    ['/home/user/.ssh/id_ed25519', 'read'], ['/home/user/.ssh/config', 'write'], ['/home/user/.ssh/authorized_keys', 'write'],
+    ['/home/user/.gnupg/private-keys-v1.d/x.key', 'read'], ['/home/user/.hermes/.env', 'read'], ['/home/user/.hermes/auth.json', 'write'],
+    ['/home/user/.hermes/profiles/prc/.env', 'read'], ['/home/user/.hermes/profiles/arlp/auth.json', 'read'],
+    ['/home/user/.config/gh/hosts.yml', 'read'], ['/home/user/.claude/.credentials.json', 'read'], ['/home/user/.codex/auth.json', 'read'],
+    ['/home/user/.config/intelio/nodes-mcp.token', 'read'], ['/home/user/.local/state/intelio/push-grants/x.json', 'write'],
+    ['/home/user/.config/google-chrome/Default/Cookies', 'read'], ['/home/user/.mozilla/firefox/x.default/logins.json', 'read'],
     ['/etc/shadow', 'read'], ['/etc/sudoers.d/x', 'write'], ['/etc/ssh/ssh_host_ed25519_key', 'read'], ['/etc/ssl/private/k.pem', 'read'],
   ];
   for (const [target, op] of refused) assert.ok(p.check(target, op), `${op} ${target}`);
   const allowed = [
-    ['/home/h/.ssh/id_ed25519.pub', 'read'], ['/home/h/.ssh/known_hosts', 'read'], ['/home/h/.ssh/config', 'read'],
-    ['/home/h/.hermes/profiles/prc/config.yaml', 'read'], ['/home/h/.hermes/profiles/prc/config.yaml', 'write'],
-    ['/home/h/code/app/.env', 'read'], ['/etc/hosts', 'read'], ['/usr/bin/git', 'read'], ['/etc/ssh/ssh_host_ed25519_key.pub', 'read'],
+    ['/home/user/.ssh/id_ed25519.pub', 'read'], ['/home/user/.ssh/known_hosts', 'read'], ['/home/user/.ssh/config', 'read'],
+    ['/home/user/.hermes/profiles/prc/config.yaml', 'read'], ['/home/user/.hermes/profiles/prc/config.yaml', 'write'],
+    ['/home/user/code/app/.env', 'read'], ['/etc/hosts', 'read'], ['/usr/bin/git', 'read'], ['/etc/ssh/ssh_host_ed25519_key.pub', 'read'],
   ];
   for (const [target, op] of allowed) assert.equal(p.check(target, op), null, `${op} ${target}`);
-  assert.match(p.check('/home/h/.ssh/id_rsa', 'read').text, /^Refused: that is SSH keys\./);
+  assert.match(p.check('/home/user/.ssh/id_rsa', 'read').text, /^Refused: that is SSH keys\./);
 
-  const mac = policy.createProtector({ home: '/Users/h', platform: 'darwin', env: {} });
-  assert.ok(mac.check('/users/H/Library/Keychains/login.keychain-db', 'read'), 'macOS paths are case-insensitive');
-  assert.ok(mac.check('/Users/h/Library/Cookies/Cookies.binarycookies', 'read'));
+  const mac = policy.createProtector({ home: '/Users/macuser', platform: 'darwin', env: {} });
+  assert.ok(mac.check('/users/MACUSER/Library/Keychains/login.keychain-db', 'read'), 'macOS paths are case-insensitive');
+  assert.ok(mac.check('/Users/macuser/Library/Cookies/Cookies.binarycookies', 'read'));
 
   const win = policy.createProtector({ home: 'C:\\Users\\h', platform: 'win32', env: { APPDATA: 'C:\\Users\\h\\AppData\\Roaming', LOCALAPPDATA: 'C:\\Users\\h\\AppData\\Local' } });
   assert.ok(win.check('c:\\users\\H\\.ssh\\id_ed25519', 'read'));
@@ -84,10 +84,10 @@ test('protected paths: secrets refused, public SSH files and ordinary files allo
 });
 
 test('commands that name a secret are refused; ssh -i and public files are fine', () => {
-  const protector = policy.createProtector({ home: '/home/h', platform: 'linux', env: {} });
-  const scan = (c) => policy.commandSecretRefusal(c, { protector, home: '/home/h', cwd: '/home/h', platform: 'linux' });
+  const protector = policy.createProtector({ home: '/home/user', platform: 'linux', env: {} });
+  const scan = (c) => policy.commandSecretRefusal(c, { protector, home: '/home/user', cwd: '/home/user', platform: 'linux' });
   for (const c of ['cat ~/.ssh/id_ed25519', 'cp $HOME/.hermes/.env /tmp/x', 'tar czf /tmp/k.tgz ~/.ssh', 'cat .ssh/id_rsa', 'base64 /etc/shadow',
-    'echo key >> ~/.ssh/authorized_keys', 'echo k | tee -a ~/.ssh/authorized_keys', 'sqlite3 "/home/h/.config/google-chrome/Default/Cookies" .dump']) {
+    'echo key >> ~/.ssh/authorized_keys', 'echo k | tee -a ~/.ssh/authorized_keys', 'sqlite3 "/home/user/.config/google-chrome/Default/Cookies" .dump']) {
     assert.ok(scan(c), c);
   }
   for (const c of ['ssh -i ~/.ssh/id_ed25519 box uptime', 'ssh-add ~/.ssh/id_ed25519', 'cat ~/.ssh/id_ed25519.pub', 'cat ~/.ssh/authorized_keys', 'git push', 'ls -la ~/code', 'cat /etc/hosts']) {
