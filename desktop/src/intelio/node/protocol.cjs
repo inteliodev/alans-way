@@ -215,6 +215,11 @@ function callTimeoutMs(tool, args = {}) {
   return (seconds + 10) * 1000;
 }
 
+/** A Hermes profile name as shown to the person: letters, digits, . _ - (max 40). */
+function cleanAgent(value) {
+  return String(value == null ? '' : value).replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 40);
+}
+
 function parseFrame(text) {
   let msg;
   try { msg = JSON.parse(String(text)); } catch { return null; }
@@ -256,7 +261,8 @@ const frames = {
   }),
   welcome: (deviceId, secret) => ({ type: 'welcome', device_id: deviceId, ...(secret ? { device_secret: secret } : {}) }),
   refused: (reason, code = '') => ({ type: 'refused', reason: String(reason), ...(code ? { code } : {}) }),
-  call: (id, tool, args) => ({ type: 'call', id, tool, args: args || {} }),
+  // agent: the Hermes profile making the call (shown in the ask-before prompt on the computer).
+  call: (id, tool, args, agent = '') => ({ type: 'call', id, tool, args: args || {}, ...(cleanAgent(agent) ? { agent: cleanAgent(agent) } : {}) }),
   ok: (id, content) => ({ type: 'result', id, ok: true, content }),
   fail: (id, error) => ({ type: 'result', id, ok: false, error: String(error || 'Failed.').slice(0, 4000) }),
   ping: () => ({ type: 'ping', t: Date.now() }),
@@ -348,6 +354,7 @@ module.exports = {
   parseFrame,
   normalizeHello,
   frames,
+  cleanAgent,
   textContent,
   contentSize,
   summarizeArgs,

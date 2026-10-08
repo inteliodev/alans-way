@@ -24,6 +24,7 @@ and the existing alans-way plugin; no Hermes source is changed, so Hermes update
        url: http://127.0.0.1:8645/mcp
        headers:
          Authorization: "Bearer ${INTELIO_NODES_MCP_TOKEN}"
+         X-Intelio-Agent: intelio        # optional: the profile name shown in ask-before prompts
        timeout: 300
        connect_timeout: 30
    ```
@@ -132,6 +133,49 @@ grant id shows in that session's output and stays set in that shell; the grant i
 by the push and expires after 15 minutes. A push started from inside a session's program (for
 example Claude Code running `git push` itself) is not seen on a personal computer.
 
+## Ask before deletes, pushes and installs (Hayden, Oct 8 2026)
+
+On a **personal computer** (any node except `cloud`), these wait for Hayden on that computer:
+
+- **deleting** files or folders: `rm`, `rmdir`, `del`, `erase`, `rd`, `unlink`, `shred`,
+  `Remove-Item` / `ri`, `git clean` (not `-n`), `git rm` (not `--cached`), `find -delete` /
+  `-exec rm`, `rsync --delete`, `robocopy /MIR`, `shutil.rmtree` / `fs.rmSync` in `python -c` /
+  `node -e`, and any node tool whose name says delete/remove;
+- **pushing** code: everything the push detector above finds (`git push` incl. `--force`,
+  `gh pr merge`, ...) plus `gh repo delete|archive` and `gh release delete`;
+- **installing**: `npm|pnpm|yarn|bun install|i|ci|add` (and bare `yarn`), `pip|pip3|pipx install`,
+  `python -m pip install`, `uv add|sync`, `uv pip|tool install`, `poetry|conda|gem|cargo|go install`,
+  `winget|choco|scoop|brew|apt|apt-get|dnf|yum|zypper|apk install`, `pacman -S`, `msiexec`, running
+  `*.msi` / `*.pkg` / `*setup*.exe` / `*install*.exe`, `Install-Module`, and `curl ... | sh`,
+  `iwr ... | iex`, `bash -c "$(curl ...)"`.
+
+Everything else (reading, writing files, `ls`, `git status`, `npm test`, `cat`, builds) runs on its
+own. The check lives in the desktop node (`desktop/src/intelio/node/approval-gate.cjs`, called by
+`executors.cjs` before `run_command`, `start_session` and a `send_input` line that would run), so it
+does not depend on the relay or the agent. It looks through wrappers (`sudo`, `env`, `xargs`,
+`Start-Process`), nested shells (`bash -c`, `powershell -Command` / `-EncodedCommand`, `cmd /c`,
+`ssh host ...`, `wsl ...`) and local shell scripts the command runs (`bash x.sh`, `./x.sh`,
+`powershell -File x.ps1`, `x.cmd`). Text typed into a terminal session is checked as a whole line
+when it would run (Enter), so a command typed in pieces is still seen.
+
+The prompt is a native dialog on that computer: "intelio agent <profile> wants to: <summary>",
+**Allow once** / **Deny**. Deny is the default button and the Escape answer; no answer within 120 s,
+a prompt that cannot be shown, or any error is a Deny. The agent then gets
+`Hayden denied: ...` or `Hayden did not approve (no answer (timed out)): ...` and nothing runs.
+Every prompt is written to the computer's audit log (`tool: "approval"`, kinds, summary, agent,
+`note: allowed|denied|no answer (timed out)|...`) and shows under Settings → View activity.
+
+Settings → This computer → **Ask before deletes, pushes and installs** (on by default) turns the
+prompts off for that computer only. A push the relay already put to Hayden in the chat (and he
+allowed, so it carries the relay's stamp) is not asked a second time on the computer; anything
+else in the same command still is. The relay gives `run_command`, `start_session` and `send_input`
+125 s more before it times a call out, so a prompt can be answered. `cloud` is not gated here; the
+VPS push guard covers its pushes.
+
+Limits (heuristic, biased toward asking): a program the agent starts (Claude Code or Codex in a
+session, a Node or Python script file) can delete, push or install from inside without the node
+seeing the command; only the command lines the agent itself runs or types are checked.
+
 ## Device identity and revocation
 
 - First connect: node presents the user's Cloudflare Access cookie (Access listener) or comes from
@@ -167,6 +211,7 @@ describe how this repository implements it. Stage 2 (terminal sessions) is descr
 | Node executors (files, search, commands, screenshot, session tools) | `desktop/src/intelio/node/executors.cjs` |
 | Terminal sessions (PTY / pipes, ring buffer, limits) | `desktop/src/intelio/node/sessions.cjs` |
 | Elevation detection | `desktop/src/intelio/node/elevation.cjs` |
+| Ask before deletes, pushes and installs (classifier + gate) | `desktop/src/intelio/node/approval-gate.cjs` |
 | Node client (dial out, enroll, backoff, ping, audit, kill switch) | `desktop/src/intelio/node/client.cjs` |
 | Electron glue (safeStorage, Settings, target URL, confirm dialog, first run, managed hold) | `desktop/src/intelio/node/electron.cjs` (started from `desktop/src/main.cjs`) |
 | Search worker (bounded time, kill switch, cloud-only placeholders) | `desktop/src/intelio/node/search.cjs` |

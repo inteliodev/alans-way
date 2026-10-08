@@ -109,7 +109,7 @@ function createNodeClient({
     let result;
     if (!enabled) result = { ok: false, error: 'intelio access is turned off on this computer.', meta: {} };
     else {
-      try { result = await executors.run(tool, args, { signal: controller.signal }); } catch (error) {
+      try { result = await executors.run(tool, args, { signal: controller.signal, agent: protocol.cleanAgent(msg.agent) }); } catch (error) {
         result = { ok: false, error: String(error && error.message || error), meta: {} };
       }
     }

@@ -127,6 +127,15 @@
     const allowLabel = element('label', '', 'Let my agents use this computer');
     allowLabel.htmlFor = 'intelio-node-enabled';
     allowField.append(allow, allowLabel);
+    // Ask-before gate (src/intelio/node/approval-gate.cjs): on by default, per computer.
+    const riskyField = element('div', 'field checkbox-field');
+    const risky = element('input');
+    risky.id = 'intelio-node-ask-risky';
+    risky.type = 'checkbox';
+    risky.checked = true;
+    const riskyLabel = element('label', '', 'Ask before deletes, pushes and installs');
+    riskyLabel.htmlFor = 'intelio-node-ask-risky';
+    riskyField.append(risky, riskyLabel);
     const nameField = element('div', 'field');
     const nameLabel = element('label', '', 'Computer name');
     nameLabel.htmlFor = 'intelio-node-name';
@@ -148,6 +157,7 @@
       held.textContent = s.held ? s.detail : '';
       clearedField.hidden = !s.managed;
       cleared.checked = Boolean(s.cleared);
+      risky.checked = s.askBeforeRisky !== false;
       const active = Array.isArray(s.active) ? s.active : [];
       const using = active.length ? `An agent is using this computer now (${[...new Set(active.map((a) => doing[a.tool] || 'using the terminal'))].join(', ')}).` : '';
       status.textContent = [words[s.status] || s.status || '', s.detail && !['online', 'held'].includes(s.status) ? s.detail : '', using].filter(Boolean).join(' ');
@@ -157,6 +167,10 @@
     const poll = setInterval(() => { if (!status.isConnected) { clearInterval(poll); return; } load(); }, 3000);
     allow.onchange = async () => {
       try { show(await command('intelio-node-config', { enabled: allow.checked })); toast(allow.checked ? 'Your agents can use this computer.' : 'Your agents can no longer use this computer.'); }
+      catch (e) { status.textContent = e.message; }
+    };
+    risky.onchange = async () => {
+      try { show(await command('intelio-node-config', { askBeforeRisky: risky.checked })); toast(risky.checked ? 'Agents will ask before deleting, pushing or installing here.' : 'Agents no longer ask before deleting, pushing or installing here.'); }
       catch (e) { status.textContent = e.message; }
     };
     cleared.onchange = async () => {
@@ -184,8 +198,8 @@
     const terminal = element('button', 'secondary-button', 'Open Terminal');
     terminal.title = 'Your own terminal on this computer and on the VPS (cloud)';
     terminal.onclick = () => command('open-terminal', { target: 'local' }).catch((e) => { status.textContent = e.message; });
-    body.append(held, clearedField, allowField, nameField, status, save, view, terminal, activity,
-      element('p', 'settings-note', 'When this is on, your intelio agents on the VPS can work with files and the terminal on this computer as you (and Claude Code or Codex through the terminal if they are installed), search, and take screenshots. They never get administrator rights: a command that asks for them shows a prompt here first. A notice with a Stop button shows at the top of the screen while an agent is working here. Every request is logged; View activity shows the log. Turning this off disconnects immediately.'),
+    body.append(held, clearedField, allowField, riskyField, nameField, status, save, view, terminal, activity,
+      element('p', 'settings-note', 'When this is on, your intelio agents on the VPS can work with files and the terminal on this computer as you (and Claude Code or Codex through the terminal if they are installed), search, and take screenshots. They never get administrator rights: a command that asks for them shows a prompt here first. Deleting files, pushing code and installing software ask you here first (Allow once / Deny; no answer in 2 minutes is Deny) while "Ask before deletes, pushes and installs" is ticked. A notice with a Stop button shows at the top of the screen while an agent is working here. Every request is logged; View activity shows the log. Turning this off disconnects immediately.'),
       element('hr', 'section-divider'));
     appendComputers(body, { element, command, toast });
   }
@@ -197,8 +211,11 @@
     for (const e of entries.slice().reverse()) {
       const when = e.time ? new Date(e.time).toLocaleString() : '';
       const a = e.args || {};
-      const what = a.path || a.root || a.cwd || a.command || (a.program ? `${a.program}…` : '') || '';
-      const line = [when, relay ? e.computer : '', e.tool, what, e.ok === false ? `failed${e.error ? `: ${e.error}` : ''}` : (e.exit_code !== undefined ? `exit ${e.exit_code}` : '')].filter(Boolean).join(' · ');
+      const what = a.summary || a.path || a.root || a.cwd || a.command || (a.program ? `${a.program}…` : '') || '';
+      // Ask-before prompts (approval-gate.cjs): who asked, what, and Hayden's answer.
+      const tool = e.tool === 'approval' ? `asked${a.agent ? ` (${a.agent})` : ''}` : e.tool;
+      const result = e.tool === 'approval' ? (e.note || (e.ok ? 'allowed' : 'denied')) : e.ok === false ? `failed${e.error ? `: ${e.error}` : ''}` : (e.exit_code !== undefined ? `exit ${e.exit_code}` : '');
+      const line = [when, relay ? e.computer : '', tool, what, result].filter(Boolean).join(' · ');
       list.append(element('li', e.ok === false ? 'failed' : '', line));
     }
     container.append(list);

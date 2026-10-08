@@ -403,6 +403,8 @@ module.exports = {
   pushRefusal,
   splitSimpleCommands,
   shellWords,
+  stripPrefix,
+  baseName,
   protectedRules,
   createProtector,
   commandSecretRefusal,

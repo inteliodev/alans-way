@@ -8,6 +8,8 @@
  * - audit log <userData>/intelio-node/audit.jsonl
  * - target: cloud origin + CF_Authorization cookie, or the tailnet phone listener
  * - screenshot via desktopCapturer, elevation confirm via a native dialog
+ * - ask-before prompt for deletes, pushes and installs (approval-gate.cjs), a native
+ *   dialog with Deny as the default; prefs.intelioNode.askBeforeRisky (default on)
  * Started from main.cjs after the window is created; never blocks startup.
  */
 const fs = require('node:fs');
@@ -15,6 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createNodeClient, createAuditLog } = require('./client.cjs');
 const { createExecutors, osLabel } = require('./executors.cjs');
+const { createApprovalGate, APPROVAL_TIMEOUT_MS } = require('./approval-gate.cjs');
 const { tailnetNameFor } = require('../tailscale.cjs');
 const { VPS_HOST } = require('../remote-hermes.cjs');
 
@@ -32,6 +35,8 @@ function nodePrefs(prefs) {
     cleared: raw.cleared === true,
     // Hold this computer regardless of detection.
     hold: raw.hold === true,
+    // "Ask before deletes, pushes and installs" (approval-gate.cjs). On unless turned off here.
+    askBeforeRisky: raw.askBeforeRisky !== false,
   };
 }
 
@@ -220,7 +225,46 @@ function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, g
     } catch { return false; } finally { clearTimeout(timer); }
   }
 
+  // Ask-before prompts: one native dialog at a time, Deny is the default and the
+  // cancel answer, and it closes itself at the gate's timeout (that answer is Deny too).
+  let askQueue = Promise.resolve();
+  function askRisky({ agent, computer, summary, command, signal }) {
+    const turn = askQueue.then(async () => {
+      if (signal && signal.aborted) return 'timeout';
+      const who = agent ? `intelio agent ${agent}` : 'An intelio agent';
+      const options = {
+        type: 'warning',
+        buttons: ['Deny', 'Allow once'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+        title: 'intelio: allow this?',
+        message: `${who} wants to: ${summary}`,
+        detail: `On ${computer}:\n\n${String(command || '').slice(0, 800)}\n\nAllow once runs it as you this one time. Deny (or no answer within ${Math.round(APPROVAL_TIMEOUT_MS / 1000)} s) refuses it and tells the agent. Turn these prompts off in Settings → This computer.`,
+        signal,
+      };
+      const win = getMainWindow();
+      const visible = win && !win.isDestroyed() && win.isVisible();
+      try { if (visible) { if (win.isMinimized()) win.restore(); win.flashFrame(true); } } catch { /* cosmetic */ }
+      const answer = visible ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+      try { if (visible) win.flashFrame(false); } catch { /* cosmetic */ }
+      if (signal && signal.aborted) return 'timeout';
+      return answer.response === 1 ? 'allow' : 'deny';
+    });
+    askQueue = turn.catch(() => 'deny');
+    return turn;
+  }
+
+  const approvalGate = createApprovalGate({
+    enabled: () => nodePrefs(getPrefs()).askBeforeRisky,
+    ask: askRisky,
+    audit: (entry) => { audit(entry); listener(); },
+    computerName: name,
+    log: (line) => process.stderr.write(`${line}\n`),
+  });
+
   const executors = createExecutors({
+    approvalGate,
     confirmElevation,
     screenshot: (display) => captureDisplay({ desktopCapturer, screen }, display),
     computerName: name,
@@ -258,6 +302,7 @@ function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, g
       managedReasons: m.reasons,
       cleared: prefs.cleared,
       asked: prefs.asked,
+      askBeforeRisky: prefs.askBeforeRisky,
       active: client.active(),
       enrolled: Boolean(identity.load()),
       encryptionAvailable: identity.available(),
@@ -303,6 +348,7 @@ function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, g
     if (value.asked === true || typeof value.enabled === 'boolean') next.asked = true;
     if (typeof value.cleared === 'boolean') next.cleared = value.cleared;
     if (typeof value.hold === 'boolean') next.hold = value.hold;
+    if (typeof value.askBeforeRisky === 'boolean') next.askBeforeRisky = value.askBeforeRisky;
     prefs.intelioNode = next;
     savePreferences();
     const running = client.state().enabled;

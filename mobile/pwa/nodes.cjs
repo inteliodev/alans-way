@@ -19,6 +19,10 @@ const crypto = require('node:crypto');
 const { acceptWebSocket } = require('../../desktop/src/intelio/node/ws.cjs');
 const protocol = require('../../desktop/src/intelio/node/protocol.cjs');
 const policy = require('../../desktop/src/intelio/node/policy.cjs');
+const { APPROVAL_TIMEOUT_MS } = require('../../desktop/src/intelio/node/approval-gate.cjs');
+
+const GATED_TOOLS = new Set(['run_command', 'start_session', 'send_input']);
+const APPROVAL_GRACE_MS = APPROVAL_TIMEOUT_MS + 5000;
 
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 32 };
 const HELLO_TIMEOUT_MS = 10000;
@@ -433,7 +437,7 @@ function createNodeHub({
   }
 
   /** Returns { content, isError } — MCP tool result shape. Never throws. */
-  async function call(ref, tool, args = {}, { timeoutMs, approve } = {}) {
+  async function call(ref, tool, args = {}, { timeoutMs, approve, agent = '' } = {}) {
     const started = now();
     const audit = (computer, ok, bytes, note = '') => {
       const summary = protocol.summarizeArgs(tool, args, 'relay');
@@ -486,7 +490,9 @@ function createNodeHub({
     }
     const conn = live.get(device.id);
     const id = `c${++seq}`;
-    const wait = timeoutMs || protocol.callTimeoutMs(tool, nodeArgs);
+    // A command may wait on the computer's ask-before prompt (deletes, pushes, installs: up to
+    // 120 s, approval-gate.cjs) before it starts, so those tools get that much longer.
+    const wait = timeoutMs || protocol.callTimeoutMs(tool, nodeArgs) + (GATED_TOOLS.has(tool) ? APPROVAL_GRACE_MS : 0);
     let timer;
     const done = markBusy(device.id, tool);
     try {
@@ -496,7 +502,7 @@ function createNodeHub({
           conn.calls.delete(id);
           reject(new Error(`${device.name} did not answer ${tool} within ${Math.round(wait / 1000)} s.`));
         }, wait);
-        try { conn.ws.send(JSON.stringify(protocol.frames.call(id, tool, nodeArgs))); } catch (error) { conn.calls.delete(id); reject(error); }
+        try { conn.ws.send(JSON.stringify(protocol.frames.call(id, tool, nodeArgs, agent))); } catch (error) { conn.calls.delete(id); reject(error); }
       });
       if (msg.ok) {
         const content = Array.isArray(msg.content) ? msg.content : [];

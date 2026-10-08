@@ -40,7 +40,7 @@ test('managed work computers (ARLP: Alliance domain, SentinelOne, Umbrella) are 
   assert.match(holdReason({ env: { INTELIO_NODE_HOLD: '1' }, prefs: { intelioNode: { cleared: true } }, managed: none }), /INTELIO_NODE_HOLD/);
   assert.match(holdReason({ env: {}, prefs: { intelioNode: { hold: true } }, managed: none }), /Held in Settings/);
   assert.equal(holdReason({ env: {}, prefs: {}, managed: none }), '');
-  assert.deepEqual(nodePrefs({}), { enabled: true, name: '', asked: false, cleared: false, hold: false });
+  assert.deepEqual(nodePrefs({}), { enabled: true, name: '', asked: false, cleared: false, hold: false, askBeforeRisky: true });
 });
 
 test('a managed computer never dials Tailscale, only intelio cloud', () => {

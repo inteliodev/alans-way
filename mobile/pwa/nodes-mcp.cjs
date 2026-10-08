@@ -105,7 +105,7 @@ function createNodesMcp({
       return { content: protocol.textContent(enrolled ? { computers: rows } : { computers: rows, note: 'No personal computers are enrolled yet. Sign in to the intelio app on a computer to enroll it.' }), isError: false };
     }
     if (!protocol.TOOL_NAMES.includes(name)) return null;
-    return hub.call(args.computer, name, args, { approve: ctx.approve });
+    return hub.call(args.computer, name, args, { approve: ctx.approve, agent: ctx.agent });
   }
 
   /** A JSON-RPC response from the client: the answer to one of our elicitation requests. */
@@ -166,15 +166,18 @@ function createNodesMcp({
         chunks.push(chunk);
       }
     } catch { return undefined; }
+    // Which Hermes profile is calling (Hermes MCP config: headers X-Intelio-Agent, or /mcp?agent=).
+    // Shown in the ask-before prompt on a computer; never used for access decisions.
+    const agent = protocol.cleanAgent(req.headers['x-intelio-agent'] || url.searchParams.get('agent') || '');
     let msg;
     try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return reply(res, 400, rpcError(null, -32700, 'Parse error')); }
     if (Array.isArray(msg)) {
       const out = [];
-      for (const item of msg) { const r = await dispatch(item); if (r) out.push(r); }
+      for (const item of msg) { const r = await dispatch(item, { agent }); if (r) out.push(r); }
       return out.length ? reply(res, 200, out) : reply(res, 202);
     }
     const stream = sseStream(req, res);
-    const answer = await dispatch(msg, { approve: stream.canStream && msg && msg.method === 'tools/call' ? (ask) => elicit(stream, ask) : null });
+    const answer = await dispatch(msg, { agent, approve: stream.canStream && msg && msg.method === 'tools/call' ? (ask) => elicit(stream, ask) : null });
     if (stream.open) { stream.end(answer); return undefined; }
     if (answer === undefined) return reply(res, 202);
     return reply(res, 200, answer);

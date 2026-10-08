@@ -99,6 +99,9 @@ function createExecutors({
   // Extra environment for a command the relay stamped as an approved push (the
   // cloud computer passes the VPS push guard's one-time grant here).
   approvedPushEnv = null,
+  // Ask-before gate (approval-gate.cjs) for deletes, pushes and installs. The desktop
+  // app passes one for this computer; the cloud computer (nodes-local.cjs) passes none.
+  approvalGate = null,
 } = {}) {
   const caseless = platform === 'win32' || platform === 'darwin';
   const sessions = createSessionManager({ platform, home, env, limits, ...sessionOptions });
@@ -137,6 +140,14 @@ function createExecutors({
     const pushes = policy.findPushes(text);
     if (pushes.length && !policy.hasPushApproval(args)) throw new ToolError(policy.pushRefusal(pushes));
     return pushes;
+  }
+
+  /** Deletes, pushes and installs wait for the person at this computer (approval-gate.cjs). */
+  async function askGate(tool, args, text, ctx = {}, cwd = home) {
+    if (!approvalGate) return;
+    try {
+      await approvalGate.check({ tool, args, text, agent: ctx.agent, cwd });
+    } catch (error) { throw new ToolError(String(error && error.message || error)); }
   }
 
   function resolvePath(raw, field = 'path') {
@@ -372,6 +383,7 @@ function createExecutors({
       if (!command.trim()) throw new ToolError('command is required.');
       const shell = shellFor(args.shell);
       const pushes = guardCommand('run_command', args, args.cwd ? resolvePath(args.cwd, 'cwd') : home);
+      await askGate('run_command', args, command, ctx, args.cwd ? resolvePath(args.cwd, 'cwd') : home);
       await requireApproval(command);
       const cwd = args.cwd ? resolvePath(args.cwd, 'cwd') : home;
       const timeoutS = intArg(args.timeout_s, { min: 1, max: limits.runMaxS, fallback: limits.runDefaultS });
@@ -438,10 +450,11 @@ function createExecutors({
       };
     },
 
-    async start_session(args) {
+    async start_session(args, ctx = {}) {
       const command = args.command == null ? '' : String(args.command);
       const cwd = args.cwd ? resolvePath(args.cwd, 'cwd') : home;
       const pushes = guardCommand('start_session', args, cwd);
+      if (command.trim()) await askGate('start_session', args, command, ctx, cwd);
       if (command.trim()) await requireApproval(command);
       const extraEnv = pushes.length && typeof approvedPushEnv === 'function' ? approvedPushEnv({ command, pushes }) : null;
       const started = sessions.start({ command, cwd, cols: args.cols, rows: args.rows, env: extraEnv ? { ...(args.env || {}), ...extraEnv } : args.env });
@@ -452,17 +465,21 @@ function createExecutors({
       };
     },
 
-    async send_input(args) {
+    async send_input(args, ctx = {}) {
       let text = args.text == null ? '' : String(args.text);
       const id = String(args.session_id || '');
       // A push typed in pieces ("git pu" then "sh") is still a push: check the line so far.
       const line = `${typedLines.get(id) || ''}${text}`;
       const pushes = guardCommand('send_input', { ...args, text: line }, home);
-      if (text.trim()) await requireApproval(text);
       if (pushes.length && typedLines.get(id)) {
         throw new Error('Refused: type the whole push command in one send_input (this one continues a line typed earlier). Clear the line first (keys ["ctrl-u"]).');
       }
       const keys = Array.isArray(args.keys) ? args.keys.map((k) => String(k).trim().toLowerCase().replace(/[+_ ]/g, '-').replace(/^(?:control|c)-/, 'ctrl-')) : [];
+      // The line runs when this input carries Enter: the gate checks the whole line then
+      // (typed in one piece or several), never a half-typed one.
+      const runs = /[\r\n]/.test(text) || (args.enter !== undefined ? Boolean(args.enter) : Boolean(text)) || keys.some((k) => ['enter', 'return', 'ctrl-m', 'ctrl-j'].includes(k));
+      if (runs && line.trim()) await askGate('send_input', { ...args, text: line }, line, ctx, home);
+      if (text.trim()) await requireApproval(text);
       const ends = /[\r\n]/.test(text) || (args.enter !== undefined ? Boolean(args.enter) : Boolean(text)) || keys.some((k) => ['enter', 'ctrl-c', 'ctrl-u', 'ctrl-d', 'ctrl-m', 'ctrl-j'].includes(k));
       if (ends) typedLines.delete(id); else typedLines.set(id, line.slice(-4096));
       if (pushes.length && typeof approvedPushEnv === 'function') {

@@ -297,8 +297,8 @@ test('backoff runs 2 s doubling to 60 s; electron helpers pick the relay URL and
   assert.equal(relayUrls(null, {}), null);
   assert.equal(relayUrls(null, { INTELIO_NODE_RELAY_URL: 'wss://evil.example/node/connect' }), null, 'override is loopback-only');
   assert.equal(relayUrls(null, { INTELIO_NODE_RELAY_URL: 'ws://127.0.0.1:9/node/connect' }).urls[0], 'ws://127.0.0.1:9/node/connect');
-  assert.deepEqual(nodePrefs({}), { enabled: true, name: '', asked: false, cleared: false, hold: false });
-  assert.deepEqual(nodePrefs({ intelioNode: { enabled: false, name: ' Desk\u0007 ' } }), { enabled: false, name: 'Desk', asked: false, cleared: false, hold: false });
+  assert.deepEqual(nodePrefs({}), { enabled: true, name: '', asked: false, cleared: false, hold: false, askBeforeRisky: true });
+  assert.deepEqual(nodePrefs({ intelioNode: { enabled: false, name: ' Desk\u0007 ' } }), { enabled: false, name: 'Desk', asked: false, cleared: false, hold: false, askBeforeRisky: true });
   assert.equal(deviceName({}, 'HOST-1'), 'HOST-1');
   assert.equal(deviceName({ intelioNode: { name: 'Studio' } }, 'HOST-1'), 'Studio');
   // Identity is only ever written encrypted; without OS encryption nothing is stored.
