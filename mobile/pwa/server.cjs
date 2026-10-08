@@ -22,7 +22,8 @@ const { resolveRepoRoot } = require('../../desktop/src/intelio/paths.cjs');
 const { readBrandPng, scalePng } = require('../../desktop/src/intelio/png-icon.cjs');
 const { createVoiceRuntime } = require('./voice.cjs');
 const { createVaultStore } = require('../../desktop/src/intelio/vault.cjs');
-const { fillLogin } = require('../../desktop/src/intelio/cdp-fill.cjs');
+const { fillLogin, scanLoginPages } = require('../../desktop/src/intelio/cdp-fill.cjs');
+const { createLoginWatch } = require('../../desktop/src/intelio/login-watch.cjs');
 const { normalizeIp, isLoopbackAddress, peerIsLocal, parseAllowlist, profileKeyPath, readProfileKey, createIdentity } = require('./identity.cjs');
 const { renderOrbPng } = require('./orbs.cjs');
 const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
@@ -47,7 +48,7 @@ const STATIC = {
 };
 const DESKTOP_SRC = path.resolve(__dirname, '../../desktop/src');
 const UI_EXT = new Set(['.css', '.js', '.woff2', '.png', '.svg']);
-const UI_CJS = new Set(['intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs', 'intelio/calls.cjs', 'intelio/desktop-voice.cjs', 'intelio/model-picker.cjs', 'intelio/client-apps.cjs']);
+const UI_CJS = new Set(['intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs', 'intelio/calls.cjs', 'intelio/desktop-voice.cjs', 'intelio/model-picker.cjs', 'intelio/client-apps.cjs', 'intelio/login-prompt.cjs']);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json' };
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -215,7 +216,10 @@ function createPwaServer({
   vncUpstream = process.env.INTELIO_PWA_VNC_URL || '',
   vncPassword,
   vaultRoot = process.env.INTELIO_VAULT_ROOT || '',
+  vaultHome = process.env.INTELIO_VAULT_HOME || '',
   filler = null,
+  loginScan = null,
+  loginWatchMs,
   cdpImpl = null,
   selfCheck = null,
   // A new agent is checked on its own /p/<name>/ route before the create call answers.
@@ -235,8 +239,11 @@ function createPwaServer({
   const sessions = new Map();
   const vaultRootPath = vaultRoot || path.join(profileHome || os.homedir(), '.hermes', 'profiles');
   let listedProfilesForVault = [];
+  // The intelio vault (data + key) lives outside ~/.hermes. A test that
+  // passes its own vaultRoot gets a sibling folder instead of the real home.
   const vault = createVaultStore({
     root: vaultRootPath,
+    home: vaultHome || (vaultRoot ? `${path.resolve(vaultRoot)}.intelio-home` : (profileHome || os.homedir())),
     profiles: () => [profileName, ...listedProfilesForVault],
   });
   // Accounts page and Settings > Activity (mobile/pwa/accounts-routes.cjs). Same auth as /api.
@@ -519,11 +526,22 @@ function createPwaServer({
         domain: values.domain || body.domain || body.site,
         selectors: body.selectors || values.selectors,
         values: { username: values.username, password: values.password, otp: values.otp },
+        submit: body.submit === true,
         ...(cdpImpl ? { CDPImpl: cdpImpl } : {}),
       });
     } catch {
       return { ok: false, filled: false };
     }
+  }
+  const loginWatch = createLoginWatch({
+    vault,
+    fill: (profileId, hit, options) => runFiller(profileId, { domain: hit.domain, selectors: hit.selectors, submit: options?.submit === true }, hit),
+    scan: sample ? null : (loginScan || ((profileId) => scanLoginPages({ profile: profileId, root: vaultRootPath, ...(cdpImpl ? { CDPImpl: cdpImpl } : {}) }))),
+  });
+  function profilesWithBrowser() {
+    return [...new Set([profileName, ...vault.knownProfiles()])].filter((id) => {
+      try { return Boolean(resolveCdpUrl({ profile: id, root: vaultRootPath })); } catch { return false; }
+    });
   }
   function publicVault(result, extra = {}) {
     return {
@@ -851,10 +869,10 @@ function createPwaServer({
       "img-src 'self' data: blob: crx:",
     );
     html = html.replace(/(href|src)="(?!\/|https?:|data:)([^"]+)"/g, '$1="/ui/$2"');
-    html = html.replace('</head>', '<script src="/desktop-boot.js?v=27"></script></head>');
+    html = html.replace('</head>', '<script src="/desktop-boot.js?v=28"></script></head>');
     html = html.replace(
       '<script src="/ui/renderer.js"></script>',
-      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=27"></script><script src="/ui/renderer.js"></script>',
+      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=28"></script><script src="/ui/renderer.js"></script>',
     );
     return html;
   }
@@ -1291,13 +1309,26 @@ function createPwaServer({
             }
             const filled = await runFiller(profileId, body);
             const pub = publicVault(filled, { saved, domain: body.domain || filled.domain || '' });
-            return send(res, 200, pub);
+            const prompt = loginWatch.resolved(profileId, body.promptId, { ...pub, username: body.username, fields: filled?.fields });
+            return send(res, 200, prompt ? { ...pub, prompt } : pub);
           } catch {
             return send(res, 400, { ok: false, filled: false, error: 'Could not save that login.' });
           }
         }
         if (req.method === 'GET' && url.pathname === '/api/vault/logins') {
+          // Every agent's list is for the signed-in person; a profile key sees its own.
+          if (url.searchParams.get('all') === '1' && !bearer.present) return send(res, 200, { ok: true, logins: vault.listAll() });
           return send(res, 200, { ok: true, logins: vault.list(profileId) });
+        }
+        if (req.method === 'GET' && url.pathname === '/api/vault/prompts') {
+          await loginWatch.refresh(profileId);
+          return send(res, 200, { ok: true, prompts: loginWatch.list(profileId) });
+        }
+        if (req.method === 'POST' && url.pathname === '/api/vault/prompt') {
+          return send(res, 200, await loginWatch.request(profileId, { site: body.site, reason: body.reason, wait: body.wait }));
+        }
+        if (req.method === 'POST' && url.pathname === '/api/vault/dismiss') {
+          return send(res, 200, { ok: loginWatch.dismiss(profileId, body.promptId) });
         }
         if (req.method === 'DELETE' && url.pathname === '/api/vault/logins') {
           return send(res, 200, { ok: true, logins: vault.remove(profileId, body.domain) });
@@ -1694,6 +1725,7 @@ function createPwaServer({
 
   function close(done) {
     const finish = typeof done === 'function' ? done : () => {};
+    loginWatch.stop();
     for (const socket of [...liveSockets]) {
       try { socket.destroy(); } catch { /* already closed */ }
     }
@@ -1731,6 +1763,10 @@ function createPwaServer({
         };
         server.once('error', reject);
         server.listen(port, bind, startLocal);
+        // Background look for sign-in forms in each agent browser, so a saved
+        // login is used even with no screen open. Off for injected test fakes.
+        const watchMs = loginWatchMs !== undefined ? Number(loginWatchMs) : (filler || cdpImpl || loginScan || sample ? 0 : Number(process.env.INTELIO_LOGIN_WATCH_MS || 6000));
+        loginWatch.start(watchMs, profilesWithBrowser);
       });
     },
   };

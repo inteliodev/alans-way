@@ -81,6 +81,13 @@ function sessionItems(byId) {
   return byId('all-sessions').children.filter((node) => String(node.className).split(' ').includes('all-session') || String(node.className).startsWith('all-session'));
 }
 
+/** The Sessions filter is one <select>; picking an agent fires change. */
+function pickAgent(byId, agent) {
+  const select = byId('session-agents').children[0];
+  select.value = agent;
+  select.dispatch('change', { target: select });
+}
+
 function collectedText(node) {
   return `${node.textContent || ''}${(node.children || []).map(collectedText).join('')}`;
 }
@@ -177,12 +184,13 @@ test('threads for the selected agent sit under the agents, and the sessions list
 
   search.value = '';
   search.dispatch('input', { target: search });
-  const chip = (agent) => byId('session-agents').children.find((node) => node.dataset.agent === agent);
-  assert.deepEqual(byId('session-agents').children.map((node) => node.dataset.agent), ['', 'intelio', 'prc', 'alignment', 'hhp']);
-  chip('hhp').onclick();
+  const select = byId('session-agents').children[0];
+  assert.equal(select.tag, 'select');
+  assert.deepEqual(select.children.map((node) => node.value), ['', 'intelio', 'prc', 'alignment', 'hhp']);
+  pickAgent(byId, 'hhp');
   assert.deepEqual(sessionItems(byId).map((row) => row.dataset.profile), ['hhp']);
 
-  chip('').onclick();
+  pickAgent(byId, '');
   const prc = sessionItems(byId).find((row) => row.dataset.profile === 'prc');
   await prc.onclick();
   const opened = calls.find((call) => call.name === 'messages' && call.profile === 'prc');
@@ -288,9 +296,10 @@ test('client chips list every client and the app row opens that client\'s apps t
     await api.sync({ remoteHermes: { enabled: true, host: '127.0.0.1', port: 9, profile: 'intelio', profilesWithKeys: ['intelio', 'prc', 'alignment', 'hhp'] } });
     api.setSidebar('sessions');
     await new Promise((resolve) => setTimeout(resolve, 30));
-    const chips = byId('session-agents').children;
-    assert.deepEqual(chips.map((node) => node.dataset.agent), ['', 'intelio', 'prc', 'alignment', 'hhp', 'arlp']);
-    chips.find((node) => node.dataset.agent === 'hhp').onclick();
+    const options = byId('session-agents').children[0].children;
+    assert.deepEqual(options.map((node) => node.value), ['', 'intelio', 'prc', 'alignment', 'hhp', 'arlp']);
+    assert.deepEqual(options.map((node) => node.textContent), ['All agents', 'intelio', 'PRC', 'Alignment', 'HHP', 'ARLP']);
+    pickAgent(byId, 'hhp');
     const host = byId('client-apps');
     const text = (node) => [node.textContent, ...(node.children || []).map(text)].join(' ');
     assert.match(text(host.children[0]), /HHP Microsoft 365 hayden@hhpasset\.com/);
@@ -299,7 +308,7 @@ test('client chips list every client and the app row opens that client\'s apps t
     assert.ok(row[0].children.some((node) => node.className === 'client-app-dot on'));
     await row[2].onclick();
     assert.deepEqual(commands.find((call) => call.name === 'open-client-app').value, { client: 'hhp', app: 'teams' });
-    chips.find((node) => node.dataset.agent === 'prc').onclick();
+    pickAgent(byId, 'prc');
     const prcRow = byId('client-apps').children[1].children;
     assert.ok(prcRow.some((node) => node.dataset.app === 'box'));
     assert.ok(prcRow[0].children.some((node) => node.className === 'client-app-dot'));

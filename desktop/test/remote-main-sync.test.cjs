@@ -169,7 +169,7 @@ test('a failed create-session clears the task bar and keeps the text', async () 
   api.stopAutoRefresh();
 });
 
-test('agents, threads and watching refresh every 45 s without overlapping, and pause while signed out', async (t) => {
+test('agents, threads and screens refresh every 45 s without overlapping, and pause while signed out', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] });
   let hold = null;
   const { api, calls } = load({

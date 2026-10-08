@@ -53,11 +53,12 @@ test('saved logins are profile-isolated and the tool result hides the secret', (
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-vault-'));
   fs.mkdirSync(path.join(root, 'hhp'));
   fs.mkdirSync(path.join(root, 'prc'));
-  const store = createVaultStore({ root });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-vault-home-'));
+  const store = createVaultStore({ root, home });
   const secret = 'hhp-only-secret-value';
   store.saveLogin('hhp', { domain: 'bank.example', username: 'hhp-user', password: secret, otp: '998877' });
   const listed = store.list('hhp');
-  assert.deepEqual(listed, [{ domain: 'bank.example', username: 'hhp-user' }]);
+  assert.deepEqual(listed.map(({ domain, username }) => ({ domain, username })), [{ domain: 'bank.example', username: 'hhp-user' }]);
   assert.equal(JSON.stringify(listed).includes(secret), false);
   const tool = store.toolResult('hhp', 'https://login.bank.example/session');
   assert.equal(tool.filled, true);
@@ -66,8 +67,8 @@ test('saved logins are profile-isolated and the tool result hides the secret', (
   assert.equal(JSON.stringify(tool).includes('998877'), false);
   const filler = store.fillerPayload('hhp', 'bank.example');
   assert.equal(filler.password, secret);
-  fs.mkdirSync(path.join(root, 'prc'), { recursive: true });
-  fs.copyFileSync(path.join(root, 'hhp', 'vault'), path.join(root, 'prc', 'vault'));
+  const data = path.join(home, '.local', 'share', 'intelio', 'vault');
+  fs.copyFileSync(path.join(data, 'hhp.vault'), path.join(data, 'prc.vault'));
   assert.deepEqual(store.list('prc'), []);
   assert.equal(store.toolResult('prc', 'bank.example').filled, false);
   assert.equal(JSON.stringify(store.toolResult('prc', 'bank.example')).includes(secret), false);

@@ -16,10 +16,10 @@
     (function () {
       var saved = '';
       try { saved = localStorage.getItem('intelio-theme') || ''; } catch (e) { saved = ''; }
-      var theme = saved === 'dark' ? 'dark' : 'light';
+      var theme = saved === 'dark' || saved === 'blue' ? saved : 'light';
       document.documentElement.dataset.theme = theme;
       var meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute('content', theme === 'light' ? '#f4f4f6' : '#070708');
+      if (meta) meta.setAttribute('content', theme === 'light' ? '#f4f4f6' : theme === 'blue' ? '#0000e8' : '#070708');
       var apple = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
       if (apple) apple.setAttribute('content', theme === 'light' ? 'default' : 'black-translucent');
       if (window.matchMedia && window.matchMedia('(min-width: 1000px)').matches) location.replace('/desktop/');
@@ -34,6 +34,7 @@
   <script src="/bops.js"></script>
   <script src="/transcript.js"></script>
   <script src="/ui/intelio/model-picker.cjs"></script>
+  <script src="/ui/intelio/login-prompt.cjs"></script>
   <script src="/ui/intelio/desktop-voice.cjs"></script>
   <script src="/ui/accounts-ui.js"></script>
   <script src="/app.js"></script>

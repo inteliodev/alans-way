@@ -249,7 +249,7 @@
     const raw = String(name || '').trim();
     if (raw.toLowerCase() === 'intelio') return 'intelio';
     if (raw && raw.toLowerCase() !== key) return raw;
-    const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
+    const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP', arlp: 'ARLP' };
     if (known[key]) return known[key];
     return raw || 'Agent';
   }
@@ -353,35 +353,11 @@
     card.onclick = () => root.openAgentDetails?.(lead.id);
   }
 
-  function paintWatching() {
-    const wrap = $('sidebar-watching-wrap');
-    const host = $('sidebar-watching');
-    if (!wrap || !host) return;
-    const rows = (ui.screens || []).filter((row) => row && row.host);
-    host.replaceChildren();
-    wrap.classList.toggle('hidden', ui.sidebar !== 'agents' || !rows.length);
-    for (const row of rows) {
-      const button = el('button', 'watch-row');
-      button.type = 'button';
-      const same = rows.filter((item) => item.profileId === row.profileId).length;
-      const extra = same > 1 ? ` ${row.screen}` : '';
-      const name = shownAgent(row.profileId, row.name);
-      button.append(el('span', 'watch-eye', '◉'), el('strong', '', row.host), el('span', '', ` · ${name}'s screen${extra}`));
-      button.onclick = () => {
-        ui.selected = row.profileId;
-        root.openAgentComputer?.(row.profileId);
-        if (!root.openAgentComputer) root.openAgentDetails?.(row.profileId);
-      };
-      host.append(button);
-    }
-  }
-
   function paintAgents() {
     const list = $('bot-list');
     if (!list) return;
     const rows = switcherRows(ui.agents, { query: ui.query, selected: ui.selected });
     paintLead(rows);
-    paintWatching();
     list.replaceChildren();
     for (const row of rows.filter((item) => !item.selected)) {
       const node = el('div', `bot-row${row.selected ? ' selected' : ''}`);
@@ -583,9 +559,11 @@
     }
     const card = $('bops-signin');
     if (card) {
+      // The saved-login card below the chat takes over when it is asking.
+      const signIn = view?.signIn && !loginAsking() ? view.signIn : null;
       card.replaceChildren();
-      card.classList.toggle('hidden', !view?.signIn);
-      if (view?.signIn) paintSignIn(card, view.signIn);
+      card.classList.toggle('hidden', !signIn);
+      if (signIn) paintSignIn(card, signIn);
     }
     const preview = view?.preview;
     const badge = $('preview-badge');
@@ -1248,27 +1226,59 @@
     return rows;
   }
 
-  /** Client chips: All plus one per client. Picking one filters the sessions and shows its apps. */
+  const SESSION_AGENT_KEY = 'intelio-session-agent';
+  /** The saved Sessions filter ('' is All agents). Kept in this window's localStorage. */
+  function storedSessionAgent() {
+    try { return String(root.localStorage?.getItem(SESSION_AGENT_KEY) || '').trim().toLowerCase(); } catch { return ''; }
+  }
+  function storeSessionAgent(id) {
+    try {
+      if (id) root.localStorage?.setItem(SESSION_AGENT_KEY, id);
+      else root.localStorage?.removeItem(SESSION_AGENT_KEY);
+    } catch { /* the filter still applies for this window */ }
+  }
+  /** Pick the Sessions filter: '' for All agents, or one agent id. Remembered across launches. */
+  function setSessionAgent(id) {
+    ui.sessionAgent = String(id || '').trim().toLowerCase();
+    ui.sessionAgentPref = ui.sessionAgent;
+    storeSessionAgent(ui.sessionAgent);
+    paintAllSessions();
+  }
+
+  /** Sessions filter: one compact dropdown, All agents plus one entry per client/agent. No dots. */
   function paintAgentChips() {
     const host = $('session-agents');
     const rows = clientRows();
-    if (!rows.some((row) => row.id === ui.sessionAgent)) ui.sessionAgent = '';
+    if (ui.sessionAgentPref === undefined) ui.sessionAgentPref = storedSessionAgent();
+    // A saved choice waits for the agent list instead of being dropped while it loads.
+    const wanted = ui.sessionAgentPref || '';
+    ui.sessionAgent = wanted && rows.some((row) => row.id === wanted) ? wanted : '';
     if (!host) return;
-    host.replaceChildren();
-    const chip = (id, label, agent) => {
-      const button = el('button', 'session-chip');
-      button.type = 'button';
-      button.dataset.agent = id;
-      button.setAttribute('role', 'tab');
-      button.setAttribute('aria-selected', String(ui.sessionAgent === id));
-      button.setAttribute('aria-pressed', String(ui.sessionAgent === id));
-      if (agent) button.append(agentDot(agent, id));
-      button.append(el('span', '', label));
-      button.onclick = (event) => { event?.stopPropagation?.(); ui.sessionAgent = id; paintAllSessions(); };
-      host.append(button);
-    };
-    chip('', 'All');
-    for (const row of rows) chip(row.id, row.name, row.agent);
+    let select = host.children ? [...host.children].find((node) => node.tag === 'select' || node.tagName === 'SELECT') : null;
+    if (!select) {
+      host.replaceChildren();
+      select = el('select', 'session-agent-select');
+      select.id = 'session-agent-select';
+      select.setAttribute('aria-label', 'Show sessions for');
+      select.title = 'Show sessions for';
+      select.addEventListener('change', () => setSessionAgent(select.value));
+      select.addEventListener('click', (event) => event?.stopPropagation?.());
+      host.append(select);
+    }
+    const options = [{ id: '', name: 'All agents' }, ...rows.map((row) => ({ id: row.id, name: row.name }))];
+    const key = options.map((row) => `${row.id}:${row.name}`).join('|');
+    // Rebuild only when the list changes, so a background refresh does not close an open menu.
+    if (select.dataset.options !== key) {
+      select.dataset.options = key;
+      select.replaceChildren(...options.map((row) => {
+        const option = el('option', '', row.name);
+        option.value = row.id;
+        return option;
+      }));
+    }
+    for (const option of select.children || []) option.selected = option.value === ui.sessionAgent;
+    select.value = ui.sessionAgent;
+    select.dataset.agent = ui.sessionAgent;
     paintClientApps();
   }
 
@@ -1791,7 +1801,7 @@
       .then(() => root.remoteHermes.request('screens'))
       .then((screens) => { ui.screens = Array.isArray(screens?.data) ? screens.data : []; })
       .catch(() => { ui.screens = ui.screens || []; })
-      .finally(() => { ui.loadingScreens = null; paintWatching(); });
+      .finally(() => { ui.loadingScreens = null; });
     return ui.loadingScreens;
   }
 
@@ -1835,7 +1845,7 @@
 
   /**
    * Full refresh (connection changed) reselects the agent. A quiet refresh
-   * (timer, window focus) only updates agents, threads and watching. Never two
+   * (timer, window focus) only updates agents, threads and screens. Never two
    * at once: a full refresh asked for mid-flight runs right after.
    */
   function refresh({ quiet = false } = {}) {
@@ -1891,6 +1901,7 @@
     });
     root.addEventListener?.('focus', () => { autoRefresh({ focus: true }); });
     startAutoRefresh();
+    startLoginPoll();
     const headerCall = $('chat-call');
     if (headerCall) headerCall.onclick = () => callPhone();
     $('tab-agents')?.addEventListener('click', () => setSidebar('agents'));
@@ -2297,6 +2308,73 @@
     paintAgents();
   }
 
+  /**
+   * Saved-login cards (intelio/login-prompt.cjs) under the chat. Polls the
+   * vault for the agent on screen. Card values go to fill-login and are not
+   * kept here.
+   */
+  const LOGIN_POLL_MS = 4000;
+  function loginApi() {
+    if (root.IntelioLoginPrompt) return root.IntelioLoginPrompt;
+    if (typeof require === 'function') {
+      try { root.IntelioLoginPrompt = require('./intelio/login-prompt.cjs'); } catch { return null; }
+      return root.IntelioLoginPrompt;
+    }
+    return null;
+  }
+  function vaultCommand(name, payload) {
+    if (!root.workspace?.command) return Promise.resolve(null);
+    return Promise.resolve(root.workspace.command(name, payload));
+  }
+  function loginCards() {
+    if (ui.loginCards) return ui.loginCards;
+    const api = loginApi();
+    const slot = $('login-prompts');
+    if (!api || !slot || !root.document) return null;
+    ui.loginCards = api.createLoginCards({
+      doc: root.document,
+      agentName: (id) => shownAgent(id, ui.agents.find((agent) => agent.id === id)?.name),
+      send: (action, payload) => vaultCommand(action === 'dismiss' ? 'vault-dismiss' : 'fill-login', payload),
+      onChange: () => { pollLogins({ force: true }); },
+    });
+    slot.append(ui.loginCards.element);
+    return ui.loginCards;
+  }
+  function loginAsking() {
+    for (const card of ui.loginCards?.cards?.values?.() || []) if (card.dataset.state === 'ask') return true;
+    return false;
+  }
+  function showLoginPrompts(prompts) {
+    const cards = loginCards();
+    if (!cards) return null;
+    const asking = loginAsking();
+    cards.update(prompts || []);
+    $('login-prompts')?.classList.toggle('hidden', cards.size() === 0);
+    if (asking !== loginAsking()) paintBops();
+    return cards;
+  }
+  async function pollLogins({ force = false } = {}) {
+    if (!loginCards()) return null;
+    if (!force && root.document?.visibilityState === 'hidden') return null;
+    const profile = ui.selected;
+    if (!profile || ui.loginPolling) return null;
+    ui.loginPolling = true;
+    try {
+      const result = await vaultCommand('vault-prompts', { profile });
+      if (result && ui.selected === profile) showLoginPrompts(result.prompts || []);
+      return result;
+    } catch {
+      return null;
+    } finally {
+      ui.loginPolling = false;
+    }
+  }
+  function startLoginPoll() {
+    if (ui.loginTimer || typeof root.setInterval !== 'function' || !root.workspace?.command) return;
+    ui.loginTimer = root.setInterval(() => { pollLogins(); }, LOGIN_POLL_MS);
+    ui.loginTimer?.unref?.();
+  }
+
   function mountSample({ agent = 'intelio' } = {}) {
     ui.sample = true;
     ui.link = 'online';
@@ -2319,5 +2397,7 @@
     sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => { const agent = selectedAgent(); return agent ? shownAgent(agent.id, agent.name) : ''; }, selectedId: () => ui.selected || '',
     presentBops, focusBops, stopBops, actBops, pushFrame, toggleCall, applyLook, bopsEffect: () => ui.lastEffect,
     autoRefresh, startAutoRefresh, stopAutoRefresh, voiceTranscript, selectAgent, shownAgent, REFRESH_MS,
+    showLoginPrompts, pollLogins,
+    agentList: () => ui.agents.map((agent) => ({ id: agent.id, name: shownAgent(agent.id, agent.name) })),
   };
 });
