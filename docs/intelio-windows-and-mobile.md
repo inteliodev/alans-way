@@ -350,6 +350,12 @@ The desktop window keeps the top-right buttons clear of Call my phone, shows a V
 
 Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
 
+## 0.3.22
+
+The desktop window has a Sessions tab next to Agents. It groups sessions by date, filters by agent, and can rename, pin, archive or delete one session. The phone server forwards PATCH and DELETE only for `/api/sessions/<id>`, on Tailscale port 8643 and the Access listener on 8644, with the profile key. Rename sends only the title, pin and archive flags. Claude sign-in stays removed; the phone server starts no `hermes ... auth` command and does not read or write `auth.json`. Phone client `intelio-pwa-20`. Service worker cache `intelio-pwa-23`. The draft tag is `v0.3.22-intelio-windows`. It stays unpublished.
+
+Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
+
 ## What you do
 
 1. Run the `windows-installer` workflow on this branch and download `Intelio-Setup-*.exe` from the artifact or the draft release. This change does not publish a new installer.
