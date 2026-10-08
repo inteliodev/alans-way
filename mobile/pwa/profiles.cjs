@@ -101,7 +101,9 @@ function readDescription(dir, fsImpl) {
   }
 }
 
-function listProfiles({ home = os.homedir(), run = runCommand, fsImpl = fs } = {}) {
+// cli: false skips `hermes profile list` (about 6s on the VPS) and lists only the
+// profile folders, so a cold /api/home can answer while the full list loads.
+function listProfiles({ home = os.homedir(), run = runCommand, fsImpl = fs, cli = true } = {}) {
   const root = path.join(home, '.hermes', 'profiles');
   const names = new Set();
   try {
@@ -112,7 +114,8 @@ function listProfiles({ home = os.homedir(), run = runCommand, fsImpl = fs } = {
       names.add(slug);
     }
   } catch { /* no profile directory yet */ }
-  return run(resolveHermesBin(), ['profile', 'list']).then((result) => {
+  const listed = cli ? run(resolveHermesBin(), ['profile', 'list']) : Promise.resolve(null);
+  return listed.then((result) => {
     if (result && result.code === 0) for (const slug of slugsFromList(result.stdout)) names.add(slug);
     return [...names].filter((id) => !excludedAgent(id)).sort().map((id) => {
       const marker = readMarker(path.join(root, id), fsImpl);
