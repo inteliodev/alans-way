@@ -399,6 +399,8 @@ Home, missions and the Ctrl/Cmd+K command bar (and install a skill from a link).
 
 Accounts page per agent and Settings › Activity log.
 
+Missing agent keys arrive over whichever route the app is on. On Tailscale the app asks the phone service on the same tailnet port (`/intelio/bootstrap`); the server answers only an allowed Tailscale login that also presents an agent key the app already holds, and never a request from the VPS itself. On Cloud it uses the Access sign-in as before. This runs on every connect and when an agent without a key is opened. Keys are stored with the OS keychain as before and are never logged.
+
 Phone client `intelio-pwa-26`. Service worker cache `intelio-pwa-30`. Asset query `?v=29`. On the VPS: check out the release, run `mobile/deploy/install-on-vps.sh --with-voice` (restarts `intelio-pwa`).
 
 ## 0.3.27
