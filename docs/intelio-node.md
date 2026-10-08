@@ -39,7 +39,7 @@ methods `initialize`, `notifications/initialized` (202, no body), `tools/list`, 
 version if supported, else the latest the relay supports. Must work with the official Python
 `mcp` client (`mcp.client.streamable_http.streamablehttp_client`), which is what Hermes uses.
 
-## Tools (names are final; Hermes exposes them as mcp_intelio_computers_<name>)
+## Tools (names are final; Hermes exposes them as mcp__intelio_computers__<name>, e.g. mcp__intelio_computers__list_computers)
 
 Every tool except `list_computers` takes `computer` (device name or id, case-insensitive).
 Offline computer -> tool result `isError: true` with text "<name> is offline (last seen …)".
