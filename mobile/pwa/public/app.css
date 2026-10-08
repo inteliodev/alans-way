@@ -889,6 +889,28 @@ html[data-theme="dark"] .lead-card { background: #1c1c1e; color: #f5f5f7; }
 .watch-row strong { flex: 0 1 auto; }
 .watch-row span, .agent-role { color: #6e6e73; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-role { margin-left: auto; font-size: 12px; }
+/* Sessions filter: one compact dropdown in place of the agent list. Neutral greys, light and dark. */
+.session-filter { display: flex; align-items: center; gap: 8px; margin: 4px 8px 10px; color: var(--muted); font-size: 13px; }
+.session-filter-label { flex: none; }
+.session-filter-select {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 1 auto;
+  min-width: 150px;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 0 32px 0 12px;
+  border: 1px solid #e2e2e8;
+  border-radius: 10px;
+  background: #f7f7f9 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%238e8e93' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 12px center;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+.session-filter-select:focus-visible { outline: none; border-color: #b8b8c0; box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06); }
+html[data-theme="dark"] .session-filter-select { border-color: #2c2c33; background-color: #1c1c1e; }
+html[data-theme="dark"] .session-filter-select:focus-visible { border-color: #5a5a64; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08); }
+.thread-agent { flex: none; margin-left: auto; max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8e8e93; font-size: 12px; }
 .thread-line.on { background: #ececef; }
 html[data-theme="dark"] .thread-line.on { background: #2c2c2e; }
 .thread-dot { width: 8px; height: 8px; margin-left: auto; border-radius: 50%; background: #7a5cff; flex: none; }
