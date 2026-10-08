@@ -14,7 +14,7 @@ and the existing alans-way plugin; no Hermes source is changed, so Hermes update
    - accepts node WebSockets at path `/node/connect` on the existing listeners
      (Access listener 127.0.0.1:8644 behind app.intelio-ai.com, and the tailnet listener 8643);
    - serves ONE aggregated MCP server for Hermes at `http://127.0.0.1:8645/mcp`
-     (env `INTELIO_NODES_MCP_PORT`, default 8645, loopback bind only; never 0.0.0.0).
+     (env `INTELIO_NODES_MCP_PORT`, default 8645, loopback bind only; never the wildcard address).
 3. Hermes wiring (inteliodev/alans-way-agents setup): adds to the chosen profile(s) config:
 
    ```yaml
