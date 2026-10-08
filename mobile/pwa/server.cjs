@@ -25,12 +25,11 @@ const { createVaultStore } = require('../../desktop/src/intelio/vault.cjs');
 const { fillLogin } = require('../../desktop/src/intelio/cdp-fill.cjs');
 const { normalizeIp, isLoopbackAddress, peerIsLocal, parseAllowlist, profileKeyPath, readProfileKey, createIdentity } = require('./identity.cjs');
 const { renderOrbPng } = require('./orbs.cjs');
-const { assertSlug, displayName, listProfiles, createProfile, restartGateway, resolveHermesBin } = require('./profiles.cjs');
+const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
 const { resolveVncUpstream, readVncPassword, bridgeVnc } = require('./vnc-proxy.cjs');
 const { resolveCdpUrl } = require('../../desktop/src/intelio/cdp-fill.cjs');
 const { harnessId, excludedAgent, buildCard, readProfileFiles, writePaused, writeReasoning, writeProfile, cleanColor, backupFile } = require('../../desktop/src/intelio/agent-card.cjs');
 const picker = require('../../desktop/src/intelio/model-picker.cjs');
-const { createClaudeSignIn } = require('../../desktop/src/intelio/claude-signin.cjs');
 const { preview: previewTranscript } = require('../../desktop/src/intelio/transcript.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
@@ -208,7 +207,6 @@ function createPwaServer({
   filler = null,
   cdpImpl = null,
   selfCheck = null,
-  claudeSignIn: claudeSignInImpl = null,
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
@@ -229,7 +227,6 @@ function createPwaServer({
   const pendingCookies = new WeakMap();
   const iconBytes = icons();
   const runtime = voice || createVoiceRuntime();
-  const claudeSignIn = claudeSignInImpl || createClaudeSignIn({ bin: resolveHermesBin(), home: profileHome || os.homedir() });
   const identity = createIdentity();
   const cachedKeys = new Map();
   let keyError = '';
@@ -773,10 +770,10 @@ function createPwaServer({
       "img-src 'self' data: blob: crx:",
     );
     html = html.replace(/(href|src)="(?!\/|https?:|data:)([^"]+)"/g, '$1="/ui/$2"');
-    html = html.replace('</head>', '<script src="/desktop-boot.js?v=21"></script></head>');
+    html = html.replace('</head>', '<script src="/desktop-boot.js?v=20"></script></head>');
     html = html.replace(
       '<script src="/ui/renderer.js"></script>',
-      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=21"></script><script src="/ui/renderer.js"></script>',
+      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=20"></script><script src="/ui/renderer.js"></script>',
     );
     return html;
   }
@@ -1375,7 +1372,7 @@ function createPwaServer({
         const state = modelState(chosenProfile(req, {}));
         if (!state.id) return send(res, 404, { error: 'Unknown agent.' });
         if (!sample && state.keyless) await learnFeatures();
-        const groups = picker.planGroups(state.keyless && !sample ? await catalogFor(state.id, state.current) : []);
+        const groups = state.keyless && !sample ? await catalogFor(state.id, state.current) : [];
         const sessionId = url.searchParams.get('session') || '';
         const thread = !sample && state.keyless ? await threadModel(state.id, sessionId) : '';
         return send(res, 200, {
@@ -1388,30 +1385,6 @@ function createPwaServer({
           keyless: state.keyless,
           sessionModelLock: Boolean(sessionModelLock),
           restartRequired: false,
-        });
-      }
-      if (req.method === 'POST' && url.pathname === '/api/agent/claude-signin') {
-        if (!presentedBearer(req).present && !mutationOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
-        const body = await readBody(req, 4096);
-        const gated = chosenProfile(req, {});
-        const asked = chosenProfile(req, body);
-        if (gated !== asked) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
-        const state = modelState(asked);
-        if (!state.id) return send(res, 404, { error: 'Unknown agent.' });
-        if (sample) return send(res, 400, { error: 'Sample mode does not sign in to Claude.' });
-        const allAgents = body.allAgents === true;
-        const result = body.code
-          ? await claudeSignIn.submit({ profile: state.id, allAgents, code: body.code })
-          : await claudeSignIn.start({ profile: state.id, allAgents });
-        const status = result.status || (result.ok ? 200 : 502);
-        return send(res, status, {
-          ok: result.ok === true,
-          waiting: result.waiting === true,
-          signedIn: result.signedIn === true,
-          url: result.url ? picker.authorizeUrl(result.url) : '',
-          scope: result.scope === 'all' ? 'all' : 'profile',
-          restartRequired: false,
-          error: result.ok ? '' : String(result.error || 'Claude sign-in did not finish.').slice(0, 200),
         });
       }
       if (req.method === 'POST' && url.pathname === '/api/agent/model') {
@@ -1541,7 +1514,6 @@ function createPwaServer({
   }
 
   function close(done) {
-    try { claudeSignIn.stop(); } catch { /* sign-in already ended */ }
     const finish = typeof done === 'function' ? done : () => {};
     for (const socket of [...liveSockets]) {
       try { socket.destroy(); } catch { /* already closed */ }
