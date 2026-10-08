@@ -356,6 +356,12 @@ The desktop window has a Sessions tab next to Agents. It groups sessions by date
 
 Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
 
+## 0.3.23
+
+The desktop chat shows Hermes's thinking as bubbles in the thread, keeps the chat in a centered column, and the Sessions tab uses a Hermes-style list. The phone server and the phone bridge are unchanged from 0.3.22. Claude sign-in stays removed; the phone server starts no `hermes ... auth` command and does not read or write `auth.json`. Phone client `intelio-pwa-21`. Service worker cache `intelio-pwa-24`. The draft tag is `v0.3.23-intelio-windows`. It stays unpublished.
+
+Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
+
 ## What you do
 
 1. Run the `windows-installer` workflow on this branch and download `Intelio-Setup-*.exe` from the artifact or the draft release. This change does not publish a new installer.
