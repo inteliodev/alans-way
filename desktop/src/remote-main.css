@@ -361,3 +361,31 @@ body.remote-main .login-prompts { padding-left: var(--chat-gutter); padding-righ
 .saved-logins .saved-login-delete { flex: 0 0 auto; width: auto; margin: 0; padding: 4px 8px; }
 .saved-login-site { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .saved-login-meta { font-size: 12px; color: #9a9aa4; overflow-wrap: anywhere; }
+
+/* Inline approval (intelio/approval-ui.cjs): Hermes asks before a push. A quiet line in
+   the thread with two small buttons; no card, no warning colours. Light rules live in
+   theme-light.css; blue (html[data-theme="blue"]) is here so it works wherever blue loads. */
+.approval-row { align-self: flex-start; max-width: min(640px, 88%); margin: 0 0 12px; padding: 2px 0 2px 12px; border-left: 2px solid #2c2c34; color: #f4f4f8; font-size: 13.5px; line-height: 1.45; }
+.approval-title { color: #9d9da8; }
+.approval-what { font-weight: 600; }
+.approval-command { display: block; margin: 4px 0 0; padding: 0; border: 0; background: none; color: #e6e6ec; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-where { color: #8d8d98; font-size: 12px; }
+.approval-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.approval-actions button { height: 28px; padding: 0 12px; border-radius: 14px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.approval-allow { border: 1px solid transparent; background: #f4f4f8; color: #141418; }
+.approval-deny { border: 1px solid #3a3a44; background: transparent; color: #d9d9e0; }
+.approval-allow:hover { background: #ffffff; }
+.approval-deny:hover { border-color: #55555f; color: #f4f4f8; }
+.approval-actions button:disabled { opacity: .5; cursor: default; }
+.approval-note, .approval-outcome { color: #9d9da8; font-size: 12.5px; }
+.approval-row.settled .approval-command { color: #9d9da8; }
+html[data-theme="blue"] .approval-row { border-left-color: rgba(255, 255, 255, .24); color: #fff; }
+html[data-theme="blue"] .approval-title,
+html[data-theme="blue"] .approval-where,
+html[data-theme="blue"] .approval-note,
+html[data-theme="blue"] .approval-outcome,
+html[data-theme="blue"] .approval-row.settled .approval-command { color: rgba(255, 255, 255, .72); }
+html[data-theme="blue"] .approval-command { background: none; color: #fff; }
+html[data-theme="blue"] .approval-allow { background: #fff; color: #0000e8; }
+html[data-theme="blue"] .approval-deny { border-color: rgba(255, 255, 255, .4); color: #fff; }
+html[data-theme="blue"] .approval-deny:hover { border-color: #fff; }

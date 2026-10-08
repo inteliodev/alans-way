@@ -38,6 +38,12 @@ jobs:
       - run: python -m pip install websockify "PyYAML>=6"
       - run: npm ci
       - run: npm run check
+      # docs/intelio-node.md: the computers MCP relay must work with the official client Hermes uses.
+      - name: intelio computers MCP relay with the Python mcp client
+        working-directory: .
+        run: |
+          python -m pip install 'mcp==2.0.0'
+          python -m unittest tests.test_intelio_nodes_mcp -v
 
   package-and-test:
     strategy:

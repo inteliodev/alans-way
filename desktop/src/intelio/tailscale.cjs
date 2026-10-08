@@ -96,4 +96,30 @@ async function checkTailscale({ platform = process.platform, env = process.env, 
   return { installed: true, installUrl: link, ...parseStatus(status.stdout) };
 }
 
-module.exports = { installUrl, assertInstallUrl, defaultBins, parseStatus, firstRunMessage, checkTailscale };
+/** A peer's MagicDNS name (no trailing dot) for a Tailscale IP, from `tailscale status --json` output. */
+function peerDnsName(status, ip) {
+  const want = String(ip || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (!want || !status || typeof status !== 'object') return '';
+  const nodes = [status.Self, ...Object.values(status.Peer || {})];
+  for (const node of nodes) {
+    if (!node || !Array.isArray(node.TailscaleIPs)) continue;
+    if (node.TailscaleIPs.some((a) => String(a).toLowerCase() === want)) {
+      const name = String(node.DNSName || '').replace(/\.$/, '').toLowerCase();
+      return /^([a-z0-9-]+\.)+ts\.net$/.test(name) ? name : '';
+    }
+  }
+  return '';
+}
+
+/** Runs `tailscale status --json` and returns the MagicDNS name for ip, or ''. */
+async function tailnetNameFor(ip, { platform = process.platform, env = process.env, bins, run = runCommand, exists = fs.existsSync } = {}) {
+  for (const candidate of bins || defaultBins(platform, env)) {
+    if ((candidate.includes('\\') || candidate.startsWith('/')) && !exists(candidate)) continue;
+    const status = await run(candidate, ['status', '--json']);
+    if (status.code !== 0) continue;
+    try { return peerDnsName(JSON.parse(String(status.stdout || '')), ip); } catch { return ''; }
+  }
+  return '';
+}
+
+module.exports = { installUrl, assertInstallUrl, defaultBins, parseStatus, firstRunMessage, checkTailscale, peerDnsName, tailnetNameFor };
