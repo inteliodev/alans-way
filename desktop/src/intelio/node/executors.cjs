@@ -20,6 +20,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const { LIMITS } = require('./protocol.cjs');
 const { detectElevation, shellElevates } = require('./elevation.cjs');
 const { runSearch, globToRegExp, compilePattern: compileSearchPattern } = require('./search.cjs');
+const policy = require('./policy.cjs');
 
 class ToolError extends Error {}
 
@@ -67,8 +68,37 @@ function createExecutors({
   confirmElevation = async () => false,
   screenshot = null,
   computerName = () => os.hostname(),
+  // Secrets are never read or written (policy.cjs). Tests may pass their own.
+  protector = policy.createProtector({ home, platform, env }),
+  // Extra environment for a command the relay stamped as an approved push (the
+  // cloud computer passes the VPS push guard's one-time grant here).
+  approvedPushEnv = null,
 } = {}) {
   const caseless = platform === 'win32' || platform === 'darwin';
+
+  /** Refuses a protected path, checking the path as given and where it really points (symlinks). */
+  async function guardPath(target, op) {
+    let hit = protector.check(target, op);
+    if (!hit) {
+      let real = '';
+      try { real = await fsp.realpath(target); } catch {
+        // A new file: check where its folder really is.
+        try { real = path.join(await fsp.realpath(path.dirname(target)), path.basename(target)); } catch { real = ''; }
+      }
+      if (real && real !== target) hit = protector.check(real, op);
+    }
+    if (hit) throw new ToolError(hit.text);
+  }
+
+  /** run_command / start_session / send_input text: refuse secrets by name, and pushes without the relay's stamp. */
+  function guardCommand(tool, args, cwd) {
+    const text = policy.commandTextFor(tool, args);
+    const secret = policy.commandSecretRefusal(text, { protector, home, cwd, platform });
+    if (secret) throw new ToolError(`${secret.text} (The command names a protected path.)`);
+    const pushes = policy.findPushes(text);
+    if (pushes.length && !policy.hasPushApproval(args)) throw new ToolError(policy.pushRefusal(pushes));
+    return pushes;
+  }
 
   function resolvePath(raw, field = 'path') {
     const text = String(raw == null ? '' : raw).trim();
@@ -207,6 +237,7 @@ function createExecutors({
 
     async read_file(args) {
       const file = resolvePath(args.path);
+      await guardPath(file, 'read');
       const encoding = args.encoding === 'base64' ? 'base64' : 'text';
       const cap = encoding === 'base64' ? limits.readBase64Bytes : limits.readTextBytes;
       const offset = intArg(args.offset, { min: 0, fallback: 0 });
@@ -239,6 +270,7 @@ function createExecutors({
 
     async write_file(args) {
       const file = resolvePath(args.path);
+      await guardPath(file, 'write');
       if (typeof args.content !== 'string') throw new ToolError('content must be a string.');
       const encoding = args.encoding === 'base64' ? 'base64' : 'text';
       const data = encoding === 'base64' ? Buffer.from(args.content, 'base64') : Buffer.from(args.content, 'utf8');
@@ -260,6 +292,8 @@ function createExecutors({
       const maxResults = intArg(args.max_results, { min: 1, max: limits.searchMax, fallback: limits.searchDefault });
       const budgetS = intArg(args.timeout_s, { min: 1, max: limits.searchMaxS, fallback: limits.searchDefaultS });
       try { await fsp.stat(root); } catch (error) { throw fsError(error, root); }
+      if (protector.blocksFolder(root)) throw new ToolError(protector.check(root, 'search').text);
+      await guardPath(root, 'read');
       // Runs in a worker thread: a slow regex can never freeze the app, and the
       // deadline or the kill switch terminates it (see search.cjs).
       let out;
@@ -274,17 +308,19 @@ function createExecutors({
           fileBytes: limits.searchFileBytes,
           lineChars: limits.searchLineChars,
           platform,
+          protectedSkips: protector.searchSkips(),
         }, { signal: ctx.signal });
       } catch (error) {
         throw error && error.code ? fsError(error, root) : new ToolError(String(error && error.message || error).slice(0, 300));
       }
-      const matches = out.matches;
+      const matches = out.matches.filter((m) => !protector.check(m.path, 'read'));
       const truncated = matches.length >= maxResults || Boolean(out.timed_out) || Boolean(out.aborted);
       const result = { root, matches, truncated, files_scanned: out.files_scanned || 0 };
       if (out.skipped_cloud_only) {
         result.skipped_cloud_only = out.skipped_cloud_only;
         result.cloud_note = 'Skipped files that are online-only (OneDrive/iCloud placeholders); reading them would download them. read_file one to fetch it.';
       }
+      if (out.skipped_protected || matches.length < out.matches.length) result.protected_note = 'Skipped secrets (SSH keys, credential and cookie stores); agents cannot read those.';
       if (out.timed_out) result.note = `Stopped after ${budgetS} s (timeout_s); results are partial. Narrow root, name_glob or pattern.`;
       if (out.aborted) result.note = 'Stopped: intelio access was turned off on this computer.';
       return { content: [json(result)], meta: { count: matches.length, ...(out.timed_out ? { timed_out: true } : {}) } };
@@ -294,6 +330,7 @@ function createExecutors({
       const command = String(args.command || '');
       if (!command.trim()) throw new ToolError('command is required.');
       const shell = shellFor(args.shell);
+      const pushes = guardCommand('run_command', args, args.cwd ? resolvePath(args.cwd, 'cwd') : home);
       const elevation = detectElevation(command);
       if (elevation.elevates) {
         let approved = false;
@@ -311,8 +348,9 @@ function createExecutors({
       return new Promise((resolve, reject) => {
         let child;
         try {
+          const runEnv = pushes.length && typeof approvedPushEnv === 'function' ? { ...env, ...approvedPushEnv({ command, pushes }) } : env;
           child = spawn(file, argv, {
-            cwd, env, windowsHide: true, windowsVerbatimArguments: Boolean(verbatim),
+            cwd, env: runEnv, windowsHide: true, windowsVerbatimArguments: Boolean(verbatim),
             detached: platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
           });
         } catch (error) { reject(new ToolError(`Could not start ${file}: ${error.message}`)); return; }
@@ -379,7 +417,7 @@ function createExecutors({
     }
   }
 
-  return { run, handlers, resolvePath, tools: Object.keys(handlers) };
+  return { run, handlers, resolvePath, guardPath, guardCommand, tools: Object.keys(handlers) };
 }
 
 module.exports = { createExecutors, killTree, globToRegExp, compilePattern, osLabel, ToolError };

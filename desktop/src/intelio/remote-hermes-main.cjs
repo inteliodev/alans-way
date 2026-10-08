@@ -831,6 +831,11 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
               });
             } finally { inflight.delete(id); }
           }
+          case 'approve': {
+            const runId = String(value.runId || '');
+            if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(runId)) throw new Error('That approval is no longer valid.');
+            return await client.runApproval(runId, value.choice, value.requestId, { profile: value.profile });
+          }
           case 'cancel': inflight.get(String(value.id))?.abort(); return true;
           default: throw new Error(`Unknown Remote Hermes request: ${name}`);
         }

@@ -49,7 +49,7 @@ const STATIC = {
 };
 const DESKTOP_SRC = path.resolve(__dirname, '../../desktop/src');
 const UI_EXT = new Set(['.css', '.js', '.woff2', '.png', '.svg']);
-const UI_CJS = new Set(['intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs', 'intelio/calls.cjs', 'intelio/desktop-voice.cjs', 'intelio/model-picker.cjs', 'intelio/client-apps.cjs']);
+const UI_CJS = new Set(['intelio/approval-ui.cjs', 'intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs', 'intelio/calls.cjs', 'intelio/desktop-voice.cjs', 'intelio/model-picker.cjs', 'intelio/client-apps.cjs']);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json' };
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -1608,6 +1608,20 @@ function createPwaServer({
         for (const flag of ['pinned', 'archived']) if (typeof body[flag] === 'boolean') fields[flag] = body[flag];
         if (!Object.keys(fields).length) return send(res, 400, { error: 'Nothing to change.' });
         return await forward(req, res, `/api/sessions/${one[1]}`, { method: 'PATCH', body: fields, profileId: chosenProfile(req) });
+      }
+      // Inline approval prompt (desktop/src/intelio/approval-ui.cjs): Hayden answers an
+      // approval.request from the chat stream. Only "once" or "deny"; never remembered.
+      const runApproval = url.pathname.match(/^\/api\/runs\/(run_[A-Za-z0-9]{1,64})\/approval$/);
+      if (req.method === 'POST' && runApproval) {
+        if (!mutationOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
+        const body = await readBody(req, 4096);
+        if (sample) return send(res, 200, { ok: true, sample: true, label: 'SAMPLE DATA' });
+        const requestId = typeof body.request_id === 'string' && /^[A-Za-z0-9_-]{1,256}$/.test(body.request_id) ? body.request_id : '';
+        return await forward(req, res, `/v1/runs/${runApproval[1]}/approval`, {
+          method: 'POST',
+          body: { choice: body.choice === 'once' ? 'once' : 'deny', ...(requestId ? { request_id: requestId } : {}) },
+          profileId: chosenProfile(req, body),
+        });
       }
       if (req.method === 'POST' && chat && ID_RE.test(chat[1])) {
         const body = await readBody(req, 200000);

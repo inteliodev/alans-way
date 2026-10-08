@@ -325,6 +325,13 @@
     if (name === 'agent-model') {
       return fetchJson('/api/agent/model', { method: 'POST', profile, body: { profile, model: value.model, provider: value.provider } });
     }
+    if (name === 'approve') {
+      return fetchJson(`/api/runs/${encodeURIComponent(value.runId || '')}/approval`, {
+        method: 'POST',
+        profile,
+        body: { choice: value.choice === 'once' ? 'once' : 'deny', request_id: value.requestId || undefined, profile },
+      });
+    }
     if (name === 'cancel') {
       inflight.get(String(value.id || ''))?.abort();
       return true;
