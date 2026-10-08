@@ -368,6 +368,16 @@ The Sessions tab has a client row: All, intelio, PRC, Alignment, HHP and ARLP. P
 
 Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
 
+## 0.3.27
+
+New agents work right away. `/intelio/bootstrap` returns the key for every profile the VPS lists, not just intelio, prc, alignment and hhp, so an agent made after the first sign-in (arlp) gets its key. It is still Access sign-in only. The app fetches keys again in the background on start, after creating an agent, and when an agent without a key is picked; that fetch uses the cloud sign-in even when the app is on Tailscale. A new profile copies the template's `base_url`, and `POST /api/profiles` checks it on its own `/p/<name>/v1/capabilities` route instead of saying "Ready after the next agent restart".
+
+Voice conversation ends a turn after 1.2 s of quiet (was 0.7 s) and drops bursts under 0.3 s; start and keep levels follow the room's noise floor. While the agent is speaking, only clearly louder speech held for 0.35 s interrupts it, so its own echo no longer cuts it off. The recorder runs for the whole conversation, so turns keep their first syllable, and mic checks run on a 30 ms timer instead of animation frames. The phone web app sends one call turn at a time. Shared `createTurnDetector` in `desktop-voice.cjs`.
+
+Phone calls no longer hang up after the greeting: the bridge reads the session id from `session.id` and gives each call a unique title (`Phone call <date, time> · <last 6 of CallSid>`). `/api/home` caches `/v1/skills` per profile (a good list for 60 s, an HTTP error for 15 min), so an erroring profile is no longer asked on every refresh.
+
+Phone client `intelio-pwa-25`. Service worker cache `intelio-pwa-29`. Asset query `?v=28`. Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS (`mobile/deploy/install-on-vps.sh --with-voice`), restart `intelio-pwa` and `intelio-phone-bridge`. Leave `hermes-gateway` running.
+
 ## 0.3.26
 
 Chat shows one typing bubble while the agent works: three dots, a short status such as "Reading files…", and a small stop button on the bubble. The reply replaces the bubble. Tool-step pills, "Worked through N steps" and "Stop all" are no longer shown in the desktop chat, the Window > Remote Hermes (VPS) chat or the phone/web chat. Display only: runs, streaming and stored sessions are unchanged.

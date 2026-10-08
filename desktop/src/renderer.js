@@ -893,7 +893,8 @@ function showAddAgent() {
       const lines = [];
       if (created?.needsSignIn) lines.push(created.signInNote || 'Needs sign-in');
       if (created?.gatewayNote) lines.push(created.gatewayNote);
-      note.textContent = lines.join(' ') || 'Ready after the next agent restart';
+      if (created?.keyNote) lines.push(created.keyNote);
+      note.textContent = lines.join(' ') || 'Ready. Say hello.';
       await window.IntelioRemote?.refresh?.();
       if (created?.id) {
         window.IntelioRemote?.applyLook?.({ id: created.id, color: created.color || chosenColor, orb: created.orb || chosenOrb, title: created.title || title.value, name: created.name || name.value });

@@ -88,8 +88,8 @@ test('creating an agent sets Codex config, writes a fresh key, and never calls a
   assert.equal(files[`${envPath}:mode`], 0o600);
   assert.equal(files[`${envPath}:chmod`], 0o600);
   assert.equal(JSON.stringify(created).includes('API_SERVER_KEY'), false);
-  assert.equal(created.needsGatewayRestart, true);
-  assert.equal(created.gatewayNote, 'Ready after the next agent restart');
+  assert.equal(created.needsGatewayRestart, false);
+  assert.equal(created.gatewayNote, '');
   assert.equal(created.needsSignIn, true);
   const config = Object.entries(files).find(([name]) => name.endsWith(`${path.sep}config.yaml`));
   assert.equal(String(config && config[1]).includes('telegram'), false);
@@ -272,7 +272,8 @@ test('profile routes stay on the server and a missing origin cannot create or re
     });
     const created = JSON.parse(made.body);
     assert.equal(created.id, 'lumen');
-    assert.equal(created.needsGatewayRestart, true);
+    assert.equal(created.needsGatewayRestart, false);
+    assert.equal(created.gatewayNote, '');
     assert.equal(created.label, 'SAMPLE DATA');
     assert.equal(made.body.includes(KEY) || made.body.includes(OTHER), false);
     const sampleRestart = await request(sampleAddress.port, 'POST', '/api/gateway/restart', {
@@ -307,7 +308,13 @@ test('profile routes stay on the server and a missing origin cannot create or re
       origin: `http://127.0.0.1:${liveAddress.port}`,
       body: JSON.stringify({ name: 'nimbus' }),
     });
-    assert.equal(JSON.parse(liveCreate.body).needsGatewayRestart, true);
+    const liveMade = JSON.parse(liveCreate.body);
+    assert.equal(liveMade.needsGatewayRestart, false);
+    assert.equal(liveMade.ready, true);
+    assert.equal(liveMade.gatewayNote, '');
+    assert.equal(liveCreate.body.includes(KEY) || liveCreate.body.includes(OTHER), false);
+    // Checked on its own route with its own key, without restarting anything.
+    assert.equal(seen.some((row) => row.url === '/p/lumen/v1/capabilities' && row.auth === `Bearer ${KEY}`), true);
     assert.equal(restarted, before);
     const liveRestart = await request(liveAddress.port, 'POST', '/api/gateway/restart', {
       cookie: setCookie,
@@ -318,6 +325,90 @@ test('profile routes stay on the server and a missing origin cannot create or re
     assert.equal(restarted, before + 1);
   } finally {
     await new Promise((resolve) => sample.server.close(resolve));
+    await new Promise((resolve) => live.server.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
+  }
+});
+
+test('a new agent copies the template endpoint so it runs on the same subscription sign-in', async () => {
+  const files = {};
+  const home = path.join(os.tmpdir(), 'intelio-profiles-base');
+  files[path.join(home, '.hermes', 'profiles', 'intelio', 'config.yaml')] = [
+    'model:',
+    '  default: gpt-6-sol',
+    '  provider: openai-codex',
+    '  base_url: https://chatgpt.com/backend-api/codex',
+    '_config_version: 50',
+    'platform_toolsets:',
+    '  cli:',
+    '    - terminal',
+    '',
+  ].join('\n');
+  const fsImpl = {
+    readFileSync(file) {
+      if (!Object.prototype.hasOwnProperty.call(files, file)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      return files[file];
+    },
+    writeFileSync(file, data) { files[file] = data; },
+    chmodSync() {},
+    mkdirSync() {},
+  };
+  const created = await createProfile({ name: 'arlp', home, run: async () => ({ code: 0, stdout: '', stderr: '' }), fsImpl });
+  const config = files[path.join(home, '.hermes', 'profiles', 'arlp', 'config.yaml')];
+  assert.match(config, /^model:\n  provider: 'openai-codex'\n  default: 'gpt-6-sol'\n  base_url: https:\/\/chatgpt\.com\/backend-api\/codex\n/);
+  assert.equal(created.needsSignIn, false);
+  assert.equal(created.gatewayNote, '');
+  const card = JSON.parse(files[path.join(home, '.hermes', 'profiles', 'arlp', 'intelio-card.json')]);
+  assert.equal(card.gatewayNote, '');
+  // A base_url that is not a plain https URL is dropped, never copied.
+  files[path.join(home, '.hermes', 'profiles', 'intelio', 'config.yaml')] = "model:\n  provider: openai-codex\n  default: gpt-6-sol\n  base_url: 'http://x/?k=v'\nplatform_toolsets:\n  cli:\n    - terminal\n";
+  await createProfile({ name: 'nimbus', home, run: async () => ({ code: 0, stdout: '', stderr: '' }), fsImpl });
+  assert.equal(files[path.join(home, '.hermes', 'profiles', 'nimbus', 'config.yaml')].includes('base_url'), false);
+});
+
+test('a new agent that Hermes does not answer for yet comes back with a clear note', async () => {
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    seen.push(req.url || '');
+    if ((req.url || '').startsWith('/p/lumen/')) { res.statusCode = 404; res.end('{"error":"unknown profile"}'); return; }
+    res.end('{"features":{}}');
+  });
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const logs = [];
+  const live = createPwaServer({
+    bind: '127.0.0.1', port: 0, upstream: `http://127.0.0.1:${upstream.address().port}`,
+    fetchImpl: globalThis.fetch, identify: async () => ({ ok: true, login: 'owner@example' }),
+    readyTries: 2, readyDelayMs: 5, log: (line) => logs.push(line),
+    profileOps: {
+      async list() { return [{ id: 'intelio', name: 'Intelio', description: '' }]; },
+      keyFor() { return KEY; },
+      async create() { return { id: 'lumen', name: 'Lumen', description: '' }; },
+    },
+  });
+  const address = await live.listen();
+  try {
+    const cookie = await new Promise((resolve, reject) => {
+      const req = http.request({ hostname: '127.0.0.1', port: address.port, method: 'GET', path: '/session' }, (res) => {
+        res.resume();
+        res.on('end', () => resolve(String(res.headers['set-cookie'] || '').split(';')[0]));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    const made = await request(address.port, 'POST', '/api/profiles', {
+      cookie,
+      origin: `http://127.0.0.1:${address.port}`,
+      body: JSON.stringify({ name: 'lumen' }),
+    });
+    assert.equal(made.status, 200);
+    const body = JSON.parse(made.body);
+    assert.equal(body.ready, false);
+    assert.equal(body.needsGatewayRestart, false);
+    assert.match(body.gatewayNote, /Lumen was created, but Hermes is not answering for it yet \(HTTP 404\)/);
+    assert.equal(seen.filter((url) => url === '/p/lumen/v1/capabilities').length, 2);
+    assert.equal(logs.some((line) => line.includes('new agent lumen not answering yet (HTTP 404)')), true);
+    assert.equal(made.body.includes(KEY), false);
+  } finally {
     await new Promise((resolve) => live.server.close(resolve));
     await new Promise((resolve) => upstream.close(resolve));
   }
