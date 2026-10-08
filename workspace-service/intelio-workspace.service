@@ -1,0 +1,22 @@
+[Unit]
+Description=intelio workspace (cloud-agents runner + web UI, tailnet only)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/intelio-workspace
+EnvironmentFile=%h/intelio-workspace/config.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStartPre=/bin/sh -c "for i in $$(seq 40); do ip -4 addr show tailscale0 2>/dev/null | grep -q 100.111.128.12 && exit 0; sleep 2; done; exit 0"
+ExecStart=/usr/bin/node %h/intelio-workspace/server.cjs
+Restart=on-failure
+RestartSec=3
+# Keep engine/dev-server tmux sessions alive across runner restarts (they live in this unit's cgroup and count toward its limits).
+KillMode=process
+MemoryMax=1536M
+CPUQuota=150%
+StandardOutput=append:%h/intelio-workspace/logs/stdout.log
+StandardError=append:%h/intelio-workspace/logs/stdout.log
+
+[Install]
+WantedBy=default.target

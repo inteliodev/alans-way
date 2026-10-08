@@ -1,0 +1,46 @@
+#!/bin/bash
+# intelio-workspace gh wrapper (first on PATH for task agents).
+# Blocks only what lands changes on the default branch: gh pr merge, gh repo sync,
+# and gh api writes that merge or move the default branch ref — unless the runner
+# holds a one-time grant for this task (Hayden clicked "Merge to main").
+real=/usr/bin/gh
+words=(); skip=0
+for a in "$@"; do
+  if [ $skip = 1 ]; then skip=0; continue; fi
+  case "$a" in -R|--repo|--hostname) skip=1; continue;; --repo=*|--hostname=*) continue;; esac
+  words+=("$a")
+done
+blocked=""
+case "${words[0]} ${words[1]}" in
+  "pr merge") blocked="gh pr merge";;
+  "repo sync") blocked="gh repo sync";;
+esac
+if [ "${words[0]}" = "api" ]; then
+  def=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+  [ -z "$def" ] && def=main
+  method=GET; write=0; n=${#words[@]}
+  for ((i=1; i<n; i++)); do
+    w=${words[$i]}
+    case "$w" in
+      -X|--method) method=${words[$((i+1))]^^};;
+      -X*) method=${w#-X}; method=${method^^};;
+      --method=*) method=${w#--method=}; method=${method^^};;
+      -f|-F|--field|--raw-field|--input|--field=*|--raw-field=*|--input=*) write=1;;
+    esac
+  done
+  [ "$method" = GET ] && [ $write = 1 ] && method=POST
+  all=" ${words[*]} "
+  if echo "$all" | grep -qiE 'mergePullRequest|enablePullRequestAutoMerge|updateRefs?\b|mergeBranch'; then blocked="gh api graphql merge/ref write"; fi
+  if [ "$method" != GET ]; then
+    if echo "$all" | grep -qiE "/merges\b|/merge-upstream\b|/pulls/[^/ ]+/merge\b|/git/refs/heads/(main|master|$def)\b|/branches/(main|master|$def)/"; then blocked="gh api $method (merge or default-branch write)"; fi
+  fi
+fi
+if [ -n "$blocked" ]; then
+  id="$INTELIO_WORKSPACE_TASK"; grant="$HOME/workspaces/grants/$id"
+  if [ -n "$id" ] && [ -f "$grant" ] && [ -n "$INTELIO_WS_GRANT" ] && [ "$(cat "$grant" 2>/dev/null)" = "$INTELIO_WS_GRANT" ]; then
+    exec "$real" "$@"
+  fi
+  echo "intelio-workspace: '$blocked' refused. Only Hayden's 'Merge to main' click can land changes on the default branch. Pushing branches and opening/updating PRs is fine." >&2
+  exit 1
+fi
+exec "$real" "$@"

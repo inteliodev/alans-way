@@ -1,0 +1,17 @@
+#!/bin/bash
+# intelio-workspace git wrapper: keeps the pre-push hook in force for task agents
+# (refuses `push --no-verify` and hooksPath overrides); everything else is plain git.
+real=/usr/bin/git
+push=0; bypass=0
+for a in "$@"; do
+  case "$a" in
+    push) push=1;;
+    --no-verify) bypass=1;;
+    core.hooksPath=*|core.hookspath=*|core.hooksPath|core.hookspath) bypass=1;;
+  esac
+done
+if [ $push = 1 ] && [ $bypass = 1 ]; then
+  echo "intelio-workspace: git push that skips hooks is refused (the pre-push hook guards the default branch)." >&2
+  exit 1
+fi
+exec "$real" "$@"

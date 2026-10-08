@@ -1,0 +1,23 @@
+#!/bin/sh
+# intelio-workspace pre-push guard (per-worktree core.hooksPath).
+# Policy: agents may push any branch EXCEPT the repo's default branch (or main/master).
+# A push that updates/deletes the default branch needs a one-time grant
+# (~/workspaces/grants/<task id>, nonce passed in INTELIO_WS_GRANT) that the
+# runner creates only when Hayden clicks "Merge to main".
+id=$(git config --get intelio.workspace.task)
+def=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+protected=" main master ${def} "
+need=0
+hit=""
+while read -r lref lsha rref rsha; do
+  [ -z "$rref" ] && continue
+  b=${rref#refs/heads/}
+  case "$protected" in *" $b "*) need=1; hit=$b;; esac
+done
+[ "$need" = 0 ] && exit 0
+grant="$HOME/workspaces/grants/$id"
+if [ -n "$id" ] && [ -f "$grant" ] && [ -n "$INTELIO_WS_GRANT" ] && [ "$(cat "$grant" 2>/dev/null)" = "$INTELIO_WS_GRANT" ]; then
+  exit 0
+fi
+echo "intelio-workspace: push to '$hit' refused. Changes land on the default branch only through Hayden's 'Merge to main' click. Push a feature branch and open a PR instead." >&2
+exit 1
