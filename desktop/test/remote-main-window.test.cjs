@@ -160,15 +160,15 @@ test('threads for the selected agent sit under the agents, and the sessions list
   assert.ok(rows.length >= 2);
   assert.equal(rows[0].dataset.profile, 'prc');
   assert.deepEqual([...new Set(rows.map((row) => row.dataset.profile))].sort(), ['alignment', 'hhp', 'intelio', 'prc']);
-  assert.ok(rows.some((row) => row.children.some((child) => String(child.className).includes('avatar'))));
+  assert.ok(rows.every((row) => row.children.some((child) => String(child.className).includes('session-dot'))));
   const newest = collectedText(rows[0]);
   assert.equal(newest.includes('photon/iMessage'), false);
   assert.equal(newest.includes('Telegram'), false);
   assert.equal(newest.includes('One-shot'), false);
   assert.equal(/\bAPI\b/.test(newest), false);
   assert.ok(newest.includes('Outreach'));
-  assert.ok(newest.includes('Drafted intros.'));
-  assert.ok(/\d/.test(newest));
+  assert.ok(rows[0].title.includes('Drafted intros.'));
+  assert.ok(/\d|now/.test(newest));
 
   const search = byId('session-search');
   search.value = 'checkout';
@@ -223,7 +223,9 @@ test('the Sessions tab groups by date, pins first, and renames, pins, archives a
   while (Date.now() < until && sessionItems(byId).length < 3) await new Promise((resolve) => setTimeout(resolve, 10));
   const groups = () => byId('all-sessions').children.filter((node) => node.className === 'session-group').map((node) => node.textContent);
   assert.deepEqual(sessionItems(byId).map((row) => row.dataset.sessionId), ['s-pinned', 's-today', 's-old']);
-  assert.deepEqual(groups(), ['Pinned', 'Today', 'Older']);
+  const sections = byId('all-sessions').children.filter((node) => node.className === 'session-section').map((node) => collectedText(node));
+  assert.deepEqual(sections, ['Pinned', 'Sessions']);
+  assert.deepEqual(groups(), ['Older']);
   assert.equal(byId('session-archived').textContent, 'Archived (1)');
 
   const menuFor = (id) => {
@@ -252,5 +254,21 @@ test('the Sessions tab groups by date, pins first, and renames, pins, archives a
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(updates.at(-1), { deleted: 's-today', profile: 'prc' });
   assert.equal(sessionItems(byId).some((row) => row.dataset.sessionId === 's-today'), false);
+});
+test('New session opens an empty thread with the agent wordmark instead of the latest thread', async () => {
+  delete require.cache[require.resolve('../src/remote-main.js')];
+  const { byId, calls } = installDom();
+  const api = require('../src/remote-main.js');
+  await api.sync({ remoteHermes: { enabled: true, host: '127.0.0.1', port: 9, profile: 'intelio', profilesWithKeys: ['intelio', 'prc', 'alignment', 'hhp'] } });
+  const until = Date.now() + 1000;
+  while (Date.now() < until && !calls.some((call) => call.name === 'messages')) await new Promise((resolve) => setTimeout(resolve, 10));
+  const before = calls.filter((call) => call.name === 'messages').length;
+  byId('session-new').dispatch('click', {});
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(calls.filter((call) => call.name === 'messages').length, before, 'no older thread is opened');
+  const empty = byId('remote-messages').children.find((node) => node.className === 'chat-empty');
+  assert.ok(empty);
+  assert.equal(empty.children[0].className, 'chat-wordmark');
+  assert.equal(empty.children[0].textContent, 'intelio');
 });
 });
