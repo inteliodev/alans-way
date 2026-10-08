@@ -73,16 +73,16 @@ function declared(css, selector, prop) {
   return found;
 }
 
-test('blue is a saved theme next to light and dark, and the button cycles light, dark, blue', () => {
-  assert.deepEqual(THEMES, ['light', 'dark', 'blue']);
+test('blue is a saved theme next to light and dark, and the button cycles light, blue, dark', () => {
+  assert.deepEqual(THEMES, ['light', 'blue', 'dark']);
   assert.equal(THEME_LABELS.blue, 'Blue');
   assert.equal(normalizeTheme('blue'), 'blue');
   assert.equal(normalizeTheme('BLUE'), 'blue');
   assert.equal(normalizeTheme('lime'), 'dark');
-  assert.equal(nextTheme('light'), 'dark');
-  assert.equal(nextTheme('dark'), 'blue');
-  assert.equal(nextTheme('blue'), 'light');
-  assert.equal(nextTheme('junk'), 'blue', 'junk reads as dark');
+  assert.equal(nextTheme('light'), 'blue');
+  assert.equal(nextTheme('blue'), 'dark');
+  assert.equal(nextTheme('dark'), 'light');
+  assert.equal(nextTheme('junk'), 'light', 'junk reads as dark');
   assert.equal(colorScheme('blue'), 'dark');
   assert.equal(colorScheme('light'), 'light');
   assert.equal(themeBackground('blue'), '#0000e8');
@@ -169,13 +169,13 @@ test('blue is offered by the bottom-left button and the Settings picker on deskt
   assert.ok(html.indexOf('theme-light.css') < html.indexOf('theme-blue.css'), 'blue loads after light');
   assert.match(read('desktop/src/remote.html'), /theme-blue\.css/);
   const renderer = read('desktop/src/renderer.js');
-  assert.match(renderer, /const THEME_ORDER = \['light', 'dark', 'blue'\];/);
+  assert.match(renderer, /const THEME_ORDER = \['light', 'blue', 'dark'\];/);
   assert.match(renderer, /data-theme-choice|dataset\.themeChoice/);
   assert.match(renderer, /chooseTheme\(followingTheme\(/);
   assert.match(read('desktop/src/preload.cjs'), /theme === 'blue'/);
   assert.match(read('desktop/src/main.cjs'), /themeBackground/);
   const app = read('mobile/pwa/public/app.js');
-  assert.match(app, /const THEME_ORDER = \['light', 'dark', 'blue'\];/);
+  assert.match(app, /const THEME_ORDER = \['light', 'blue', 'dark'\];/);
   assert.match(app, /function themePicker\(/);
   assert.match(app, /theme-blue-dot/);
   assert.match(read('mobile/pwa/public/index.html'), /saved === 'blue'/);

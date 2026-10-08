@@ -311,8 +311,8 @@
     return canvas;
   }
 
-  // Light (default), dark, or blue (white on electric blue). Saved on this device.
-  const THEME_ORDER = ['light', 'dark', 'blue'];
+  // Light (default), blue (white on electric blue), or dark, in that order. Saved on this device.
+  const THEME_ORDER = ['light', 'blue', 'dark'];
   const THEME_LABEL = { light: 'Light', dark: 'Dark', blue: 'Blue' };
   const THEME_BAR = { light: '#f4f4f6', dark: '#070708', blue: '#0000e8' };
 

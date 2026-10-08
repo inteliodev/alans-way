@@ -187,3 +187,6 @@ html[data-theme="light"] .login-card-submit { background: #1c1c21; border-color:
 html[data-theme="light"] .login-card-submit:hover { background: #000000; }
 html[data-theme="light"] .saved-login-meta { color: #6e6e78; }
 html[data-theme="light"] .saved-logins .saved-login-row + .saved-login-row { border-top-color: #e6e6ec; }
+/* Sidebar threads (agent view): the selected row stays a soft grey on white. */
+html[data-theme="light"] .thread-line:hover { background: #f3f3f6; }
+html[data-theme="light"] .thread-line.active { background: #ececef; color: #1c1c21; }
