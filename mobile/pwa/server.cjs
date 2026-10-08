@@ -27,6 +27,8 @@ const { normalizeIp, isLoopbackAddress, peerIsLocal, parseAllowlist, profileKeyP
 const { renderOrbPng } = require('./orbs.cjs');
 const { assertSlug, displayName, listProfiles, createProfile, restartGateway } = require('./profiles.cjs');
 const { resolveVncUpstream, readVncPassword, bridgeVnc } = require('./vnc-proxy.cjs');
+const { nodesEnabled, createNodesRelay } = require('./nodes-mcp.cjs');
+const { refuseUpgrade } = require('../../desktop/src/intelio/node/ws.cjs');
 const { resolveCdpUrl } = require('../../desktop/src/intelio/cdp-fill.cjs');
 const { harnessId, excludedAgent, buildCard, readProfileFiles, writePaused, writeReasoning, writeProfile, cleanColor, backupFile } = require('../../desktop/src/intelio/agent-card.cjs');
 const picker = require('../../desktop/src/intelio/model-picker.cjs');
@@ -217,6 +219,7 @@ function createPwaServer({
   filler = null,
   cdpImpl = null,
   selfCheck = null,
+  nodes = nodesEnabled() ? {} : null,
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
@@ -1074,11 +1077,32 @@ function createPwaServer({
     liveSockets.add(socket);
     socket.on('close', () => liveSockets.delete(socket));
   }
+  // intelio node: a signed-in computer dials in here. Same human checks as the
+  // rest of the app: Access JWT on the Access listener (no profile bearer keys),
+  // allowed Tailscale login on the tailnet listener. Device secret is checked by the hub.
+  const nodeRelay = nodes ? createNodesRelay({ log, ...nodes }) : null;
+  async function acceptNode(req, socket, head, accessListener) {
+    if (!nodeRelay) { refuseUpgrade(socket, 404); return; }
+    const res = { writeHead() {}, end() {}, setHeader() {} };
+    let login = '';
+    if (accessListener) {
+      const ident = await acceptAccess(req, res);
+      if (!ident.ok) { log('intelio-nodes denied access'); refuseUpgrade(socket, ident.status === 403 ? 403 : 401); return; }
+      login = ident.session.login;
+    } else {
+      const session = await authorize(req, res);
+      if (!session || session.sample) { refuseUpgrade(socket, 401); return; }
+      login = session.login;
+    }
+    if (socket.destroyed) return;
+    nodeRelay.hub.accept(req, socket, head, { login });
+  }
   async function onUpgrade(req, socket, head, accessListener) {
     watchSocket(socket);
     req.accessListener = accessListener;
     try {
       const url = new URL(req.url || '/', 'http://127.0.0.1');
+      if (url.pathname === '/node/connect') { await acceptNode(req, socket, head, accessListener); return; }
       if (!url.pathname.startsWith('/browser/')) { socket.destroy(); return; }
       const allowed = accessListener ? await browserAllowed(req, { writeHead() {}, end() {} }) : await authorize(req, { writeHead() {}, end() {} });
       const ok = accessListener ? allowed.ok : Boolean(allowed);
@@ -1638,6 +1662,7 @@ function createPwaServer({
 
   function close(done) {
     const finish = typeof done === 'function' ? done : () => {};
+    if (nodeRelay) nodeRelay.close();
     for (const socket of [...liveSockets]) {
       try { socket.destroy(); } catch { /* already closed */ }
     }
@@ -1655,6 +1680,7 @@ function createPwaServer({
     server,
     local: localServer,
     sessions,
+    nodes: nodeRelay,
     sample: Boolean(sample),
     voice: runtime,
     warmVoice() {
@@ -1668,10 +1694,14 @@ function createPwaServer({
     close,
     listen() {
       return new Promise((resolve, reject) => {
+        const done = () => {
+          if (!nodeRelay) return resolve(server.address());
+          nodeRelay.listen().then(() => resolve(server.address()), () => resolve(server.address()));
+        };
         const startLocal = () => {
-          if (!localServer) return resolve(server.address());
+          if (!localServer) return done();
           localServer.once('error', reject);
-          localServer.listen(localPort, '127.0.0.1', () => resolve(server.address()));
+          localServer.listen(localPort, '127.0.0.1', done);
         };
         server.once('error', reject);
         server.listen(port, bind, startLocal);
