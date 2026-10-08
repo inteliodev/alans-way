@@ -35,7 +35,7 @@
   function baseState() {
     return {
       name: 'intelio',
-      version: '0.3.25',
+      version: '0.3.26',
       intelio: { ok: true, profileName: 'intelio', brand: { mark: '/icon-192.png' }, hermes: {} },
       bots: [],
       order: [],

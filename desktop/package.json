@@ -1,7 +1,7 @@
 {
   "name": "alans-way-localapp",
   "productName": "intelio",
-    "version": "0.3.25",
+    "version": "0.3.26",
   "description": "A Telegram, local Chromium and remote desktop workspace for Hermes agents.",
   "private": true,
   "license": "GPL-3.0-or-later",
