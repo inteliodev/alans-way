@@ -104,7 +104,7 @@ describe how this repository implements it and what is left for stage 2.
 | Node executors (files, search, commands, screenshot) | `desktop/src/intelio/node/executors.cjs` |
 | Elevation detection | `desktop/src/intelio/node/elevation.cjs` |
 | Node client (dial out, enroll, backoff, ping, audit, kill switch) | `desktop/src/intelio/node/client.cjs` |
-| Electron glue (safeStorage, Settings, target URL, confirm dialog) | `desktop/src/intelio/node/main.cjs` |
+| Electron glue (safeStorage, Settings, target URL, confirm dialog) | `desktop/src/intelio/node/electron.cjs` (started from `desktop/src/main.cjs`) |
 | Relay registry + live hub | `mobile/pwa/nodes.cjs` |
 | Relay MCP server for Hermes | `mobile/pwa/nodes-mcp.cjs` |
 | Operator CLI | `mobile/pwa/nodes-cli.cjs` |
@@ -145,8 +145,8 @@ node mobile/pwa/nodes-cli.cjs revoke <name|id>
 
 The relay watches `nodes.json`; a revoke disconnects a live device within about a second
 and every later connect with that id is refused (`refused`, code `revoked`). The node then
-stops dialing and shows "revoked" in Settings. Turning the Settings toggle off and on
-again forgets the device identity, so the next connect enrolls a NEW device (it still
+stops dialing and shows "revoked" in Settings. After a revoke, turning the Settings toggle
+off and on again forgets the device identity, so the next connect enrolls a NEW device (it still
 needs the human check: Access sign-in or allowed tailnet login).
 
 A VPS-side rename pins the name; until then the name follows the computer's Settings.
@@ -174,6 +174,13 @@ A VPS-side rename pins the name; until then the name follows the computer's Sett
   walker; skips node_modules and .git unless the root is inside them), run_command
   (PowerShell on Windows, `$SHELL -lc` elsewhere; timeout kills the whole process tree),
   screenshot (`desktopCapturer` → PNG).
+- Result shapes: tools return one text item holding JSON (fields as in the table above);
+  `read_file` returns two text items: JSON metadata, then the content (text or base64).
+- PowerShell receives the command as `-EncodedCommand` (same semantics as `-Command`,
+  no quoting problems) with `-NoProfile -NonInteractive -ExecutionPolicy Bypass`.
+- Unsupported Linux desktop sessions: everything except `screenshot` works wherever
+  Electron runs; `screenshot` needs a session `desktopCapturer` can read (and on macOS
+  the Screen Recording permission).
 
 ## Stage 2: persistent terminal sessions (extension point, not implemented)
 
