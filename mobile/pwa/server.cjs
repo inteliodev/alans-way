@@ -186,6 +186,11 @@ function createPwaServer({
   keyPath = process.env.INTELIO_PWA_KEY || '',
   fetchImpl = globalThis.fetch,
   now = () => Date.now(),
+  // /api/home and /api/screens must answer well inside the desktop app's timeout
+  // over Cloudflare Access: per-profile calls are capped and the profile list is cached.
+  probeTimeoutMs = 1000,
+  profileTtlMs = 60000,
+  screensTtlMs = 15000,
   sample = process.env.INTELIO_PWA_SAMPLE === '1',
   voice = null,
   profileKey = '',
@@ -234,6 +239,8 @@ function createPwaServer({
   let sessionModelLock = false;
   let listedProfiles = null;
   let featuresKnown = false;
+  const profileCache = { at: 0, rows: null, pending: null, generation: 0 };
+  const screenCache = { at: 0, rows: null, pending: null };
   const denialLogAt = new Map();
   const certCache = { at: 0, keys: null };
   const NOVNC = path.resolve(__dirname, '../../desktop/node_modules/@novnc/novnc');
@@ -691,15 +698,64 @@ function createPwaServer({
     return { wav, type };
   }
 
-  async function loadProfiles() {
-    if (profileOps && profileOps.list) return profileOps.list();
-    return listProfiles({ home: profileHome, run: profileRun });
+  // `hermes profile list` takes seconds, so the list is cached: fresh for profileTtlMs,
+  // then served stale while one background refresh runs. A cold cache waits briefly for
+  // the full list and otherwise answers from the profile folders.
+  function refreshProfiles() {
+    if (profileCache.pending) return profileCache.pending;
+    const started = profileCache.generation;
+    const listing = Promise.resolve().then(() => (profileOps && profileOps.list
+      ? profileOps.list()
+      : listProfiles({ home: profileHome, run: profileRun })));
+    const pending = listing.then((rows) => {
+      if (Array.isArray(rows) && started === profileCache.generation) {
+        profileCache.rows = rows;
+        profileCache.at = now();
+      }
+      return Array.isArray(rows) ? rows : (profileCache.rows || []);
+    }).catch(() => profileCache.rows || []).finally(() => {
+      if (profileCache.pending === pending) profileCache.pending = null;
+    });
+    profileCache.pending = pending;
+    return pending;
   }
-  async function sessionsFor(profileId) {
+  function forgetProfiles() {
+    profileCache.generation += 1;
+    profileCache.rows = null;
+    profileCache.at = 0;
+    profileCache.pending = null;
+    screenCache.rows = null;
+    screenCache.at = 0;
+  }
+  async function loadProfiles() {
+    if (profileCache.rows) {
+      if (now() - profileCache.at >= profileTtlMs) refreshProfiles();
+      return profileCache.rows;
+    }
+    const full = refreshProfiles();
+    if (profileOps && profileOps.list) return full;
+    const first = await withTimeout(full, Math.min(probeTimeoutMs, 250), null);
+    if (first) return first;
+    try {
+      const quick = await listProfiles({ home: profileHome, run: profileRun, cli: false });
+      if (Array.isArray(quick) && quick.length) return quick;
+    } catch { /* fall through to the full list */ }
+    return full;
+  }
+  function withTimeout(promise, ms, fallback) {
+    let timer;
+    const late = new Promise((resolve) => { timer = setTimeout(() => resolve(fallback), ms); });
+    return Promise.race([Promise.resolve(promise).catch(() => fallback), late]).finally(() => clearTimeout(timer));
+  }
+  function timeoutSignal(ms) {
+    return ms && typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined;
+  }
+  async function sessionsFor(profileId, timeoutMs = 0) {
     try {
       const response = await fetchImpl(hermesUrl(profileId, '/api/sessions', { limit: '100', offset: '0' }), {
         headers: { Authorization: `Bearer ${bearerKey(profileId)}`, Accept: 'application/json' },
         redirect: 'error',
+        signal: timeoutSignal(timeoutMs),
       });
       const text = await response.text();
       if (!response.ok) return [];
@@ -740,8 +796,11 @@ function createPwaServer({
       needsSignIn: item.needsSignIn === true,
       gatewayNote: String(item.gatewayNote || '').slice(0, 160),
     })).filter((item) => item.id && item.id !== 'default' && !excludedAgent(item.id));
+    // One slow or unreachable profile must not hold up the rest: fetch in parallel,
+    // cap each, and return whatever answered.
+    const lists = await Promise.all(profiles.map((agent) => withTimeout(sessionsFor(agent.id, probeTimeoutMs), probeTimeoutMs + 100, [])));
     const conversations = [];
-    for (const agent of profiles) conversations.push(...await sessionsFor(agent.id));
+    for (const list of lists) conversations.push(...list);
     return { sample: false, label: '', profiles, conversations, skills: [], jobs: [], skillsOk: false, jobsOk: false };
   }
   function uiFile(pathname) {
@@ -904,14 +963,15 @@ function createPwaServer({
       return '';
     }
   }
-  async function browserHosts(profileId) {
+  async function browserHosts(profileId, timeoutMs = 3000) {
     if (sample) return [];
     let origin = '';
     try { origin = resolveCdpUrl({ profile: profileId, root: vaultRootPath }); } catch { return []; }
+    let timer;
     try {
       const response = await Promise.race([
-        fetchImpl(`${origin}/json/list`, { redirect: 'error' }),
-        new Promise((_, reject) => { setTimeout(() => reject(new Error('cdp')), 3000); }),
+        fetchImpl(`${origin}/json/list`, { redirect: 'error', signal: timeoutSignal(timeoutMs) }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('cdp')), timeoutMs); }),
       ]);
       if (!response || !response.ok) return [];
       const rows = await response.json();
@@ -926,20 +986,38 @@ function createPwaServer({
       return hosts.slice(0, 4);
     } catch {
       return [];
+    } finally {
+      clearTimeout(timer);
     }
+  }
+  // Screens are a snapshot: probe every agent's browser in parallel (capped per agent),
+  // keep the result for screensTtlMs, and when it is stale give a refresh a short
+  // head start before answering with the last snapshot.
+  function refreshScreens() {
+    if (screenCache.pending) return screenCache.pending;
+    const pending = (async () => {
+      const profiles = (await loadProfiles()).filter((profile) => profile && profile.id && !excludedAgent(profile.id));
+      const hostLists = await Promise.all(profiles.map((profile) => browserHosts(profile.id, probeTimeoutMs)));
+      const rows = [];
+      profiles.forEach((profile, at) => {
+        hostLists[at].forEach((host, index) => {
+          rows.push({ profileId: profile.id, name: displayName(profile.id), host, screen: index + 1 });
+        });
+      });
+      screenCache.rows = rows.slice(0, 12);
+      screenCache.at = now();
+      return screenCache.rows;
+    })().catch(() => screenCache.rows || []).finally(() => {
+      if (screenCache.pending === pending) screenCache.pending = null;
+    });
+    screenCache.pending = pending;
+    return pending;
   }
   async function listScreens() {
     if (sample) return [{ profileId: 'intelio', name: 'intelio', host: 'google.com', screen: 1 }];
-    const profiles = await loadProfiles();
-    const rows = [];
-    for (const profile of profiles) {
-      if (excludedAgent(profile.id)) continue;
-      const hosts = await browserHosts(profile.id);
-      hosts.forEach((host, index) => {
-        rows.push({ profileId: profile.id, name: displayName(profile.id), host, screen: index + 1 });
-      });
-    }
-    return rows.slice(0, 12);
+    if (screenCache.rows && now() - screenCache.at < screensTtlMs) return screenCache.rows;
+    if (screenCache.rows) return withTimeout(refreshScreens(), Math.min(500, probeTimeoutMs), screenCache.rows);
+    return refreshScreens();
   }
   async function placeOwnerCall() {
     const sid = String(process.env.TWILIO_ACCOUNT_SID || '').trim();
@@ -1011,12 +1089,15 @@ function createPwaServer({
       }
     }
   }
-  async function optionalList(profileId, pathname, normalize) {
+  async function optionalList(profileId, pathname, normalize, timeoutMs = 0) {
     try {
-      const response = await fetchImpl(hermesUrl(profileId, pathname), {
+      const request = fetchImpl(hermesUrl(profileId, pathname), {
         headers: { Authorization: `Bearer ${bearerKey(profileId)}`, Accept: 'application/json' },
         redirect: 'error',
+        signal: timeoutSignal(timeoutMs),
       });
+      const response = timeoutMs ? await withTimeout(request, timeoutMs + 100, null) : await request;
+      if (!response) return { ok: false, list: [] };
       const text = await response.text();
       if (!response.ok) return { ok: false, list: [] };
       let json = [];
@@ -1249,11 +1330,14 @@ function createPwaServer({
       }
       if (req.method === 'GET' && url.pathname === '/api/home') {
         if (sample) return send(res, 200, SAMPLE_HOME);
-        await learnFeatures();
+        await withTimeout(learnFeatures(), probeTimeoutMs, null);
         const home = await realHome();
         const primary = home.profiles[0]?.id || profileName;
-        const skills = await optionalList(primary, '/v1/skills', normalizeSkills);
-        const jobs = await optionalList(primary, '/api/jobs', normalizeJobs);
+        // /v1/skills can 500 on the gateway; skills are then left out (skillsOk false).
+        const [skills, jobs] = await Promise.all([
+          optionalList(primary, '/v1/skills', normalizeSkills, probeTimeoutMs),
+          optionalList(primary, '/api/jobs', normalizeJobs, probeTimeoutMs),
+        ]);
         home.skills = skills.list;
         home.jobs = jobs.list;
         home.skillsOk = skills.ok;
@@ -1305,6 +1389,7 @@ function createPwaServer({
             home: profileHome,
             run: profileRun,
           });
+        forgetProfiles();
         return send(res, 200, {
           id: created.id,
           name: created.name,
@@ -1554,6 +1639,11 @@ function createPwaServer({
     warmVoice() {
       return runtime.warm ? runtime.warm() : Promise.resolve();
     },
+    // Fill the profile and screens caches so the first /api/home after a restart is fast.
+    warmLists() {
+      if (sample) return Promise.resolve();
+      return refreshProfiles().then(() => refreshScreens()).catch(() => {});
+    },
     close,
     listen() {
       return new Promise((resolve, reject) => {
@@ -1587,6 +1677,7 @@ if (require.main === module) {
       const local = app.local.address();
       process.stdout.write(`intelio Access listener on ${local.address}:${local.port}\n`);
     }
+    app.warmLists();
     if (process.env.INTELIO_VOICE_PYTHON) {
       app.warmVoice().catch((error) => {
         process.stderr.write(`Voice engines did not warm: ${error.message}\n`);
