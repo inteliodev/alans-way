@@ -342,11 +342,11 @@ The chat composer has a model pill to the left of the microphone on the desktop 
 
 Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Do not restart `hermes-gateway`.
 
-## 0.3.20
+## 0.3.21
 
-Hermes pin `d9ef91e9d5a00c185fabc47d332994ab2280480a` signs Claude in with `hermes --profile <name> auth add anthropic --type oauth`. That command prints a Claude Pro/Max link and waits for the code Claude shows. It is not a device-code flow. Hermes keeps the Anthropic dashboard row external so a scriptable HTTP endpoint cannot mint the subscription token. Intelio starts that Hermes command on the server, shows the link, and passes the pasted code to the command's stdin. Intelio does not read or write `auth.json` or `.anthropic_oauth.json`, and it does not call `claude setup-token`. That Claude Code file is one file every profile shares.
+The Claude sign-in row from 0.3.20 is removed, and the phone server no longer starts any `hermes ... auth` command. The model menu still lists only what Hermes already reports for that agent: the ChatGPT/Codex subscription, and Claude only when Hermes already has a Claude OAuth subscription row. API-key providers stay out. intelio does not read or write `auth.json`.
 
-The menu groups are ChatGPT plan and Claude plan. When Hermes has no Claude subscription models for the agent, the Claude plan group has Sign in to Claude. Use for all agents runs the same command once on the shared Hermes home, with no `--profile`. Hermes does not copy an Anthropic grant into each agent: the refresh token is single-use, and the first profile to refresh it revokes the others. Agents that have no Claude login of their own then use the shared grant. An agent that signs in on its own keeps its own grant. API keys stay out of the menu. Phone client `intelio-pwa-18`. Service worker cache `intelio-pwa-21`. The draft tag is `v0.3.20-intelio-windows`. It stays unpublished. The 0.3.19 draft stays as it is.
+The desktop window keeps the top-right buttons clear of Call my phone, shows a VPS desktop · connected/disconnected chip, shows Online, Offline · reconnecting or Connecting… on the agent card from the real agent list load, restores a minimized window on relaunch, and puts Quit under File and About under Help on Windows. Phone client `intelio-pwa-19`. Service worker cache `intelio-pwa-22`. The draft tag is `v0.3.21-intelio-windows`. It stays unpublished.
 
 Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
 
