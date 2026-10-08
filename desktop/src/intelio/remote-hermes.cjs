@@ -60,7 +60,8 @@ function normalizeRemoteConfig(input = {}) {
 
 /** Windows and macOS first launch have no preferences file and start as a VPS client. Linux stays opt-in. */
 function remoteHermesDefaults(platform = process.platform) {
-  const connection = 'auto';
+  // VPS address by default; Tailscale is opt-in in Settings.
+  const connection = 'cloud';
   if (platform === 'win32' || platform === 'darwin') return { enabled: true, host: VPS_HOST, port: DEFAULT_PORT, profile: 'intelio', connection };
   return { enabled: false, host: '', port: DEFAULT_PORT, profile: 'intelio', connection };
 }
