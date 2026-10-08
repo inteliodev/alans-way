@@ -362,6 +362,12 @@ The desktop chat shows Hermes's thinking as bubbles in the thread, keeps the cha
 
 Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
 
+## 0.3.24
+
+The Sessions tab has a client row: All, intelio, PRC, Alignment, HHP and ARLP. Picking a client filters the sessions and shows that client's work apps (Google Workspace for intelio and PRC, Microsoft 365 for Alignment, HHP and ARLP) with a green dot when that client's browser is signed in and a grey dot when it is not. Each client opens in its own persistent browser partition (`persist:client-<id>`), so sign-ins never share cookies. More lists the rest of the apps, Set account email, and Sign out of this client. Nothing here gives an agent access; that stays in the agent's Hermes connections. The phone server only adds `intelio/client-apps.cjs` to the UI files it serves. Claude sign-in stays removed; the phone server starts no `hermes ... auth` command and does not read or write `auth.json`. Phone client `intelio-pwa-22`. Service worker cache `intelio-pwa-25`. The draft tag is `v0.3.24-intelio-windows`. It stays unpublished.
+
+Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
+
 ## What you do
 
 1. Run the `windows-installer` workflow on this branch and download `Intelio-Setup-*.exe` from the artifact or the draft release. This change does not publish a new installer.
