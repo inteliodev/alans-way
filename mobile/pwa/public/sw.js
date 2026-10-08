@@ -1,4 +1,4 @@
-const CACHE = 'intelio-pwa-25';
+const CACHE = 'intelio-pwa-26';
 const FILES = ['/', '/index.html', '/app.css', '/app.js', '/bops.js', '/transcript.js', '/thinking-orbs.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/desktop/', '/desktop-boot.js', '/desktop-transport.js'];
 
 function shellPath(pathname) {

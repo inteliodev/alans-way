@@ -368,6 +368,12 @@ The Sessions tab has a client row: All, intelio, PRC, Alignment, HHP and ARLP. P
 
 Copy `mobile/pwa/server.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
 
+## 0.3.25
+
+Faster and steadier on the VPS route. New installs and unknown connection settings go straight to the VPS address (`cloud`); Tailscale is used only when chosen (`auto` or `tailscale`) in Settings, and existing saved choices are kept. The agent list answers at once from the last list the server returned and refreshes in the background; an expired cloud sign-in still shows on the next refresh. `/api/home` waits up to 12 s (was 3 s) and a timeout no longer falls through to `/api/profiles`; agent cards, screens and other phone-server calls wait up to 10 s (was 1.2 s). Agent computer screens load on their own, so chat and sessions never wait for them. The phone server skips the header row of `hermes profile list`, so no phantom agent called "profile" appears. Claude sign-in stays removed; the phone server starts no `hermes ... auth` command and does not read or write `auth.json`. Phone client `intelio-pwa-23`. Service worker cache `intelio-pwa-26`. The draft tag is `v0.3.25-intelio-windows`. It stays unpublished.
+
+Copy `mobile/pwa/server.cjs`, `mobile/pwa/profiles.cjs` and the phone public files onto the VPS, then `systemctl --user restart intelio-pwa.service`. Leave `hermes-gateway` running.
+
 ## What you do
 
 1. Run the `windows-installer` workflow on this branch and download `Intelio-Setup-*.exe` from the artifact or the draft release. This change does not publish a new installer.
