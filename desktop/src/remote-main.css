@@ -215,7 +215,8 @@ body.remote-main .side-title { display: none; }
 .thread-line { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 13px; font-weight: 400; cursor: pointer; }
 .thread-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-title { flex: 1; min-width: 0; }
-.thread-line.active { background: #ececef; }
+.thread-line:hover { background: #1a1a1f; }
+.thread-line.active { background: #22222a; color: #ffffff; }
 .thread-dot { width: 8px; height: 8px; margin-left: auto; border-radius: 50%; background: #7a5cff; flex: none; }
 .sidebar-threads { list-style: none; }
 body.remote-main .chat-header { position: relative; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; grid-template-areas: "toggle pill call" "note note note"; align-items: start; justify-content: stretch; height: auto; min-height: 104px; padding: 8px 8px 4px; overflow: visible; }

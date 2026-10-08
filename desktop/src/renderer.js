@@ -195,9 +195,9 @@ function showExtensions() {
   body.append(element('p', 'settings-note', 'This browser is Chromium, not Chrome — Google sync and Chrome’s built-in password manager are not included. For passwords and passkeys, install your manager’s extension from the Web Store and sign in inside it.'));
   renderExtensions();
 }
-// Three appearances: light, dark (default) and blue (white on electric blue).
-// The bottom-left button walks light -> dark -> blue and shows the next one.
-const THEME_ORDER = ['light', 'dark', 'blue'];
+// Three appearances, in this order: light, blue (white on electric blue) and dark (default).
+// The bottom-left button walks light -> blue -> dark and shows the next one.
+const THEME_ORDER = ['light', 'blue', 'dark'];
 const THEME_LABEL = { light: 'Light', dark: 'Dark', blue: 'Blue' };
 const THEME_VARS = {
   light: { '--bg': '#f6f6f8', '--text': '#1c1c21', '--muted': '#5e5e68', '--line': '#d5d5dc', '--panel': '#ffffff', '--intelio-surface': '#ffffff' },

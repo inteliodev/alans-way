@@ -1,11 +1,12 @@
 'use strict';
 
 /**
- * Saved appearance: dark (default), light, or blue. Blue is an electric-blue
- * dark scheme (white text on #0000E8). Anything else stays the dark chrome.
+ * Saved appearance: light, blue, or dark, offered in that order. Dark is the
+ * default when nothing is saved. Blue is an electric-blue dark scheme (white
+ * text on #0000E8). Anything else stays the dark chrome.
  * UI layer only; Hermes never reads this.
  */
-const THEMES = ['light', 'dark', 'blue'];
+const THEMES = ['light', 'blue', 'dark'];
 const THEME_LABELS = { light: 'Light', dark: 'Dark', blue: 'Blue' };
 
 /** Blue palette. No yellow or lime anywhere. */
@@ -28,7 +29,7 @@ function normalizeTheme(value) {
 
 /** The order the bottom-left theme button walks through. */
 function nextTheme(value) {
-  const order = ['light', 'dark', 'blue'];
+  const order = THEMES;
   return order[(order.indexOf(normalizeTheme(value)) + 1) % order.length];
 }
 
