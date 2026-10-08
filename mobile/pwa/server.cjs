@@ -196,6 +196,11 @@ function createPwaServer({
   probeTimeoutMs = 1000,
   profileTtlMs = 60000,
   screensTtlMs = 15000,
+  // /v1/skills is optional and some gateway builds answer it with a 500 on every call.
+  // Remember the answer per profile so a polled /api/home does not re-ask (and re-log a
+  // traceback on the gateway) every refresh: a good list for a minute, an HTTP error for 15.
+  skillsTtlMs = 60000,
+  skillsErrorTtlMs = 15 * 60000,
   sample = process.env.INTELIO_PWA_SAMPLE === '1',
   voice = null,
   profileKey = '',
@@ -218,6 +223,9 @@ function createPwaServer({
   cdpImpl = null,
   selfCheck = null,
   githubFetch = globalThis.fetch,
+  // A new agent is checked on its own /p/<name>/ route before the create call answers.
+  readyTries = 6,
+  readyDelayMs = 1000,
 } = {}) {
   if (!isTailnetOrLoopbackHost(bind)) throw new Error('Refusing to listen: bind address must be a Tailscale address or loopback.');
   if (sample && !loopbackBind(bind)) throw new Error('Sample phone data is loopback-only.');
@@ -248,6 +256,7 @@ function createPwaServer({
   let featuresKnown = false;
   const profileCache = { at: 0, rows: null, pending: null, generation: 0 };
   const screenCache = { at: 0, rows: null, pending: null };
+  const skillsCache = new Map();
   const denialLogAt = new Map();
   const certCache = { at: 0, keys: null };
   const NOVNC = path.resolve(__dirname, '../../desktop/node_modules/@novnc/novnc');
@@ -1110,13 +1119,52 @@ function createPwaServer({
       const response = timeoutMs ? await withTimeout(request, timeoutMs + 100, null) : await request;
       if (!response) return { ok: false, list: [] };
       const text = await response.text();
-      if (!response.ok) return { ok: false, list: [] };
+      if (!response.ok) return { ok: false, list: [], status: response.status };
       let json = [];
       try { json = JSON.parse(text); } catch { json = []; }
-      return { ok: true, list: normalize(json) };
+      return { ok: true, list: normalize(json), status: response.status };
     } catch {
       return { ok: false, list: [] };
     }
+  }
+
+  /** Polls the new profile's own route with its own key until Hermes answers. */
+  async function agentReady(id) {
+    let reason = 'no reply';
+    const tries = Math.max(1, Number(readyTries) || 1);
+    for (let attempt = 0; attempt < tries; attempt += 1) {
+      if (attempt) await new Promise((resolve) => setTimeout(resolve, readyDelayMs));
+      let key = '';
+      try { key = bearerKey(id); } catch { reason = 'no key'; continue; }
+      try {
+        const response = await fetchImpl(hermesUrl(id, '/v1/capabilities'), {
+          headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+          redirect: 'error',
+          signal: timeoutSignal(4000),
+        });
+        if (typeof response.text === 'function') await response.text().catch(() => '');
+        if (response.ok) return { ok: true, reason: '' };
+        reason = `HTTP ${response.status}`;
+        if (response.status === 401) cachedKeys.delete(id);
+      } catch {
+        reason = 'unreachable';
+      }
+    }
+    return { ok: false, reason };
+  }
+
+  // Skills per profile, cached. Only real answers are cached: a timeout or a dropped
+  // connection says nothing about the route, so the next call asks again.
+  async function cachedSkills(profileId, timeoutMs = 0) {
+    const hit = skillsCache.get(profileId);
+    if (hit) {
+      const ttl = hit.result.ok ? skillsTtlMs : skillsErrorTtlMs;
+      if (now() - hit.at < ttl) return hit.result;
+      skillsCache.delete(profileId);
+    }
+    const result = await optionalList(profileId, '/v1/skills', normalizeSkills, timeoutMs);
+    if (result.status) skillsCache.set(profileId, { at: now(), result });
+    return result;
   }
 
   function hermesDesktopPath(pathname) {
@@ -1127,7 +1175,15 @@ function createPwaServer({
     if (url.pathname === '/intelio/bootstrap') {
       if (!session.access) return send(res, 401, { error: 'Sign in again.' });
       const body = { vnc: vncSecret };
-      for (const name of ['intelio', 'prc', 'alignment', 'hhp']) {
+      // Every listed profile, so an agent created after the first sign-in gets its key too.
+      const names = ['intelio', 'prc', 'alignment', 'hhp'];
+      let listed = [];
+      try { listed = await loadProfiles(); } catch { listed = []; }
+      for (const row of Array.isArray(listed) ? listed : []) {
+        const id = String(row?.id || '');
+        if (/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) && id !== 'vnc' && !names.includes(id) && names.length < 64) names.push(id);
+      }
+      for (const name of names) {
         try { body[name] = bearerKey(name); } catch { body[name] = ''; }
       }
       return send(res, 200, body);
@@ -1344,9 +1400,10 @@ function createPwaServer({
         await withTimeout(learnFeatures(), probeTimeoutMs, null);
         const home = await realHome();
         const primary = home.profiles[0]?.id || profileName;
-        // /v1/skills can 500 on the gateway; skills are then left out (skillsOk false).
+        // /v1/skills can 500 on the gateway; skills are then left out (skillsOk false) and the
+        // failure is remembered for skillsErrorTtlMs so polling /api/home does not hammer it.
         const [skills, jobs] = await Promise.all([
-          optionalList(primary, '/v1/skills', normalizeSkills, probeTimeoutMs),
+          cachedSkills(primary, probeTimeoutMs),
           optionalList(primary, '/api/jobs', normalizeJobs, probeTimeoutMs),
         ]);
         home.skills = skills.list;
@@ -1357,7 +1414,7 @@ function createPwaServer({
       }
       if (req.method === 'GET' && url.pathname === '/api/skills') {
         if (sample) return send(res, 200, { data: SAMPLE_HOME.skills, sample: true, label: 'SAMPLE DATA' });
-        const skills = await optionalList(chosenProfile(req), '/v1/skills', normalizeSkills);
+        const skills = await cachedSkills(chosenProfile(req));
         if (!skills.ok) return send(res, 404, { error: 'This Hermes has no skills list.' });
         return send(res, 200, { data: skills.list });
       }
@@ -1408,8 +1465,9 @@ function createPwaServer({
             orb: String(body.orb || ''),
             needsSignIn: false,
             signInNote: '',
-            gatewayNote: 'Ready after the next agent restart',
-            needsGatewayRestart: true,
+            gatewayNote: '',
+            ready: true,
+            needsGatewayRestart: false,
             sample: true,
             label: 'SAMPLE DATA',
           });
@@ -1427,6 +1485,8 @@ function createPwaServer({
             run: profileRun,
           });
         forgetProfiles();
+        const ready = await agentReady(created.id);
+        if (!ready.ok) log(`intelio-pwa new agent ${created.id} not answering yet (${ready.reason})`);
         return send(res, 200, {
           id: created.id,
           name: created.name,
@@ -1435,8 +1495,9 @@ function createPwaServer({
           orb: created.orb || '',
           needsSignIn: created.needsSignIn === true,
           signInNote: created.signInNote || '',
-          gatewayNote: created.gatewayNote || 'Ready after the next agent restart',
-          needsGatewayRestart: true,
+          ready: ready.ok,
+          gatewayNote: ready.ok ? (created.gatewayNote || '') : `${created.name || created.id} was created, but Hermes is not answering for it yet (${ready.reason}). Try it again in a minute.`,
+          needsGatewayRestart: false,
         });
       }
       if (req.method === 'POST' && url.pathname === '/api/gateway/restart') {
