@@ -125,6 +125,7 @@
       lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
       eye: '<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
       moon: '<path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/>',
+      bluetheme: '<circle class="theme-blue-dot" cx="12" cy="12" r="8"/>',
       sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
       waveform: '<path d="M3 12h2M7 8v8M11 5v14M15 8v8M19 10v4"/>',
     };
@@ -313,35 +314,60 @@
     return canvas;
   }
 
+  // Light (default), blue (white on electric blue), or dark, in that order. Saved on this device.
+  const THEME_ORDER = ['light', 'blue', 'dark'];
+  const THEME_LABEL = { light: 'Light', dark: 'Dark', blue: 'Blue' };
+  const THEME_BAR = { light: '#f4f4f6', dark: '#070708', blue: '#0000e8' };
+
   function storedTheme() {
     const saved = localStorage.getItem('intelio-theme');
-    return saved === 'light' || saved === 'dark' ? saved : '';
+    return saved === 'light' || saved === 'dark' || saved === 'blue' ? saved : '';
   }
 
   function currentTheme() {
-    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+    const theme = document.documentElement.dataset.theme;
+    return theme === 'dark' || theme === 'blue' ? theme : 'light';
+  }
+
+  function followingTheme(theme) {
+    return THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length];
   }
 
   function themeIconButton() {
-    const light = currentTheme() === 'light';
+    const after = followingTheme(currentTheme());
     const button = el('button', 'iconbtn theme-toggle');
     button.type = 'button';
     button.id = 'theme-toggle';
-    button.title = light ? 'Dark mode' : 'Light mode';
-    button.setAttribute('aria-label', button.title);
-    button.append(icon(light ? 'moon' : 'sun'));
+    button.title = `${THEME_LABEL[after]} theme`;
+    button.setAttribute('aria-label', `Switch to the ${THEME_LABEL[after]} theme`);
+    button.append(icon(after === 'dark' ? 'moon' : after === 'blue' ? 'bluetheme' : 'sun'));
     button.addEventListener('click', () => {
-      setTheme(light ? 'dark' : 'light', true);
+      setTheme(after, true);
       render();
     });
     return button;
   }
 
+  function themePicker() {
+    const group = el('div', 'theme-picker');
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', 'Appearance');
+    const current = currentTheme();
+    for (const name of THEME_ORDER) {
+      const choice = el('button', `theme-choice theme-choice-${name}`, THEME_LABEL[name]);
+      choice.type = 'button';
+      choice.setAttribute('aria-pressed', String(name === current));
+      choice.addEventListener('click', () => { setTheme(name, true); render(); });
+      group.append(choice);
+    }
+    return group;
+  }
+
   function setTheme(mode, persist) {
-    const next = mode === 'light' ? 'light' : 'dark';
+    const next = mode === 'dark' || mode === 'blue' ? mode : 'light';
     if (persist) localStorage.setItem('intelio-theme', next);
     document.documentElement.dataset.theme = next;
-    const color = next === 'light' ? '#f4f4f6' : '#070708';
+    const color = THEME_BAR[next];
     document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
       meta.setAttribute('content', color);
       meta.removeAttribute('media');
@@ -595,26 +621,6 @@
     return button;
   }
 
-  function watchingBlock() {
-    const rows = (state.screens || []).filter((row) => row && row.host && !excludedAgent(row.profileId));
-    if (!rows.length) return null;
-    const wrap = el('section', 'side-block');
-    wrap.append(el('p', 'section-label', 'WATCHING'));
-    rows.forEach((row) => {
-      const button = el('button', 'watch-row');
-      button.type = 'button';
-      const name = agentLabel(profileById(row.profileId) || { id: row.profileId, name: row.name });
-      const extra = rows.filter((item) => item.profileId === row.profileId).length > 1 ? ` ${row.screen}` : '';
-      button.append(icon('eye'), el('strong', '', row.host), el('span', '', ` · ${name}'s screen${extra}`));
-      button.addEventListener('click', () => {
-        state.bot = profileById(row.profileId) || state.bot;
-        openBrowser('computer');
-      });
-      wrap.append(button);
-    });
-    return wrap;
-  }
-
   const SESSION_AGENT_KEY = 'intelio-session-agent';
   /** The Sessions filter: '' is All agents. Shared with the web desktop on this origin. */
   function sessionAgent() {
@@ -686,8 +692,6 @@
     list.id = 'list';
     list.append(leadCard());
     if (vpsAgents(state.home.profiles).length > 1) list.append(sessionFilter());
-    const watching = watchingBlock();
-    if (watching) list.append(watching);
     const threads = el('section', 'side-block');
     threads.append(el('p', 'section-label', 'THREADS'));
     const all = !sessionAgent();
@@ -2002,7 +2006,7 @@
     wrap.append(saved);
     wrap.append(el('p', '', 'Domain and username only. The password stays in this agent’s vault.'));
     wrap.append(el('h2', '', 'Appearance'));
-    wrap.append(themeIconButton(), el('p', '', 'Light is the default. Your choice is saved on this device.'));
+    wrap.append(themePicker(), el('p', '', 'Light is the default. Blue is white on electric blue. Your choice is saved on this device.'));
     wrap.append(el('h2', '', 'About'));
     wrap.append(el('p', '', 'intelio · Alan’s Way'));
     wrap.append(el('p', 'version', `Version ${CLIENT_VERSION}`));

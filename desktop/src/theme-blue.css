@@ -1,0 +1,180 @@
+/* Blue appearance: white on electric blue (#0000e8), after the Nous Research
+   Hermes site. intelio UI only; Hermes is not touched. Cards and inputs sit a
+   step lighter or darker, borders are translucent white, the accent is white
+   or pale blue. No yellow or lime.
+   Every rule starts with html[data-theme="blue"] so it cannot restyle light or dark. */
+html[data-theme="blue"] { color-scheme: dark; --blue-bg: #0000e8; --blue-deep: #0000c4; --blue-raised: #2323f0; --blue-line: rgba(255, 255, 255, 0.24); --blue-accent: #cfdcff; }
+html[data-theme="blue"] body { background: #0000e8 !important; color: #ffffff; }
+html[data-theme="blue"] ::selection { background: rgba(255, 255, 255, 0.85); color: #0000e8; }
+html[data-theme="blue"] * { scrollbar-color: rgba(255, 255, 255, 0.35) transparent; }
+html[data-theme="blue"] a { color: #ffffff; }
+html[data-theme="blue"] :focus-visible { outline-color: #ffffff; }
+html[data-theme="blue"] pre, html[data-theme="blue"] code, html[data-theme="blue"] kbd { background: #0000b4; color: #ffffff; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] input::placeholder, html[data-theme="blue"] textarea::placeholder { color: rgba(255, 255, 255, 0.62); }
+/* Generated from the light rules (theme-light.css, agent-card.css), recoloured for blue. */
+html[data-theme="blue"] { color-scheme: dark; }
+html[data-theme="blue"] body { background: #0000cf !important; color: #ffffff; }
+html[data-theme="blue"] .sidebar { background: #0000e8 !important; border-right-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .workspace-pane, html[data-theme="blue"] .splitter { background: #0000cf !important; }
+html[data-theme="blue"] .chat-pane, html[data-theme="blue"] .remote-chat, html[data-theme="blue"] .remote-thread, html[data-theme="blue"] .remote-messages { background: #0000e8 !important; }
+html[data-theme="blue"] .splitter { border-left-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .splitter:hover, html[data-theme="blue"] .splitter.active { background: #3a3af4; }
+html[data-theme="blue"] #product-title { color: #ffffff; }
+html[data-theme="blue"] .intelio-profile, html[data-theme="blue"] .side-caption, html[data-theme="blue"] .bot-preview, html[data-theme="blue"] .session-preview, html[data-theme="blue"] .session-empty, html[data-theme="blue"] .remote-status, html[data-theme="blue"] .workspace-footer, html[data-theme="blue"] .loading-label, html[data-theme="blue"] .chat-note { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .icon-button, html[data-theme="blue"] .cap-button { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .icon-button:hover, html[data-theme="blue"] .cap-button:hover { background: #0000cf; color: #ffffff; }
+html[data-theme="blue"] .bot-row:hover { background: #0000cf; }
+html[data-theme="blue"] .bot-row.selected { background: #2323f0; }
+html[data-theme="blue"] .search-input, html[data-theme="blue"] .session-tools select, html[data-theme="blue"] .remote-composer input, html[data-theme="blue"] .field input, html[data-theme="blue"] .field textarea, html[data-theme="blue"] .field select { background: #0000e8; color: #ffffff; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .side-bottom { border-top-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .theme-toggle { background: #0000e8; color: #ffffff; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] body.remote-main #chat-call { background: #0000e8; color: #ffffff; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .chat-pill { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); color: #ffffff; }
+html[data-theme="blue"] .remote-chat { background: #0000e8; }
+html[data-theme="blue"] .remote-sessions, html[data-theme="blue"] .remote-composer, html[data-theme="blue"] .session-item, html[data-theme="blue"] .all-session { border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .session-item.active, html[data-theme="blue"] .all-session.active { background: #2323f0; }
+html[data-theme="blue"] .source-pill { border-color: rgba(255, 255, 255, 0.24); color: #ffffff; }
+html[data-theme="blue"] .side-tab { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .side-tab[aria-selected="true"] { color: #ffffff; }
+html[data-theme="blue"] .msg.user { background: #ffffff; color: #0000e8; border: 0; }
+html[data-theme="blue"] .msg.assistant { background: #2323f0; color: #ffffff; border: 0; }
+html[data-theme="blue"] .tool-chip, html[data-theme="blue"] .tool-detail { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .tool-chip .mark { color: #a8f0c8; }
+html[data-theme="blue"] .remote-composer button { background: #2323f0; color: #ffffff; }
+html[data-theme="blue"] body.remote-main .model-pill { background: #2323f0; color: #ffffff; }
+html[data-theme="blue"] body.remote-main .model-menu { background: #0000e8; color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] body.remote-main .model-menu .model-label { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .tab { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .tab:hover { background: #0000cf; color: #ffffff; }
+html[data-theme="blue"] .tab.active { background: #0000e8; color: #ffffff; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .tab-bar { border-bottom-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .browser-toolbar form, html[data-theme="blue"] .home-search { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] #address, html[data-theme="blue"] #address:focus, html[data-theme="blue"] .home-search input { color: #ffffff; }
+html[data-theme="blue"] .control-button { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); color: #ffffff; }
+html[data-theme="blue"] .browser-slot { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .home { background: #0000cf; }
+html[data-theme="blue"] .home h1 { color: #ffffff; }
+html[data-theme="blue"] .home p, html[data-theme="blue"] .quick-links button { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .remote-preview-slot { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .preview-chrome, html[data-theme="blue"] .preview-chip { background: #0000e8; color: #ffffff; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .modal { background: rgba(0, 0, 90, 0.20); }
+html[data-theme="blue"] .modal-card { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); color: #ffffff; }
+html[data-theme="blue"] .primary-button { background: #ffffff; color: #0000e8; }
+html[data-theme="blue"] .secondary-button { background: #0000cf; border-color: rgba(255, 255, 255, 0.24); color: #ffffff; }
+html[data-theme="blue"] .toast { background: #ffffff; color: #0000e8; }
+html[data-theme="blue"] .sort-menu, html[data-theme="blue"] .checklist { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); color: #ffffff; }
+html[data-theme="blue"] .cloud-signin { background: #0000e8; color: #ffffff; border-color: rgba(255, 255, 255, 0.24); box-shadow: 0 10px 28px rgba(0, 0, 70, 0.22); }
+html[data-theme="blue"] .cloud-signin p { color: #ffffff; }
+html[data-theme="blue"] .cloud-signin button { background: #ffffff; color: #0000e8; }
+html[data-theme="blue"] .settings-note.path-note { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] body { background: #0000cf; color: #ffffff; }
+html[data-theme="blue"] .remote-head, html[data-theme="blue"] .remote-hint { background: #0000e8; color: rgba(255, 255, 255, 0.74); border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] #screen, html[data-theme="blue"] #screen > div { background: #2323f0 !important; }
+html[data-theme="blue"] #remote-empty { background: #0000cf; }
+html[data-theme="blue"] #remote-empty h2, html[data-theme="blue"] h2 { color: #ffffff; }
+html[data-theme="blue"] .bops-stop, html[data-theme="blue"] .bops-pill, html[data-theme="blue"] .bops-action { background: #0000e8; color: #ffffff; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .bops-signin { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); color: #ffffff; }
+html[data-theme="blue"] .signin-form input[type="text"], html[data-theme="blue"] .signin-form input[type="password"] { background: #0000e8; color: #ffffff; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .screen-count button { background: #0000e8; color: #ffffff; }
+html[data-theme="blue"] .screen-grid { background: #0000cf; }
+html[data-theme="blue"] .screen-cell { background: #0000e8; color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.24); box-shadow: none; }
+html[data-theme="blue"] .bot-role { background: #2323f0; color: #ffffff; }
+html[data-theme="blue"] .screen-count button[aria-pressed="true"] { box-shadow: inset 0 0 0 1px #cfdcff; color: #ffffff; }
+html[data-theme="blue"] .screen-cell.active { border-color: #cfdcff; box-shadow: inset 0 0 0 1px #cfdcff; }
+html[data-theme="blue"] .bops-handoff, html[data-theme="blue"] .preview-badge { color: #ffd7bf; }
+html[data-theme="blue"] .preview-live { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .side-switch { background: #0000cf; }
+html[data-theme="blue"] .side-tab:hover { color: #ffffff; }
+html[data-theme="blue"] .side-tab[aria-selected="true"] { background: #0000e8; color: #ffffff; box-shadow: 0 1px 3px rgba(0, 0, 70, 0.22); }
+html[data-theme="blue"] .session-nav-item { color: #ffffff; }
+html[data-theme="blue"] .session-nav-item:hover, html[data-theme="blue"] .all-session:hover, html[data-theme="blue"] .session-search-row:focus-within { background: #0000cf; color: #ffffff; }
+html[data-theme="blue"] .session-nav-item svg, html[data-theme="blue"] .session-search-row { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .session-nav-item kbd { color: rgba(255, 255, 255, 0.74); border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .session-search { color: #ffffff; }
+html[data-theme="blue"] .session-search::placeholder, html[data-theme="blue"] .session-hint, html[data-theme="blue"] .session-group, html[data-theme="blue"] .all-session .session-agent { color: rgba(255, 255, 255, 0.6); }
+html[data-theme="blue"] .session-group::after { background: #2323f0; }
+html[data-theme="blue"] .session-section { color: #cfdcff; }
+html[data-theme="blue"] .session-chip { color: rgba(255, 255, 255, 0.74); border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .session-chip:hover { background: #0000cf; color: #ffffff; }
+html[data-theme="blue"] .session-chip[aria-selected="true"] { background: #0000cf; color: #ffffff; border-color: #cfdcff; }
+html[data-theme="blue"] .client-apps { background: #0000cf; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .client-apps-name { color: #ffffff; }
+html[data-theme="blue"] .client-apps-suite, html[data-theme="blue"] .client-apps-account { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .client-apps-account.on { color: #a8f0c8; }
+html[data-theme="blue"] .client-app { background: #0000e8; color: #ffffff; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .client-app:hover { background: #0000cf; color: #ffffff; }
+html[data-theme="blue"] .client-app-dot { background: #3a3af4; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .client-app-dot.on { background: #a8f0c8; }
+html[data-theme="blue"] .client-apps-menu { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); box-shadow: 0 12px 28px rgba(0, 0, 70, 0.24); }
+html[data-theme="blue"] .client-app-row { color: #ffffff; }
+html[data-theme="blue"] .client-app-row:hover { background: #0000cf; }
+html[data-theme="blue"] .client-app-row.quiet { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .client-app-row.danger { color: #ffc9c9; }
+html[data-theme="blue"] .client-account-input { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); color: #ffffff; }
+html[data-theme="blue"] .all-session.active { background: #2323f0; }
+html[data-theme="blue"] .all-session .session-title { color: #ffffff; }
+html[data-theme="blue"] .all-session.active .session-title { color: #ffffff; }
+html[data-theme="blue"] .session-time { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .session-more { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .session-more:hover { background: #2323f0; color: #ffffff; }
+html[data-theme="blue"] .session-menu { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); box-shadow: 0 12px 28px rgba(0, 0, 70, 0.24); }
+html[data-theme="blue"] .session-menu-item { color: #ffffff; }
+html[data-theme="blue"] .session-menu-item:hover, html[data-theme="blue"] .session-menu-item:focus-visible { background: #0000cf; }
+html[data-theme="blue"] .session-menu-item.danger { color: #ffc9c9; }
+html[data-theme="blue"] .session-rename { background: #0000e8; color: #ffffff; }
+html[data-theme="blue"] .session-archived { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .session-archived:hover, html[data-theme="blue"] .threads-new:hover { color: #ffffff; }
+html[data-theme="blue"] .threads-new:hover { background: #0000cf; }
+html[data-theme="blue"] .tool-chip { background: #0000cf; color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .tool-chip:hover { color: #ffffff; }
+html[data-theme="blue"] .tool-chip.failed { color: #ffc9c9; }
+html[data-theme="blue"] .tool-detail { background: #0000cf; color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .chat-wordmark { color: #ffffff; }
+html[data-theme="blue"] .chat-empty-hint { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .msg.assistant.typing-bubble { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .typing-stop { background: rgba(0, 0, 90, 0.08); }
+html[data-theme="blue"] .typing-stop:hover { background: rgba(0, 0, 90, 0.14); color: #ffffff; }
+html[data-theme="blue"] .agent-card { background: #0000cf; color: #ffffff; }
+html[data-theme="blue"] .agent-card h2, html[data-theme="blue"] .agent-card h3, html[data-theme="blue"] .agent-value, html[data-theme="blue"] .agent-tool, html[data-theme="blue"] .agent-channel-name { color: #ffffff; }
+html[data-theme="blue"] .agent-role, html[data-theme="blue"] .agent-kicker, html[data-theme="blue"] .agent-muted, html[data-theme="blue"] .agent-note, html[data-theme="blue"] .agent-status, html[data-theme="blue"] .agent-subtab, html[data-theme="blue"] .agent-seg, html[data-theme="blue"] .agent-copy, html[data-theme="blue"] .agent-text { color: #ffffff; }
+html[data-theme="blue"] .agent-subtab[aria-selected="true"] { color: #ffffff; box-shadow: inset 0 -2px 0 rgba(0, 0, 70, 0.45); }
+html[data-theme="blue"] .agent-seg[aria-pressed="true"] { color: #ffffff; border-color: rgba(255, 255, 255, 0.5); }
+html[data-theme="blue"] .agent-tool, html[data-theme="blue"] .agent-seg, html[data-theme="blue"] .agent-use { border-color: rgba(255, 255, 255, 0.24); background: #0000e8; color: #ffffff; }
+html[data-theme="blue"] .agent-tool:disabled { opacity: 0.72; }
+html[data-theme="blue"] .agent-subtabs { border-bottom-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .agent-field, html[data-theme="blue"] .agent-block, html[data-theme="blue"] .agent-link, html[data-theme="blue"] .agent-wide, html[data-theme="blue"] .agent-confirm, html[data-theme="blue"] .agent-search, html[data-theme="blue"] .agent-memory { background: #0000e8; border-color: rgba(255, 255, 255, 0.24); color: #ffffff; }
+html[data-theme="blue"] .agent-channel, html[data-theme="blue"] .agent-job { border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .agent-tool:hover:not(:disabled) { background: #0000cf; }
+/* Hand-tuned: inputs a step darker, menus and modals a step lighter, the typing bubble's stop button visible. */
+html[data-theme="blue"] .search-input, html[data-theme="blue"] .session-tools select, html[data-theme="blue"] .remote-composer input, html[data-theme="blue"] .field input, html[data-theme="blue"] .field textarea, html[data-theme="blue"] .field select, html[data-theme="blue"] .modal-card select { background: #0000c4; color: #ffffff; border-color: rgba(255, 255, 255, 0.28); }
+html[data-theme="blue"] .modal-card, html[data-theme="blue"] body.remote-main .model-menu, html[data-theme="blue"] .sort-menu { background: #1414ee; color: #ffffff; border-color: rgba(255, 255, 255, 0.28); }
+html[data-theme="blue"] .modal { background: rgba(0, 0, 60, 0.55); }
+html[data-theme="blue"] .typing-stop { background: rgba(255, 255, 255, 0.2); color: #ffffff; }
+html[data-theme="blue"] .typing-stop:hover { background: rgba(255, 255, 255, 0.32); }
+html[data-theme="blue"] .msg.assistant.typing-bubble { background: #2323f0; color: rgba(255, 255, 255, 0.86); }
+html[data-theme="blue"] .theme-toggle .theme-blue circle { fill: #ffffff; stroke: #ffffff; }
+html[data-theme="blue"] .theme-choice[aria-pressed="true"], html[data-theme="blue"] .theme-choice[aria-pressed="true"]:hover { background: #ffffff; color: #0000e8; border-color: #ffffff; }
+/* Hand-tuned: rules whose light colours live in remote-main.css rather than theme-light.css. */
+html[data-theme="blue"] .lead-card, html[data-theme="blue"] .orb-choice { background: #1414ee; color: #ffffff; box-shadow: 0 8px 22px rgba(0, 0, 70, 0.3); }
+html[data-theme="blue"] .lead-badge { background: #cfdcff; border-color: #1414ee; }
+html[data-theme="blue"] .lead-status, html[data-theme="blue"] body.remote-main .chat-role, html[data-theme="blue"] .phone-note, html[data-theme="blue"] .composer-note, html[data-theme="blue"] .orb-loading, html[data-theme="blue"] .pane-status, html[data-theme="blue"] body.remote-main .model-menu .model-label { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .lead-status.offline { color: #ffd7bf; }
+html[data-theme="blue"] .thread-line.active { background: rgba(255, 255, 255, 0.18); color: #ffffff; }
+html[data-theme="blue"] .thread-line:hover { background: rgba(255, 255, 255, 0.1); }
+html[data-theme="blue"] .thread-dot { background: #cfdcff; }
+html[data-theme="blue"] .bot-role { background: rgba(255, 255, 255, 0.16); color: #ffffff; }
+html[data-theme="blue"] body.remote-main #remote-send { background: #ffffff; color: #0000e8; }
+html[data-theme="blue"] body.remote-main .remote-composer .icon-button.recording { box-shadow: inset 0 0 0 1.5px #ffffff; color: #ffffff; }
+html[data-theme="blue"] body.remote-main .model-menu button[aria-selected="true"], html[data-theme="blue"] .orb-choice[aria-pressed="true"] { box-shadow: inset 0 0 0 2px #ffffff; }
+html[data-theme="blue"] .agent-form .field-label, html[data-theme="blue"] .picker-label { color: rgba(255, 255, 255, 0.86); }
+html[data-theme="blue"] .agent-form input, html[data-theme="blue"] .agent-form textarea, html[data-theme="blue"] .modal-card.agent-dialog input, html[data-theme="blue"] .modal-card.agent-dialog textarea, html[data-theme="blue"] .edit-field input, html[data-theme="blue"] .edit-field textarea, html[data-theme="blue"] .hex-input { background: #0000c4; color: #ffffff; border-color: rgba(255, 255, 255, 0.28); }
+html[data-theme="blue"] .orb-choice { border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .agent-subtab[aria-selected="true"] { box-shadow: inset 0 -2px 0 #ffffff; }
+html[data-theme="blue"] #intelio-vnc { background: #0000c4 !important; }
+html[data-theme="blue"] #intelio-vnc .intelio-vnc-note { color: rgba(255, 255, 255, 0.74) !important; }
+html[data-theme="blue"] input[type="radio"], html[data-theme="blue"] input[type="checkbox"] { accent-color: #ffffff; }
+/* Sessions agent dropdown (#22): a darker blue well, white text, pale-blue chevron. */
+html[data-theme="blue"] .session-tools .session-agent-select { color-scheme: dark; background: #0000c4 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%23cfdcff' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 9px center; border-color: rgba(255, 255, 255, 0.24); color: #ffffff; }
+html[data-theme="blue"] .session-tools .session-agent-select:hover { background-color: #0000cf; border-color: rgba(255, 255, 255, 0.4); color: #ffffff; }
+html[data-theme="blue"] .session-tools .session-agent-select:focus-visible { border-color: #cfdcff; box-shadow: 0 0 0 2px rgba(207, 220, 255, 0.3); }
+html[data-theme="blue"] .session-tools .session-agent-select option { background: #0000e8; color: #ffffff; }

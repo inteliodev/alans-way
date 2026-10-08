@@ -168,3 +168,6 @@ html[data-theme="light"] .chat-empty-hint { color: #8e8e93; }
 html[data-theme="light"] .msg.assistant.typing-bubble { color: #6e6e73; }
 html[data-theme="light"] .typing-stop { background: rgba(0, 0, 0, .08); }
 html[data-theme="light"] .typing-stop:hover { background: rgba(0, 0, 0, .14); color: #1c1c21; }
+/* Sidebar threads (agent view): the selected row stays a soft grey on white. */
+html[data-theme="light"] .thread-line:hover { background: #f3f3f6; }
+html[data-theme="light"] .thread-line.active { background: #ececef; color: #1c1c21; }

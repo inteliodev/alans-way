@@ -195,27 +195,48 @@ function showExtensions() {
   body.append(element('p', 'settings-note', 'This browser is Chromium, not Chrome — Google sync and Chrome’s built-in password manager are not included. For passwords and passkeys, install your manager’s extension from the Web Store and sign in inside it.'));
   renderExtensions();
 }
+// Three appearances, in this order: light, blue (white on electric blue) and dark (default).
+// The bottom-left button walks light -> blue -> dark and shows the next one.
+const THEME_ORDER = ['light', 'blue', 'dark'];
+const THEME_LABEL = { light: 'Light', dark: 'Dark', blue: 'Blue' };
+const THEME_VARS = {
+  light: { '--bg': '#f6f6f8', '--text': '#1c1c21', '--muted': '#5e5e68', '--line': '#d5d5dc', '--panel': '#ffffff', '--intelio-surface': '#ffffff' },
+  blue: { '--bg': '#0000e8', '--text': '#ffffff', '--muted': 'rgba(255, 255, 255, 0.74)', '--line': 'rgba(255, 255, 255, 0.24)', '--panel': '#1414ee', '--intelio-surface': '#1414ee' },
+};
+function themeName(theme) {
+  const raw = String(theme || '').trim().toLowerCase();
+  return raw === 'light' || raw === 'blue' ? raw : 'dark';
+}
+function followingTheme(theme) {
+  return THEME_ORDER[(THEME_ORDER.indexOf(themeName(theme)) + 1) % THEME_ORDER.length];
+}
 function applyTheme(theme) {
-  const next = String(theme || '').trim().toLowerCase() === 'light' ? 'light' : 'dark';
+  const next = themeName(theme);
   const root = document.documentElement;
   root.dataset.theme = next;
-  root.style.colorScheme = next;
-  const lightVars = { '--bg': '#f6f6f8', '--text': '#1c1c21', '--muted': '#5e5e68', '--line': '#d5d5dc', '--panel': '#ffffff', '--intelio-surface': '#ffffff' };
-  if (next === 'light') {
-    for (const [key, value] of Object.entries(lightVars)) root.style.setProperty(key, value);
-  } else {
-    for (const [key, value] of Object.entries(lightVars)) {
+  root.style.colorScheme = next === 'light' ? 'light' : 'dark';
+  for (const [name, vars] of Object.entries(THEME_VARS)) {
+    if (name === next) continue;
+    for (const [key, value] of Object.entries(vars)) {
       if (root.style.getPropertyValue(key).trim().toLowerCase() === value) root.style.removeProperty(key);
     }
   }
+  for (const [key, value] of Object.entries(THEME_VARS[next] || {})) root.style.setProperty(key, value);
   const button = $('theme-toggle');
   if (!button) return;
-  const toDark = next === 'light';
-  button.title = toDark ? 'Dark mode' : 'Light mode';
-  button.setAttribute('aria-label', button.title);
-  button.setAttribute('aria-pressed', String(next === 'light'));
-  button.querySelector('.theme-moon')?.classList.toggle('hidden', !toDark);
-  button.querySelector('.theme-sun')?.classList.toggle('hidden', toDark);
+  const after = followingTheme(next);
+  button.title = `${THEME_LABEL[after]} theme`;
+  button.setAttribute('aria-label', `Switch to the ${THEME_LABEL[after]} theme`);
+  button.dataset.theme = next;
+  button.querySelector('.theme-moon')?.classList.toggle('hidden', after !== 'dark');
+  button.querySelector('.theme-sun')?.classList.toggle('hidden', after !== 'light');
+  button.querySelector('.theme-blue')?.classList.toggle('hidden', after !== 'blue');
+  for (const choice of document.querySelectorAll('[data-theme-choice]')) choice.setAttribute('aria-pressed', String(choice.dataset.themeChoice === next));
+}
+function chooseTheme(choice) {
+  const next = themeName(choice);
+  applyTheme(next);
+  command('settings', { theme: next });
 }
 function hostCopy() {
   return state?.host || {
@@ -713,9 +734,18 @@ function showSettings(profile) {
   const body = $('modal-body'), field = element('div', 'field');
   const themeRow = element('div', 'setting-row');
   themeRow.append(element('span', '', 'Appearance'));
-  const themeButton = element('button', 'secondary-button', state.theme === 'light' ? 'Light' : 'Dark');
-  themeButton.onclick = () => { const next = state.theme === 'light' ? 'dark' : 'light'; applyTheme(next); command('settings', { theme: next }); };
-  themeRow.append(themeButton);
+  const themePicker = element('div', 'theme-picker');
+  themePicker.setAttribute('role', 'group');
+  themePicker.setAttribute('aria-label', 'Appearance');
+  for (const name of THEME_ORDER) {
+    const choice = element('button', `secondary-button theme-choice theme-choice-${name}`, THEME_LABEL[name]);
+    choice.type = 'button';
+    choice.dataset.themeChoice = name;
+    choice.setAttribute('aria-pressed', String(themeName(state.theme) === name));
+    choice.onclick = () => chooseTheme(name);
+    themePicker.append(choice);
+  }
+  themeRow.append(themePicker);
   body.append(themeRow, element('hr', 'section-divider'));
   const vaultHead = element('h3', '', 'Saved logins');
   const vaultNote = element('p', 'settings-note', 'Site and username only. Passwords stay in this profile’s encrypted vault.');
@@ -913,9 +943,7 @@ function onThemeToggle() {
   const now = Date.now();
   if (now - themeStamp < 400) return;
   themeStamp = now;
-  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  applyTheme(next);
-  command('settings', { theme: next });
+  chooseTheme(followingTheme(document.documentElement.dataset.theme));
 }
 const themeToggle = $('theme-toggle');
 themeToggle.addEventListener('pointerup', onThemeToggle);

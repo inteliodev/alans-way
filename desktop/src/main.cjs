@@ -29,7 +29,7 @@ const { loadPreferences, initialDesktopTab, resolveUserDataDir } = require('./in
 const { createVaultStore } = require('./intelio/vault.cjs');
 const { usesRemoteVault } = require('./intelio/remote-vault.cjs');
 const { buildFill, publicFill, fieldValue } = require('./intelio/login-fill.cjs');
-const { normalizeTheme, themeVars } = require('./intelio/theme.cjs');
+const { normalizeTheme, themeVars, colorScheme, themeBackground } = require('./intelio/theme.cjs');
 const clientApps = require('./intelio/client-apps.cjs');
 const { hostLabels, hermesChecklist } = require('./intelio/host-labels.cjs');
 const { checkTailscale, firstRunMessage } = require('./intelio/tailscale.cjs');
@@ -166,10 +166,10 @@ function currentTheme() { return normalizeTheme(prefs?.theme); }
 let pushedTelegramTheme = '';
 function applyThemeChrome() {
   const theme = currentTheme();
-  nativeTheme.themeSource = theme;
-  const background = theme === 'light' ? '#f6f6f8' : (intelioSession?.public?.brand?.tokens?.background || '#0a0a0a');
+  nativeTheme.themeSource = colorScheme(theme);
+  const background = themeBackground(theme, intelioSession?.public?.brand?.tokens?.background || '#0a0a0a');
   if (win && !win.isDestroyed()) win.setBackgroundColor(background);
-  if (remoteView && !remoteView.webContents.isDestroyed()) remoteView.setBackgroundColor(theme === 'light' ? '#f3f3f6' : '#101011');
+  if (remoteView && !remoteView.webContents.isDestroyed()) remoteView.setBackgroundColor(theme === 'light' ? '#f3f3f6' : theme === 'blue' ? '#0000c4' : '#101011');
   if (theme === pushedTelegramTheme) return;
   pushedTelegramTheme = theme;
   if (telegramView && !telegramView.webContents.isDestroyed()) telegramView.webContents.send('workspace:theme', theme);
@@ -715,7 +715,7 @@ function registerIpc() {
         if (typeof value.intelioProfile === 'string') prefs.intelioProfile = value.intelioProfile.trim();
         if (['ask', 'block', 'approximate'].includes(value.locationDefault)) prefs.locationDefault = value.locationDefault;
         if (value.sidebarTab === 'agents' || value.sidebarTab === 'sessions') prefs.sidebarTab = value.sidebarTab;
-        if (value.theme === 'light' || value.theme === 'dark') prefs.theme = value.theme;
+        if (value.theme === 'light' || value.theme === 'dark' || value.theme === 'blue') prefs.theme = value.theme;
         if ([1, 2, 3, 4].includes(Number(value.screenGrid))) prefs.screenGrid = Number(value.screenGrid);
         if (Number.isInteger(Number(value.activeScreen)) && Number(value.activeScreen) >= 0 && Number(value.activeScreen) < 4) prefs.activeScreen = Number(value.activeScreen);
         if (Number.isFinite(value.chatWidth)) prefs.chatWidth = Math.max(320, Math.min(680, value.chatWidth));
@@ -1213,8 +1213,8 @@ function startApi() {
 }
 function createWindow() {
   const bootTheme = currentTheme();
-  nativeTheme.themeSource = bootTheme;
-  const windowOptions = { width: 1550, height: 980, minWidth: 1120, minHeight: 680, backgroundColor: bootTheme === 'light' ? '#f6f6f8' : (intelioSession?.public?.brand?.tokens?.background || '#0a0a0a'), title: intelioTitle(), icon: nativeImage.createFromBuffer(pngIcon()),
+  nativeTheme.themeSource = colorScheme(bootTheme);
+  const windowOptions = { width: 1550, height: 980, minWidth: 1120, minHeight: 680, backgroundColor: themeBackground(bootTheme, intelioSession?.public?.brand?.tokens?.background || '#0a0a0a'), title: intelioTitle(), icon: nativeImage.createFromBuffer(pngIcon()),
     webPreferences: { preload: path.join(ROOT, 'preload.bundle.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: rendererSandbox() } };
   if (process.platform === 'darwin') { windowOptions.titleBarStyle = 'hiddenInset'; windowOptions.trafficLightPosition = { x: 18, y: 18 }; }
   win = new BrowserWindow(windowOptions);
@@ -1247,7 +1247,7 @@ function createWindow() {
     const theme = currentTheme();
     const vars = themeVars(theme);
     const paint = vars
-      ? `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.colorScheme=${JSON.stringify(theme)};${Object.entries(vars).map(([key, value]) => `document.documentElement.style.setProperty(${JSON.stringify(key)},${JSON.stringify(value)})`).join(';')}`
+      ? `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.colorScheme=${JSON.stringify(colorScheme(theme))};${Object.entries(vars).map(([key, value]) => `document.documentElement.style.setProperty(${JSON.stringify(key)},${JSON.stringify(value)})`).join(';')}`
       : `document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.colorScheme=${JSON.stringify(theme)}`;
     contents.executeJavaScript(paint).catch(() => {});
   };

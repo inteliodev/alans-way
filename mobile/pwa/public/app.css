@@ -978,3 +978,55 @@ html[data-theme="dark"] .chat-card { background: #1c1c1e; }
 .vnc-screen, #vnc-screen { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; background: var(--bg); }
 .vnc-screen > div, #vnc-screen > div { position: absolute; inset: 0; }
 .stage, .feed, .home-list, .browser-sheet, .profile-sheet { overflow-x: hidden; }
+
+/* Blue appearance: white on electric blue (#0000e8). Last in the file so it
+   wins over the light media query. No yellow or lime. */
+html[data-theme="blue"] {
+  color-scheme: dark;
+  --bg: #0000e8;
+  --text: #ffffff;
+  --muted: rgba(255, 255, 255, 0.74);
+  --blue: #ffffff;
+  --blue-ink: #0000e8;
+  --bubble: #2323f0;
+  --user: #ffffff;
+  --line: rgba(255, 255, 255, 0.24);
+  --green: #a8f0c8;
+  --green-bg: rgba(168, 240, 200, 0.18);
+  --red: #ffc9c9;
+  --chip: rgba(35, 35, 240, 0.9);
+  --bar: rgba(0, 0, 200, 0.72);
+  --shadow: 0 18px 40px rgba(0, 0, 70, 0.45);
+  --fill: #1414ee;
+  --card: #1414ee;
+  --glow: 0 10px 28px rgba(0, 0, 70, 0.4);
+}
+html[data-theme="blue"] .screen { background: #0000e8; }
+html[data-theme="blue"] .drawer { background: rgba(0, 0, 200, 0.96); color: #ffffff; }
+html[data-theme="blue"] .lead-card, html[data-theme="blue"] .chat-card { background: #1414ee; color: #ffffff; }
+html[data-theme="blue"] .thread-line.on { background: #2323f0; }
+html[data-theme="blue"] .bubble.user { background: #ffffff; color: #0000e8; }
+html[data-theme="blue"] .bubble.bot { background: #2323f0; color: #ffffff; }
+html[data-theme="blue"] .bubble.bot.typing { color: rgba(255, 255, 255, 0.86); }
+html[data-theme="blue"] .lead-status, html[data-theme="blue"] .agent-role { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] pre, html[data-theme="blue"] code { background: #0000b4; color: #ffffff; }
+html[data-theme="blue"] input::placeholder, html[data-theme="blue"] textarea::placeholder { color: rgba(255, 255, 255, 0.62); }
+html[data-theme="blue"] .bops-signin input[type="text"], html[data-theme="blue"] .bops-signin input[type="password"] { background: #0000c4; color: #ffffff; border-color: rgba(255, 255, 255, 0.28); }
+html[data-theme="blue"] .composer .send, html[data-theme="blue"] .jump, html[data-theme="blue"] .block, html[data-theme="blue"] .round.on, html[data-theme="blue"] .control-button, html[data-theme="blue"] .a2hs-x { color: #0000e8; }
+html[data-theme="blue"] .block.quiet { color: #ffffff; }
+html[data-theme="blue"] .hot, html[data-theme="blue"] .end { color: #0000e8; }
+html[data-theme="blue"] .name-pill { background: rgba(20, 20, 238, 0.86); color: #ffffff; }
+html[data-theme="blue"] .name-pill-status, html[data-theme="blue"] .read-receipt, html[data-theme="blue"] .stop-all, html[data-theme="blue"] .bops-status-line, html[data-theme="blue"] .call-pill, html[data-theme="blue"] .agent-role, html[data-theme="blue"] .section-label, html[data-theme="blue"] .chat-card span, html[data-theme="blue"] .phone-note { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .bops-pill.focused { box-shadow: inset 0 0 0 1px #ffffff; }
+html[data-theme="blue"] .lead-badge { border-color: #1414ee; }
+html[data-theme="blue"] input[type="radio"], html[data-theme="blue"] input[type="checkbox"] { accent-color: #ffffff; }
+html[data-theme="blue"] .theme-blue-dot { fill: #0000e8; stroke: #ffffff; }
+html[data-theme="blue"] .session-filter { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .session-filter-select { color-scheme: dark; background: #0000c4 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%23cfdcff' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 12px center; border-color: rgba(255, 255, 255, 0.24); color: #ffffff; }
+html[data-theme="blue"] .session-filter-select:focus-visible { border-color: #cfdcff; box-shadow: 0 0 0 3px rgba(207, 220, 255, 0.3); }
+html[data-theme="blue"] .session-filter-select option { background: #0000e8; color: #ffffff; }
+html[data-theme="blue"] .thread-agent { color: rgba(255, 255, 255, 0.74); }
+.theme-blue-dot { fill: #0000e8; stroke: currentColor; }
+.theme-picker { display: inline-flex; gap: 6px; padding: 4px; border-radius: 14px; background: var(--fill); border: 1px solid var(--line); }
+.theme-choice { min-height: 40px; padding: 0 16px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font-size: 15px; }
+.theme-choice[aria-pressed="true"] { background: var(--text); color: var(--bg); font-weight: 600; }

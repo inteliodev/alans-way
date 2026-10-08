@@ -5,17 +5,20 @@ const path = require('node:path');
 const { normalizeTheme } = require('../src/intelio/theme.cjs');
 const { loadPreferences } = require('../src/intelio/preferences.cjs');
 
-test('theme normalizes to dark unless the saved value is light', () => {
+test('theme normalizes to dark unless the saved value is light or blue', () => {
   assert.equal(normalizeTheme(undefined), 'dark');
   assert.equal(normalizeTheme(''), 'dark');
-  assert.equal(normalizeTheme('blue'), 'dark');
+  assert.equal(normalizeTheme('blue'), 'blue');
+  assert.equal(normalizeTheme(' Blue '), 'blue');
+  assert.equal(normalizeTheme('navy'), 'dark');
   assert.equal(normalizeTheme('dark'), 'dark');
   assert.equal(normalizeTheme('light'), 'light');
 });
 
-test('preferences keep a saved light theme and drop junk', () => {
+test('preferences keep a saved light or blue theme and drop junk', () => {
   assert.equal(loadPreferences({ text: null, platform: 'win32' }).prefs.theme, 'dark');
   assert.equal(loadPreferences({ text: JSON.stringify({ theme: 'light' }), platform: 'win32' }).prefs.theme, 'light');
+  assert.equal(loadPreferences({ text: JSON.stringify({ theme: 'blue' }), platform: 'linux' }).prefs.theme, 'blue');
   assert.equal(loadPreferences({ text: JSON.stringify({ theme: 'sepia' }), platform: 'darwin' }).prefs.theme, 'dark');
 });
 

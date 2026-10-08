@@ -353,35 +353,11 @@
     card.onclick = () => root.openAgentDetails?.(lead.id);
   }
 
-  function paintWatching() {
-    const wrap = $('sidebar-watching-wrap');
-    const host = $('sidebar-watching');
-    if (!wrap || !host) return;
-    const rows = (ui.screens || []).filter((row) => row && row.host);
-    host.replaceChildren();
-    wrap.classList.toggle('hidden', ui.sidebar !== 'agents' || !rows.length);
-    for (const row of rows) {
-      const button = el('button', 'watch-row');
-      button.type = 'button';
-      const same = rows.filter((item) => item.profileId === row.profileId).length;
-      const extra = same > 1 ? ` ${row.screen}` : '';
-      const name = shownAgent(row.profileId, row.name);
-      button.append(el('span', 'watch-eye', '◉'), el('strong', '', row.host), el('span', '', ` · ${name}'s screen${extra}`));
-      button.onclick = () => {
-        ui.selected = row.profileId;
-        root.openAgentComputer?.(row.profileId);
-        if (!root.openAgentComputer) root.openAgentDetails?.(row.profileId);
-      };
-      host.append(button);
-    }
-  }
-
   function paintAgents() {
     const list = $('bot-list');
     if (!list) return;
     const rows = switcherRows(ui.agents, { query: ui.query, selected: ui.selected });
     paintLead(rows);
-    paintWatching();
     list.replaceChildren();
     for (const row of rows.filter((item) => !item.selected)) {
       const node = el('div', `bot-row${row.selected ? ' selected' : ''}`);
@@ -1823,7 +1799,7 @@
       .then(() => root.remoteHermes.request('screens'))
       .then((screens) => { ui.screens = Array.isArray(screens?.data) ? screens.data : []; })
       .catch(() => { ui.screens = ui.screens || []; })
-      .finally(() => { ui.loadingScreens = null; paintWatching(); });
+      .finally(() => { ui.loadingScreens = null; });
     return ui.loadingScreens;
   }
 
@@ -1867,7 +1843,7 @@
 
   /**
    * Full refresh (connection changed) reselects the agent. A quiet refresh
-   * (timer, window focus) only updates agents, threads and watching. Never two
+   * (timer, window focus) only updates agents, threads and screens. Never two
    * at once: a full refresh asked for mid-flight runs right after.
    */
   function refresh({ quiet = false } = {}) {
