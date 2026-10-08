@@ -491,8 +491,30 @@ async function openBot(id) {
 }
 let loginVault = null;
 function loginVaultStore() {
-  if (!loginVault) loginVault = createVaultStore({ root: process.env.INTELIO_VAULT_ROOT || path.join(app.getPath('home'), '.hermes', 'profiles') });
+  if (!loginVault) {
+    loginVault = createVaultStore({
+      root: process.env.INTELIO_VAULT_ROOT || path.join(app.getPath('home'), '.hermes', 'profiles'),
+      home: app.getPath('home'),
+      masterKey: localVaultKey,
+    });
+  }
   return loginVault;
+}
+// On this computer the vault master key is wrapped by the OS keychain
+// (Keychain, DPAPI, libsecret). Without one, vault.cjs uses its own 0600 key
+// file under ~/.config/intelio/keys, away from the data.
+function localVaultKey() {
+  const file = path.join(app.getPath('userData'), 'vault-master.bin');
+  if (fs.existsSync(file)) {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('The system keychain is locked.');
+    return Buffer.from(safeStorage.decryptString(fs.readFileSync(file)), 'base64');
+  }
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  // A vault already opened with the plain key file keeps that key.
+  if (fs.existsSync(process.env.INTELIO_VAULT_KEY_FILE || path.join(app.getPath('home'), '.config', 'intelio', 'keys', 'vault.key'))) return null;
+  const key = crypto.randomBytes(32);
+  fs.writeFileSync(file, safeStorage.encryptString(key.toString('base64')), { mode: 0o600 });
+  return key;
 }
 function vaultProfile(value) {
   return value?.profile || prefs.remoteHermes?.profile || 'intelio';
@@ -698,6 +720,12 @@ function registerIpc() {
       case 'vault-delete':
         if (usesRemoteVault(prefs)) return remoteVault('delete', value);
         return { logins: loginVaultStore().remove(vaultProfile(value), value.domain) };
+      case 'vault-prompts':
+        if (usesRemoteVault(prefs)) return remoteVault('prompts', value);
+        return { ok: true, prompts: [] };
+      case 'vault-dismiss':
+        if (usesRemoteVault(prefs)) return remoteVault('dismiss', value);
+        return { ok: true };
       case 'fill-saved-login':
         if (usesRemoteVault(prefs)) return remoteVault('fill', value);
         return loginVaultStore().toolResult(vaultProfile(value), value.site);

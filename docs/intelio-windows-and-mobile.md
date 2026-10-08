@@ -218,19 +218,38 @@ A gateway restart is required. Hermes loads plugins when the gateway process sta
 
 Remote mode on the laptop posts Submit, the saved-login list, and delete to the VPS at `http://<tailnet-host>:8643` with the profile API key. It does not write `~/.hermes` on the laptop. Set `INTELIO_VAULT_ORIGIN` only for `app.intelio-ai.com` or another tailnet URL.
 
-Vault profiles are the directories under `~/.hermes/profiles` plus `hermes profile list`. The key is read from `$CREDENTIALS_DIRECTORY/vault.key.<profile>` when systemd loaded one, and otherwise from `vault.key` (mode 0600). To move a key into systemd-creds:
+### Saved logins (vault v2)
+
+Vault profiles are the directories under `~/.hermes/profiles` plus `hermes profile list`. The vault itself lives outside `~/.hermes`, so a Hermes update cannot collide with it (Hermes core keeps its own model-blind vault in `~/.hermes/profiles/<profile>/vault/`, a directory; intelio never reads or writes it):
+
+- data: `~/.local/share/intelio/vault/<profile>.vault` (folder 0700, file 0600, atomic writes). `INTELIO_VAULT_DIR` moves it.
+- key: one 32-byte master key, apart from the data. First found of `$CREDENTIALS_DIRECTORY/intelio-vault.key` (systemd credential), `INTELIO_VAULT_KEY_FILE`, `~/.config/intelio/keys/vault.key` (folder 0700, file 0600). A group- or world-readable key file is tightened to 0600; one owned by another user is refused. The key may not sit inside the data folder or `~/.hermes`.
+- crypto: AES-256-GCM with a per-agent key `HKDF-SHA256(master, salt "intelio-vault/v2", info "login-vault:<profile>")`; the agent id is also the additional data. A file copied to another agent does not open.
+- a v1 file at `~/.hermes/profiles/<profile>/vault` (key beside it) is migrated on first use, checked, and removed.
+
+The desktop app's local (non-remote) vault wraps its master key with the OS keychain through Electron `safeStorage`.
+
+On systemd 256 or newer the key can be held encrypted at rest by systemd-creds:
 
 ```sh
-systemd-creds encrypt --name=vault.key.hhp --uid="$(id -u)" \
-  ~/.hermes/profiles/hhp/vault.key /etc/credstore.encrypted/intelio-vault-hhp
+systemd-creds encrypt --name=intelio-vault.key --uid="$(id -u)" \
+  ~/.config/intelio/keys/vault.key /etc/credstore.encrypted/intelio-vault
 ```
-
-User unit drop-in:
 
 ```
 [Service]
-LoadCredentialEncrypted=vault.key.hhp:/etc/credstore.encrypted/intelio-vault-hhp
+LoadCredentialEncrypted=intelio-vault.key:/etc/credstore.encrypted/intelio-vault
 ```
+
+Same-user limit: Hermes agents with a terminal tool run as the same Unix user as the PWA service, so a determined agent could read the key file. Full isolation needs the PWA service (the filler) under its own user.
+
+### Sign-in card
+
+The PWA service looks for a visible sign-in form in each agent browser that has `bot-desktop/cdp.url` or `allow-shared-browser` (every 6 s, `INTELIO_LOGIN_WATCH_MS`, `0` turns it off; also on each chat poll). The scan reads booleans only: a password box is showing and empty, or a username-first page. With a saved login for that site it fills and submits it, and the chat shows “Signed in with saved login for github.com”. Without one the chat shows a card: “intelio is trying to sign in to github.com”, username, masked password with Show, “Remember for this agent” (on), Cancel and Sign in. The values go to `POST /api/vault/login`, are typed into the page, and are saved only when Remember is on. If the same form comes straight back, the card says the login did not work; it does not retry by itself. Cancel keeps that site quiet for 10 minutes.
+
+Routes (profile key, Access, or Tailscale identity as for the other vault routes): `GET /api/vault/prompts?profile=`, `POST /api/vault/prompt` (`{site, reason, wait}`), `POST /api/vault/dismiss`, `GET /api/vault/logins?all=1` (every agent, for a signed-in person only; a profile key sees its own). No response or log carries a password.
+
+The `intelio-vault` plugin adds `request_login(site, reason, wait_seconds)`. It uses the saved login, or shows the card and waits up to 110 s, and returns only ok, filled, saved, pending, status, domain and username. Restart `hermes-gateway` after copying the plugin to register it.
 
 Bot Desktop maximize reads `~/.hermes/profiles/<profile>/bot-desktop/display` (`20` or `:20`) and sets `XAUTHORITY` to that profile’s `bot-desktop/Xauthority`. It walks only X sockets that exist, uses wmctrl when `wmctrl -m` sees a window manager, and uses xdotool when it does not (`:99`). No Chromium window, including xdotool’s `no Chromium window found`, is logged once when that state starts. It does not print success when xdotool fails. The watcher is a user unit:
 
@@ -254,7 +273,7 @@ alans-way-agents `setup.sh` is not writable from this checkout. Add these two li
 
 Parallel tasks are split in the Intelio app, not by a Hermes tool. A message with several lines, or two long parts joined by “and”, becomes one status pill per part. The app opens a Hermes session per part and sends them together. Stop all marks the pills stopped and drops results that arrive later. The focused pill selects that task’s caption on the Bot Desktop preview (`/api/display/ws`, one screen per profile) and draws that profile’s color on the preview chrome. The badge reads “Intelio is browsing” (or the selected agent’s name).
 
-A login wall shows an in-chat Secure Sign-in card: site mark, domain, username, masked password, masked one-time code, Save login, Submit, and Do it on screen. Submit sends those values write-only over the authenticated harness channel to the filler. They are not copied into the task, the model context, transcripts, or logs. Save login stores them in that profile’s encrypted vault (`~/.hermes/profiles/<profile>/vault`, AES-256-GCM, key in `vault.key` mode 0600, additional data is the profile id). PRC cannot read HHP. Settings lists site and username only, and can delete a row. `fill_saved_login(site)` returns domain and username. The secret stays in the filler payload.
+A login wall shows an in-chat Secure Sign-in card: site mark, domain, username, masked password, masked one-time code, Save login, Submit, and Do it on screen. Submit sends those values write-only over the authenticated harness channel to the filler. They are not copied into the task, the model context, transcripts, or logs. Save login stores them in that profile’s encrypted vault (see Saved logins above). PRC cannot read HHP. Settings lists site and username only, and can delete a row. `fill_saved_login(site)` returns domain and username. The secret stays in the filler payload.
 
 A payment, or any other pause, sets the task to paused and shows one line: “Payment paused. Intelio does not submit payments.” or “Paused.” There is no approval card.
 

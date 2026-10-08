@@ -502,6 +502,37 @@
         return { logins: json.logins || [] };
       } catch { return { logins: [] }; }
     }
+    // Saved logins. Typed values go straight to the vault route; replies
+    // carry no password.
+    if (name === 'fill-login') {
+      const profile = value.profile || 'intelio';
+      return fetchJson('/api/vault/login', {
+        method: 'POST',
+        profile,
+        body: {
+          profile,
+          promptId: value.promptId || '',
+          domain: value.domain || '',
+          username: value.username || '',
+          password: value.password || '',
+          otp: value.otp || '',
+          save: value.save === true,
+          submit: value.submit === true,
+          selectors: value.selectors || null,
+        },
+      });
+    }
+    if (name === 'vault-prompts') {
+      const profile = value.profile || 'intelio';
+      try {
+        const json = await fetchJson(`/api/vault/prompts?profile=${encodeURIComponent(profile)}`, { profile });
+        return { ok: true, prompts: json.prompts || [] };
+      } catch { return { ok: false, prompts: [] }; }
+    }
+    if (name === 'vault-dismiss') {
+      const profile = value.profile || 'intelio';
+      return fetchJson('/api/vault/dismiss', { method: 'POST', profile, body: { profile, promptId: value.promptId || '' } });
+    }
     if (name === 'vault-delete') {
       const profile = value.profile || 'intelio';
       const json = await fetchJson('/api/vault/logins', { method: 'DELETE', profile, body: { profile, domain: value.domain || '' } });

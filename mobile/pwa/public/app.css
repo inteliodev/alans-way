@@ -956,3 +956,37 @@ html[data-theme="dark"] .chat-card { background: #1c1c1e; }
 .vnc-screen, #vnc-screen { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; background: var(--bg); }
 .vnc-screen > div, #vnc-screen > div { position: absolute; inset: 0; }
 .stage, .feed, .home-list, .browser-sheet, .profile-sheet { overflow-x: hidden; }
+/* In-chat sign-in card (desktop/src/intelio/login-prompt.cjs). Neutral grey. */
+.login-cards { display: flex; flex-direction: column; gap: 8px; align-self: stretch; margin: 6px 0 4px; }
+.login-cards[hidden] { display: none; }
+.login-card { border: 1px solid var(--line); border-radius: 18px; background: var(--card); color: var(--text); padding: 14px; box-shadow: var(--glow); }
+.login-card.is-notice { padding: 10px 12px; box-shadow: none; }
+.login-card-head { display: flex; align-items: center; gap: 10px; }
+.login-card-mark { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 10px; background: var(--bubble); display: flex; align-items: center; justify-content: center; font-weight: 650; }
+.login-card.is-notice .login-card-mark { width: 26px; height: 26px; border-radius: 8px; font-size: 13px; }
+.login-card-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.login-card-title { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.login-card-sub { font-size: 13px; color: var(--muted); line-height: 1.35; overflow-wrap: anywhere; }
+.login-card-close { border: 0; background: transparent; color: var(--muted); font-size: 20px; width: 32px; height: 32px; border-radius: 10px; }
+.login-card-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.login-card-field { display: flex; flex-direction: column; gap: 5px; }
+.login-card-label { font-size: 12px; color: var(--muted); }
+.login-card-input { width: 100%; height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 16px; outline: none; }
+.login-card-input:focus { border-color: var(--muted); }
+.login-card-secret { position: relative; display: flex; }
+.login-card-secret .login-card-input { padding-right: 70px; }
+.login-card-reveal { position: absolute; right: 6px; top: 6px; height: 32px; padding: 0 12px; border: 0; border-radius: 9px; background: var(--bubble); color: var(--text); font-size: 13px; }
+.login-card-remember { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.login-card-remember input { width: 18px; height: 18px; margin: 0; accent-color: var(--text); }
+.login-card-error { margin: 0; font-size: 13px; color: var(--red); }
+.login-card-error[hidden] { display: none; }
+.login-card-actions { display: flex; gap: 8px; }
+.login-card-cancel, .login-card-submit { flex: 1; height: 44px; border-radius: 12px; font-size: 15px; }
+.login-card-cancel { border: 1px solid var(--line); background: transparent; color: var(--text); }
+.login-card-submit { border: 0; background: var(--text); color: var(--bg); font-weight: 600; }
+.login-card-submit[disabled], .login-card-cancel[disabled] { opacity: .55; }
+.saved-logins { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 12px; }
+.saved-login { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.saved-login-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.saved-login-main span { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.saved-login-delete { border: 1px solid var(--line); background: transparent; color: var(--red); border-radius: 10px; height: 34px; padding: 0 12px; font-size: 14px; }

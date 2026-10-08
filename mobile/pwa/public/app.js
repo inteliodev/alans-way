@@ -1510,6 +1510,7 @@
   }
 
   function fillThread(thread, messages) {
+    const keepFocus = loginFocus();
     thread.replaceChildren();
     const working = Boolean(state.thinking || (state.bops?.tasks || []).some((task) => task.status === 'running'));
     const stopAll = () => {
@@ -1531,6 +1532,7 @@
     }
     const block = bopsBlock();
     if (block) thread.append(block);
+    mountLoginCards(thread, keepFocus);
     if (state.call?.active) thread.prepend(el('div', 'call-pill', `in call ${clock(callElapsed(), 'pill')}`));
     else if (state.call?.endedLabel) thread.prepend(el('div', 'call-pill', state.call.endedLabel));
     queueMicrotask(() => {
@@ -1952,7 +1954,7 @@
     saved.type = 'button';
     saved.addEventListener('click', () => openSavedLogins(''));
     wrap.append(saved);
-    wrap.append(el('p', '', 'Domain and username only. The password stays in this agent’s vault.'));
+    wrap.append(el('p', '', 'Site, username, agent and last use for every agent. Passwords stay encrypted on your server and are never shown.'));
     wrap.append(el('h2', '', 'Appearance'));
     wrap.append(themeIconButton(), el('p', '', 'Light is the default. Your choice is saved on this device.'));
     wrap.append(el('h2', '', 'About'));
@@ -1985,16 +1987,48 @@
     setTimeout(() => { if (sheet.isConnected) sheet.dataset.ready = '1'; }, 450);
   }
 
+  function loginWhen(at) {
+    const ms = Number(at) || 0;
+    if (!ms) return 'Not used yet';
+    const mins = Math.round((Date.now() - ms) / 60000);
+    if (mins < 1) return 'Used just now';
+    if (mins < 60) return `Used ${mins} min ago`;
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return `Used ${hours} h ago`;
+    const days = Math.round(hours / 24);
+    return days < 30 ? `Used ${days} d ago` : `Used ${new Date(ms).toLocaleDateString()}`;
+  }
+
+  // Every agent's saved logins: site, username, agent, last used, Delete.
+  // The list route never returns a password.
   function loginsSheet(extra) {
     const frag = document.createDocumentFragment();
     frag.append(el('h2', '', 'Saved logins'));
     const rows = Array.isArray(extra.logins) ? extra.logins : [];
-    if (!rows.length) frag.append(el('p', '', 'No saved logins for this agent.'));
+    if (!rows.length) frag.append(el('p', '', 'No saved logins yet. When an agent signs in to a site, leave Remember for this agent on.'));
+    const list = el('div', 'saved-logins');
     for (const row of rows) {
       const domain = String(row.domain || '');
-      const username = String(row.username || '');
-      frag.append(el('p', 'login-row', `${domain} · ${username}`));
+      const line = el('div', 'saved-login');
+      const main = el('div', 'saved-login-main');
+      main.append(el('strong', '', domain), el('span', '', [String(row.username || '') || 'No username', agentLabel({ id: row.profile }), loginWhen(row.lastUsedAt)].join(' · ')));
+      const del = el('button', 'saved-login-delete', 'Delete');
+      del.type = 'button';
+      del.setAttribute('aria-label', `Delete saved login for ${domain}`);
+      del.addEventListener('click', async () => {
+        if (del.dataset.confirm !== '1') { del.dataset.confirm = '1'; del.textContent = 'Delete?'; return; }
+        del.disabled = true;
+        await fetch('/api/vault/logins', {
+          method: 'DELETE',
+          headers: profileHeaders(row.profile, { 'content-type': 'application/json' }),
+          body: JSON.stringify({ profile: row.profile, domain }),
+        }).catch(() => null);
+        openSavedLogins(extra.domain || '');
+      });
+      line.append(main, del);
+      list.append(line);
     }
+    frag.append(list);
     const add = el('button', 'block', 'Add a login');
     add.type = 'button';
     add.addEventListener('click', () => openSheet('signin', { domain: extra.domain || '' }));
@@ -2005,12 +2039,81 @@
   async function openSavedLogins(domain) {
     let logins = [];
     try {
-      const response = await fetch('/api/vault/logins', { headers: profileHeaders(state.bot?.id) });
+      const response = await fetch('/api/vault/logins?all=1', { headers: profileHeaders(state.bot?.id) });
       const body = await response.json();
-      logins = (Array.isArray(body.logins) ? body.logins : []).map((row) => ({ domain: String(row.domain || ''), username: String(row.username || '') }));
+      logins = (Array.isArray(body.logins) ? body.logins : []).map((row) => ({
+        domain: String(row.domain || ''),
+        username: String(row.username || ''),
+        profile: String(row.profile || state.bot?.id || ''),
+        lastUsedAt: Number(row.lastUsedAt) || 0,
+      })).sort((a, b) => b.lastUsedAt - a.lastUsedAt || a.domain.localeCompare(b.domain));
     } catch { logins = []; }
     openSheet('logins', { logins, domain: domain || '' });
   }
+
+  // In-chat sign-in cards (desktop/src/intelio/login-prompt.cjs). Cards are
+  // reused across renders so typing survives; values go to /api/vault/login.
+  let loginCardsApi = null;
+  let loginPollBusy = false;
+  function loginCards() {
+    if (loginCardsApi || !window.IntelioLoginPrompt) return loginCardsApi;
+    loginCardsApi = window.IntelioLoginPrompt.createLoginCards({
+      doc: document,
+      agentName: (id) => agentLabel({ id }),
+      send: async (action, payload) => {
+        const path = action === 'dismiss' ? '/api/vault/dismiss' : '/api/vault/login';
+        const response = await fetch(path, {
+          method: 'POST',
+          headers: profileHeaders(payload.profile, { 'content-type': 'application/json' }),
+          body: JSON.stringify(payload),
+        });
+        return response.json().catch(() => ({}));
+      },
+      onChange: () => { pollLogins(); },
+    });
+    return loginCardsApi;
+  }
+  function loginAsking() {
+    for (const card of loginCardsApi?.cards?.values?.() || []) if (card.dataset.state === 'ask') return true;
+    return false;
+  }
+  function loginFocus() {
+    const active = document.activeElement;
+    if (!loginCardsApi || !active || !loginCardsApi.element.contains(active)) return null;
+    return { node: active, start: active.selectionStart, end: active.selectionEnd };
+  }
+  function mountLoginCards(thread, keep) {
+    const cards = loginCardsApi;
+    if (!cards || !cards.size()) return;
+    thread.append(cards.element);
+    if (keep?.node?.isConnected) {
+      try { keep.node.focus({ preventScroll: true }); } catch { /* ignore */ }
+      if (typeof keep.start === 'number') { try { keep.node.setSelectionRange(keep.start, keep.end); } catch { /* not a text box */ } }
+    }
+  }
+  async function pollLogins() {
+    const id = state.bot?.id;
+    if (loginPollBusy || document.hidden || state.view !== 'chat' || !id) return;
+    const cards = loginCards();
+    if (!cards) return;
+    loginPollBusy = true;
+    try {
+      const response = await fetch(`/api/vault/prompts?profile=${encodeURIComponent(id)}`, { headers: profileHeaders(id) });
+      if (!response.ok) return;
+      const body = await response.json();
+      if (state.bot?.id !== id) return;
+      const before = cards.size();
+      const asking = loginAsking();
+      cards.update(Array.isArray(body.prompts) ? body.prompts : []);
+      const thread = document.getElementById('thread');
+      if (thread && cards.size() && !cards.element.isConnected) thread.append(cards.element);
+      if (cards.size() > before && cards.element.isConnected) { try { cards.element.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch { /* old browser */ } }
+      if (asking !== loginAsking()) paintThread();
+    } catch { /* next poll */ } finally {
+      loginPollBusy = false;
+    }
+  }
+  setInterval(() => { pollLogins(); }, 4000);
 
   function secureLoginCard(domain) {
     const card = el('form', 'bops-signin');
@@ -2563,11 +2666,12 @@
     if (!api || !state.bops) return null;
     const caption = state.frames.filter((frame) => frame.taskId === state.bops.focusedId).slice(-1)[0]?.caption || '';
     const view = api.viewModel(state.bops, caption);
-    if (!view.handoff && !view.signIn && !(view.statusLines || []).length) return null;
+    const signIn = view.signIn && !loginAsking();
+    if (!view.handoff && !signIn && !(view.statusLines || []).length) return null;
     const bar = el('div', 'bops-bar');
     if (view.handoff) bar.append(el('p', 'bops-handoff', view.handoff.label));
     for (const line of view.statusLines || []) bar.append(el('p', 'bops-status-line', line.text));
-    if (view.signIn) bar.append(phoneSignIn(api, view.signIn));
+    if (view.signIn && !loginAsking()) bar.append(phoneSignIn(api, view.signIn));
     return bar;
   }
 

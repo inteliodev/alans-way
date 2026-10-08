@@ -28,10 +28,33 @@ function vaultOrigin(config = {}, env = process.env) {
   return `http://${host}:${port}`;
 }
 
+function publicPromptRow(item) {
+  return {
+    id: String(item?.id || '').slice(0, 40),
+    profile: String(item?.profile || '').slice(0, 40),
+    domain: String(item?.domain || '').slice(0, 200),
+    state: String(item?.state || '').slice(0, 20),
+    source: String(item?.source || '').slice(0, 20),
+    reason: String(item?.reason || '').slice(0, 160),
+    message: String(item?.message || '').slice(0, 200),
+    username: String(item?.username || '').slice(0, 200),
+    at: Number(item?.at) || 0,
+  };
+}
+
+// Only these fields cross from the vault server to a window. A password or
+// one-time code is never one of them.
 function publicVaultBody(json = {}) {
   const logins = Array.isArray(json.logins)
-    ? json.logins.map((item) => ({ domain: String(item?.domain || ''), username: String(item?.username || '') }))
+    ? json.logins.map((item) => ({
+      domain: String(item?.domain || ''),
+      username: String(item?.username || ''),
+      ...(item?.profile ? { profile: String(item.profile) } : {}),
+      ...(Number(item?.createdAt) ? { createdAt: Number(item.createdAt) } : {}),
+      ...(Number(item?.lastUsedAt) ? { lastUsedAt: Number(item.lastUsedAt) } : {}),
+    }))
     : undefined;
+  const prompts = Array.isArray(json.prompts) ? json.prompts.map(publicPromptRow) : undefined;
   return {
     ok: json.ok === true,
     filled: json.filled === true,
@@ -39,6 +62,8 @@ function publicVaultBody(json = {}) {
     domain: String(json.domain || ''),
     username: String(json.username || ''),
     ...(logins ? { logins } : {}),
+    ...(prompts ? { prompts } : {}),
+    ...(json.prompt && typeof json.prompt === 'object' ? { prompt: publicPromptRow(json.prompt) } : {}),
     ...(json.ok === true ? {} : { error: String(json.error || 'Vault request failed.').slice(0, 160) }),
   };
 }
@@ -58,9 +83,10 @@ async function postProfileVault({
   method = 'POST',
   path,
   body,
+  cookieAuth = false,
   fetchImpl = globalThis.fetch,
 } = {}) {
-  if (!key) throw new Error('No API key saved for this Hermes profile.');
+  if (!key && !cookieAuth) throw new Error('No API key saved for this Hermes profile.');
   const url = new URL(path, origin.endsWith('/') ? origin : `${origin}/`);
   const secrets = [key, body?.password, body?.otp];
   let response;
@@ -68,7 +94,7 @@ async function postProfileVault({
     response = await fetchImpl(url, {
       method,
       headers: {
-        Authorization: `Bearer ${key}`,
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
         Accept: 'application/json',
         'x-intelio-profile': profile,
         ...(body ? { 'Content-Type': 'application/json' } : {}),
@@ -80,7 +106,7 @@ async function postProfileVault({
     throw new Error(scrub(error?.message || 'Vault host unreachable.', secrets));
   }
   const text = await response.text();
-  if (text.includes(String(key))) throw new Error('Vault response was discarded.');
+  if (key && text.includes(String(key))) throw new Error('Vault response was discarded.');
   let json = {};
   try { json = JSON.parse(text); } catch { json = {}; }
   const pub = publicVaultBody(json);
@@ -91,4 +117,4 @@ async function postProfileVault({
   return pub;
 }
 
-module.exports = { usesRemoteVault, vaultOrigin, publicVaultBody, postProfileVault };
+module.exports = { usesRemoteVault, vaultOrigin, publicVaultBody, publicPromptRow, postProfileVault };

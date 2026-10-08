@@ -708,6 +708,45 @@ async function showCookieSettings(body) {
   body.append(list, clearAll, element('hr', 'section-divider'));
   await refresh();
 }
+// Saved logins for every agent: site, username, agent, last used, Delete.
+// Rows come from vault-list, which never carries a password.
+function savedLoginWhen(at) {
+  const ms = Number(at) || 0;
+  if (!ms) return 'Not used yet';
+  const mins = Math.round((Date.now() - ms) / 60000);
+  if (mins < 1) return 'Used just now';
+  if (mins < 60) return `Used ${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `Used ${hours} h ago`;
+  const days = Math.round(hours / 24);
+  return days < 30 ? `Used ${days} d ago` : `Used ${new Date(ms).toLocaleDateString()}`;
+}
+async function paintSavedLogins(vaultList, profile) {
+  const remote = window.IntelioRemote;
+  const agents = (remote?.agentList?.() || []).filter((agent) => agent && agent.id);
+  if (!agents.length) {
+    const only = typeof profile === 'string' && profile ? profile : (remote?.selectedId?.() || state.remoteHermes?.profile || 'intelio');
+    agents.push({ id: only, name: remote?.shownAgent?.(only) || only });
+  }
+  const lists = await Promise.all(agents.map((agent) => Promise.resolve(command('vault-list', { profile: agent.id })).then((result) => (result?.logins || []).map((row) => ({ ...row, agent }))).catch(() => [])));
+  const rows = lists.flat().sort((a, b) => (Number(b.lastUsedAt) || 0) - (Number(a.lastUsedAt) || 0) || String(a.domain).localeCompare(String(b.domain)));
+  vaultList.replaceChildren();
+  if (!rows.length) { vaultList.append(element('p', 'settings-note', 'No saved logins yet. When an agent signs in to a site, choose Remember for this agent.')); return; }
+  for (const row of rows) {
+    const line = element('div', 'setting-row saved-login-row');
+    const main = element('div', 'saved-login-main');
+    main.append(element('strong', 'saved-login-site', row.domain), element('span', 'saved-login-meta', [row.username || 'No username', row.agent.name, savedLoginWhen(row.lastUsedAt)].join(' · ')));
+    const del = element('button', 'text-button saved-login-delete', 'Delete');
+    del.setAttribute('aria-label', `Delete saved login for ${row.domain} (${row.agent.name})`);
+    del.onclick = () => {
+      if (del.dataset.confirm !== '1') { del.dataset.confirm = '1'; del.textContent = 'Delete?'; return; }
+      del.disabled = true;
+      Promise.resolve(command('vault-delete', { profile: row.agent.id, domain: row.domain })).catch(() => {}).then(() => paintSavedLogins(vaultList, profile));
+    };
+    line.append(main, del);
+    vaultList.append(line);
+  }
+}
 function showSettings(profile) {
   openModal('Workspace settings');
   const body = $('modal-body'), field = element('div', 'field');
@@ -718,22 +757,10 @@ function showSettings(profile) {
   themeRow.append(themeButton);
   body.append(themeRow, element('hr', 'section-divider'));
   const vaultHead = element('h3', '', 'Saved logins');
-  const vaultNote = element('p', 'settings-note', 'Site and username only. Passwords stay in this profile’s encrypted vault.');
-  const vaultList = element('div', 'settings-bots');
+  const vaultNote = element('p', 'settings-note', 'Logins your agents use to sign in. Each one is encrypted on your server and kept for one agent. Passwords are never shown here or sent to the chat.');
+  const vaultList = element('div', 'settings-bots saved-logins');
   body.append(vaultHead, vaultNote, vaultList);
-  const vaultProfile = typeof profile === 'string' && profile ? profile : (window.IntelioRemote?.selectedId?.() || state.remoteHermes?.profile || 'intelio');
-  command('vault-list', { profile: vaultProfile }).then((result) => {
-    const rows = result?.logins || [];
-    if (!rows.length) { vaultList.append(element('p', 'settings-note', 'No saved logins.')); return; }
-    for (const row of rows) {
-      const line = element('div', 'setting-row');
-      line.append(element('span', '', `${row.domain} · ${row.username || ''}`));
-      const del = element('button', 'text-button', 'Delete');
-      del.onclick = () => command('vault-delete', { profile: vaultProfile, domain: row.domain }).then(() => showSettings());
-      line.append(del);
-      vaultList.append(line);
-    }
-  });
+  paintSavedLogins(vaultList, profile);
   window.IntelioUI?.appendSettings(body, { element, command, state, toast });
   const extensions = element('button', 'secondary-button', 'Manage browser extensions'); extensions.onclick = showExtensions;
   body.append(extensions, element('hr', 'section-divider'));
