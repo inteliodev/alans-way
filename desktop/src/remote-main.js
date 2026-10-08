@@ -1250,7 +1250,7 @@
     if (mic) mic.onclick = () => dictate();
     const model = $('remote-model');
     if (model) model.onclick = (event) => { event.preventDefault(); event.stopPropagation(); toggleModelMenu(); };
-    root.document.addEventListener('pointerdown', (event) => {
+    root.document.addEventListener?.('pointerdown', (event) => {
       if (event.target.closest?.('#remote-model, #model-menu')) return;
       const menu = $('model-menu');
       if (menu && !menu.classList.contains('hidden')) closeModelMenu();
