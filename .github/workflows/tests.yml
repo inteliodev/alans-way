@@ -30,6 +30,11 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # pwa-vnc.test.cjs drives a real websockify between the phone proxy and an RFB server.
+      - run: python -m pip install websockify
       - run: npm ci
       - run: npm run check
 

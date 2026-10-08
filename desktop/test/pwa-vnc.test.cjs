@@ -6,7 +6,7 @@ const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { createPwaServer } = require('../../mobile/pwa/server.cjs');
 const { resolveVncUpstream, readVncPassword, wsSend, readWs } = require('../../mobile/pwa/vnc-proxy.cjs');
 const { vncCipher } = require('../scripts/packaged-window-e2e.cjs');
@@ -233,9 +233,20 @@ test('a mode-600 vnc= file is read and a world-readable file is ignored', () => 
   assert.equal(readVncPassword({ env: {} }), '');
 });
 
-test('the Access listener proxies websockify and keeps the VNC password on the server', { timeout: 20000 }, async () => {
+// websockify is a Python module; CI installs it. Without it the test is skipped
+// instead of failing with the RFB server still listening, which kept the whole
+// node --test run alive until the job timed out.
+const HAS_WEBSOCKIFY = spawnSync('python3', ['-c', 'import websockify'], { stdio: 'ignore' }).status === 0;
+
+test('the Access listener proxies websockify and keeps the VNC password on the server', { timeout: 20000, skip: HAS_WEBSOCKIFY ? false : 'python3 -m websockify is not installed' }, async () => {
   const rfb = await listenRfb(PASSWORD);
-  const websockify = await startWebsockify(rfb.server.address().port);
+  let websockify;
+  try {
+    websockify = await startWebsockify(rfb.server.address().port);
+  } catch (err) {
+    rfb.server.close();
+    throw err;
+  }
   const vaultRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'intelio-vnc-vault-'));
   fs.mkdirSync(path.join(vaultRoot, 'intelio', 'bot-desktop'), { recursive: true });
   fs.writeFileSync(path.join(vaultRoot, 'intelio', 'bot-desktop', 'cdp.url'), 'http://127.0.0.1:9223\n', { mode: 0o600 });
