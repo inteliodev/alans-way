@@ -84,6 +84,16 @@ function createNodeClient({
     inflight.clear();
   }
 
+  /** Terminal sessions die with access: kill switch off, revoke, app quit (docs/intelio-node.md). */
+  function closeSessions(reason) {
+    let n = 0;
+    try { n = typeof executors.closeSessions === 'function' ? executors.closeSessions() : 0; } catch { n = 0; }
+    if (n) {
+      log(`intelio node: stopped ${n} terminal session(s): ${reason}`);
+      audit({ time: new Date(now()).toISOString(), tool: 'stop_session', args: { all: true, reason: String(reason).slice(0, 60) }, ok: true, result_bytes: 0, ms: 0 });
+    }
+  }
+
   async function handleCall(conn, msg) {
     const id = String(msg.id || '');
     const tool = String(msg.tool || '');
@@ -200,7 +210,7 @@ function createNodeClient({
       while (enabled) {
         const outcome = await session();
         if (!enabled) break;
-        if (outcome === 'revoked') { log('intelio node: this computer was revoked on the VPS'); break; }
+        if (outcome === 'revoked') { log('intelio node: this computer was revoked on the VPS'); closeSessions('revoked'); break; }
         if (outcome === 'reset') { attempt = 0; continue; }
         if (outcome === 'no-target') setState('waiting', 'Sign in to intelio cloud or set the Tailscale host to connect this computer.');
         else if (outcome === 'unauthorized') setState('waiting', 'intelio cloud sign-in is needed (or this Tailscale login is not allowed).');
@@ -225,6 +235,7 @@ function createNodeClient({
     stop(reason = 'turned off') {
       enabled = false;
       abortCalls(reason);
+      closeSessions(reason);
       if (ws) { try { ws.close(1000, reason); } catch { /* closed */ } }
       if (wake) wake();
       setState('off', '');

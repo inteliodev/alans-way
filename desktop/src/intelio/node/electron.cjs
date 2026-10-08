@@ -105,7 +105,7 @@ function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, g
         cancelId: 0,
         noLink: true,
         title: 'intelio',
-        message: 'An intelio agent wants to run a command that asks for administrator rights.',
+        message: 'An intelio agent wants to run (or type into a terminal session) a command that asks for administrator rights.',
         detail: `${reason}.\n\n${String(command).slice(0, 600)}\n\nAllow once runs it as you; Windows or macOS still asks for the administrator password. Refuse if you did not expect this.`,
         signal: controller.signal,
       };

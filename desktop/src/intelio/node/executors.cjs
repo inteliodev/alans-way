@@ -8,9 +8,9 @@
  * Every handler returns MCP content ([{ type: 'text', text }] or image items)
  * plus a small `meta` for the audit line. Errors throw with a readable message.
  *
- * Stage 2 extension point (docs/intelio-node.md): persistent terminal sessions
- * (start_session, send_input, read_output, stop_session) are added as more
- * handlers on the object createExecutors returns, backed by a session map.
+ * Stage 2 (docs/intelio-node.md): persistent terminal sessions
+ * (start_session, send_input, read_output, stop_session, list_sessions) are
+ * handlers backed by the session manager in sessions.cjs.
  */
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -19,6 +19,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { LIMITS } = require('./protocol.cjs');
 const { detectElevation, shellElevates } = require('./elevation.cjs');
+const { createSessionManager } = require('./sessions.cjs');
 
 class ToolError extends Error {}
 
@@ -85,8 +86,21 @@ function createExecutors({
   confirmElevation = async () => false,
   screenshot = null,
   computerName = () => os.hostname(),
+  sessionOptions = {},
 } = {}) {
   const caseless = platform === 'win32' || platform === 'darwin';
+  const sessions = createSessionManager({ platform, home, env, limits, ...sessionOptions });
+
+  /** Same native-confirm flow for run_command, start_session and send_input. */
+  async function requireApproval(text) {
+    const elevation = detectElevation(text);
+    if (!elevation.elevates) return;
+    let approved = false;
+    try { approved = await confirmElevation({ command: text, reason: elevation.reason }); } catch { approved = false; }
+    if (!approved) {
+      throw new ToolError(`Refused: ${elevation.reason}. intelio never elevates on its own; the person at ${computerName()} did not approve it. Ask them to run it themselves, or to approve it when the prompt appears on that computer.`);
+    }
+  }
 
   function resolvePath(raw, field = 'path') {
     const text = String(raw == null ? '' : raw).trim();
@@ -331,14 +345,7 @@ function createExecutors({
       const command = String(args.command || '');
       if (!command.trim()) throw new ToolError('command is required.');
       const shell = shellFor(args.shell);
-      const elevation = detectElevation(command);
-      if (elevation.elevates) {
-        let approved = false;
-        try { approved = await confirmElevation({ command, reason: elevation.reason }); } catch { approved = false; }
-        if (!approved) {
-          throw new ToolError(`Refused: ${elevation.reason}. intelio never elevates on its own; the person at ${computerName()} did not approve it. Ask them to run it themselves, or to approve it when the prompt appears on that computer.`);
-        }
-      }
+      await requireApproval(command);
       const cwd = args.cwd ? resolvePath(args.cwd, 'cwd') : home;
       const timeoutS = intArg(args.timeout_s, { min: 1, max: limits.runMaxS, fallback: limits.runDefaultS });
       const { file, args: argv, verbatim } = spawnArgs(shell, command);
@@ -402,6 +409,41 @@ function createExecutors({
         meta: { bytes: png.length },
       };
     },
+
+    async start_session(args) {
+      const command = args.command == null ? '' : String(args.command);
+      if (command.trim()) await requireApproval(command);
+      const cwd = args.cwd ? resolvePath(args.cwd, 'cwd') : home;
+      const started = sessions.start({ command, cwd, cols: args.cols, rows: args.rows, env: args.env });
+      const hint = started.pty ? '' : ' No terminal (pipes only): full-screen programs may misbehave.';
+      return {
+        content: [json({ ...started, hint: `Read with read_output (session_id ${started.session_id}); type with send_input.${hint}` })],
+        meta: { session_id: started.session_id, pty: started.pty },
+      };
+    },
+
+    async send_input(args) {
+      const text = args.text == null ? '' : String(args.text);
+      if (text.trim()) await requireApproval(text);
+      const sent = sessions.send(args.session_id, { text, enter: args.enter, keys: args.keys });
+      return { content: [json(sent)], meta: { session_id: sent.session_id } };
+    },
+
+    async read_output(args, ctx = {}) {
+      const result = await sessions.read(args.session_id, args, { signal: ctx.signal });
+      const { output, ...meta } = result;
+      return { content: [json(meta), { type: 'text', text: output }], meta: { bytes: result.bytes, session_id: result.session_id, ...(result.exited ? { exit_code: result.exit_code } : {}) } };
+    },
+
+    async stop_session(args) {
+      const stopped = await sessions.stop(args.session_id, { force: Boolean(args.force) });
+      return { content: [json(stopped)], meta: { session_id: stopped.session_id, exit_code: stopped.exit_code } };
+    },
+
+    async list_sessions() {
+      const rows = sessions.list();
+      return { content: [json({ sessions: rows, max: limits.sessionMax || 8 })], meta: { count: rows.length } };
+    },
   };
 
   /** Runs one tool. Returns { ok: true, content, meta } or { ok: false, error, meta }. */
@@ -416,7 +458,15 @@ function createExecutors({
     }
   }
 
-  return { run, handlers, resolvePath, tools: Object.keys(handlers) };
+  return {
+    run,
+    handlers,
+    resolvePath,
+    tools: Object.keys(handlers),
+    sessions,
+    /** Kill every terminal session (kill switch off, revoke, app quit). */
+    closeSessions: () => sessions.closeAll(),
+  };
 }
 
 module.exports = { createExecutors, killTree, globToRegExp, compilePattern, osLabel, ToolError };
