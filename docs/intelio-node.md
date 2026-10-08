@@ -124,6 +124,14 @@ Limits: a push started indirectly (a script, `npm run release`, a coding tool ru
 `run_command`) is not seen on a personal computer, because the node checks the command text, not
 what it starts. On the VPS the push guard covers that case.
 
+Terminal sessions: `start_session` checks its command like `run_command`. `send_input` checks the
+line typed so far (since the last Enter, Ctrl-C, Ctrl-U or Ctrl-D), so `git pu` then `sh` is still
+refused; a push must be typed whole in one `send_input` (the relay asks about that text). On "cloud"
+an approved push typed into a shell is prefixed with `export INTELIO_PUSH_GRANT=<id>; `, so the
+grant id shows in that session's output and stays set in that shell; the grant itself is used up
+by the push and expires after 15 minutes. A push started from inside a session's program (for
+example Claude Code running `git push` itself) is not seen on a personal computer.
+
 ## Device identity and revocation
 
 - First connect: node presents the user's Cloudflare Access cookie (Access listener) or comes from
