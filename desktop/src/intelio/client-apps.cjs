@@ -43,7 +43,7 @@
   /** The clients, in sidebar order. `account` is the default sign-in hint; Settings can change it. */
   const CLIENTS = [
     { id: 'intelio', name: 'intelio', suite: MICROSOFT, account: 'hayden@intelio.co', extra: [] },
-    { id: 'prc', name: 'PRC Equity', short: 'PRC', suite: GOOGLE, account: '', extra: [
+    { id: 'prc', name: 'PRC Equity', short: 'PRC', suite: GOOGLE, account: 'hayden@prcequity.com', extra: [
       { id: 'box', label: 'Box', icon: 'box', url: 'https://app.box.com/', primary: true },
       { id: 'center', label: 'The Center', icon: 'dashboard', url: 'https://the-center-prc.vercel.app/' },
     ] },

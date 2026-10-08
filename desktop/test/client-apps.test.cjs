@@ -29,7 +29,7 @@ test('the account hint picks the right login on each suite, and only valid email
   assert.equal(google.hostname, 'mail.google.com');
   assert.equal(google.searchParams.get('authuser'), 'me@prcequity.com');
   const accounts = Object.fromEntries(apps.CLIENTS.map((client) => [client.id, client.account]));
-  assert.deepEqual(accounts, { intelio: 'hayden@intelio.co', prc: '', alignment: 'hashley@alignmentpa.com', hhp: 'hayden@hhpasset.com', arlp: 'hayden.ashley2@arlp.com' });
+  assert.deepEqual(accounts, { intelio: 'hayden@intelio.co', prc: 'hayden@prcequity.com', alignment: 'hashley@alignmentpa.com', hhp: 'hayden@hhpasset.com', arlp: 'hayden.ashley2@arlp.com' });
   assert.equal(new URL(apps.urlFor('intelio', 'mail')).searchParams.get('login_hint'), 'hayden@intelio.co');
   const microsoft = new URL(apps.urlFor('hhp', 'calendar', 'hayden@hhpasset.com'));
   assert.equal(microsoft.hostname, 'outlook.office.com');
