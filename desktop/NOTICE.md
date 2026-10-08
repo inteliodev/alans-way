@@ -13,6 +13,8 @@ The desktop includes:
   GPL license option. Its GPL text and copyright/license declarations are
   included in `node_modules/electron-chrome-extensions/` in packaged builds.
 - `electron-chrome-web-store` 0.13.0, copyright Samuel Maddock, MIT.
+- Code adapted from Herald OS (Luke The Dev, MIT) in the home, missions and
+  command-bar files; see [../THIRD_PARTY.md](../THIRD_PARTY.md).
 - Electron, MIT, with Chromium and other third-party notices in the application
   bundle; noVNC, MPL-2.0; the MCP TypeScript SDK, MIT; and other dependencies with
   their notices retained alongside their code.

@@ -107,6 +107,7 @@
   function icon(name) {
     const paths = {
       search: '<circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/>',
+      home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h5v-6h4v6h5V9.5"/>',
       plus: '<path d="M12 5v14M5 12h14"/>',
       back: '<path d="M15 5l-7 7 7 7"/>',
       phone: '<path d="M8 4h3l1 4-2 1a12 12 0 0 0 5 5l1-2 4 1v3c0 1-1 2-2 2A15 15 0 0 1 6 6c0-1 1-2 2-2z"/>',
@@ -404,6 +405,7 @@
 
   function tabs() {
     const items = [['chat', 'Chat', 'chat'], ['sessions', 'Sessions', 'feed']];
+    if (window.IntelioPhoneHome?.enabled()) items.unshift(['home', 'Home', 'home']);
     if (state.skillsOk) items.push(['library', 'Library', 'library']);
     if (state.jobsOk) items.push(['goals', 'Goals', 'goals']);
     return items;
@@ -520,6 +522,7 @@
       screen.append(topBar());
       const stage = el('div', 'stage');
       if (state.view === 'chat') stage.append(chatBody());
+      else if (state.tab === 'home' && window.IntelioPhoneHome?.enabled()) stage.append(phoneHomeView());
       else if (state.tab === 'library') stage.append(libraryView());
       else if (state.tab === 'goals') stage.append(goalsView());
       else stage.append(sessionsView());
@@ -533,6 +536,27 @@
     ensureTimer();
     const thread = document.getElementById('thread') || document.getElementById('captions');
     if (thread) thread.scrollTop = thread.scrollHeight;
+  }
+
+  /** Home tab (home-tab.js): greeting, quick actions, missions and recent work. */
+  function phoneHomeView() {
+    return window.IntelioPhoneHome.view({
+      profiles: vpsAgents(state.home.profiles),
+      conversations: state.home.conversations.filter((row) => !excludedAgent(row.profileId)),
+      selected: state.bot?.id || '',
+      sample: state.sample,
+      face,
+      profileById,
+      headers: (id) => profileHeaders(id),
+      select: (profile) => { state.bot = profile; render(); },
+      openChat: (row) => openChat(row),
+      startChat: async (profile, prompt) => {
+        await startChatWith(profile);
+        const ask = document.getElementById('ask');
+        if (ask && prompt) { ask.value = prompt; ask.dispatchEvent(new Event('input', { bubbles: true })); ask.focus(); }
+      },
+      rerender: () => { if (state.view !== 'chat' && state.tab === 'home') render(); },
+    });
   }
 
   function loginView() {
@@ -1727,7 +1751,7 @@
     state.jobs = Array.isArray(state.home.jobs) ? state.home.jobs : [];
     state.skillsOk = Boolean(state.home.skillsOk);
     state.jobsOk = Boolean(state.home.jobsOk);
-    state.tab = 'sessions';
+    state.tab = window.IntelioPhoneHome?.enabled() && window.IntelioPhoneHome.prefs().showOnStart ? 'home' : 'sessions';
     const voice = await fetch('/api/voice');
     if (voice.ok) state.engines = await voice.json();
     state.view = 'home';
@@ -2012,6 +2036,7 @@
     wrap.append(el('p', '', 'Site, username, agent and last use for every agent. Passwords stay encrypted on your server and are never shown.'));
     wrap.append(el('h2', '', 'Appearance'));
     wrap.append(themePicker(), el('p', '', 'Light is the default. Blue is white on electric blue. Your choice is saved on this device.'));
+    if (window.IntelioPhoneHome) wrap.append(window.IntelioPhoneHome.settingsRow(() => render()));
     if (window.IntelioAccounts) window.IntelioAccounts.appendActivity(wrap, { profiles: vpsAgents(state.home.profiles || []).map((p) => p.id) });
     wrap.append(el('h2', '', 'About'));
     wrap.append(el('p', '', 'intelio · Alan’s Way'));

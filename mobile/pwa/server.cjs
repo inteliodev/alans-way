@@ -32,6 +32,7 @@ const { resolveCdpUrl } = require('../../desktop/src/intelio/cdp-fill.cjs');
 const { harnessId, excludedAgent, buildCard, readProfileFiles, writePaused, writeReasoning, writeProfile, cleanColor, backupFile } = require('../../desktop/src/intelio/agent-card.cjs');
 const picker = require('../../desktop/src/intelio/model-picker.cjs');
 const { preview: previewTranscript } = require('../../desktop/src/intelio/transcript.cjs');
+const { createSkillInstaller } = require('./skills-install.cjs');
 const { createAccountsApi } = require('./accounts-routes.cjs');
 
 const PUBLIC = path.join(__dirname, 'public');
@@ -45,10 +46,14 @@ const STATIC = {
   '/manifest.webmanifest': 'manifest.webmanifest',
   '/desktop-boot.js': 'desktop-boot.js',
   '/desktop-transport.js': 'desktop-transport.js',
+  '/home-tab.js': 'home-tab.js',
+  '/home-tab.css': 'home-tab.css',
 };
 const DESKTOP_SRC = path.resolve(__dirname, '../../desktop/src');
+// intelio home, missions, command bar and skill links (shared with the desktop renderer).
+const HOME_CJS = ['intelio/commands.cjs', 'intelio/missions.cjs', 'intelio/home-feed.cjs', 'intelio/skill-link.cjs'];
 const UI_EXT = new Set(['.css', '.js', '.woff2', '.png', '.svg']);
-const UI_CJS = new Set(['intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs', 'intelio/calls.cjs', 'intelio/desktop-voice.cjs', 'intelio/model-picker.cjs', 'intelio/client-apps.cjs', 'intelio/login-prompt.cjs']);
+const UI_CJS = new Set(['intelio/bops.cjs', 'intelio/transcript.cjs', 'intelio/host-labels.cjs', 'intelio/calls.cjs', 'intelio/desktop-voice.cjs', 'intelio/model-picker.cjs', 'intelio/client-apps.cjs', 'intelio/login-prompt.cjs', ...HOME_CJS]);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json' };
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -222,6 +227,7 @@ function createPwaServer({
   loginWatchMs,
   cdpImpl = null,
   selfCheck = null,
+  githubFetch = globalThis.fetch,
   // A new agent is checked on its own /p/<name>/ route before the create call answers.
   readyTries = 6,
   readyDelayMs = 1000,
@@ -241,6 +247,7 @@ function createPwaServer({
   let listedProfilesForVault = [];
   // The intelio vault (data + key) lives outside ~/.hermes. A test that
   // passes its own vaultRoot gets a sibling folder instead of the real home.
+  const skillInstaller = createSkillInstaller({ fetchImpl: githubFetch, profilesRoot: vaultRootPath });
   const vault = createVaultStore({
     root: vaultRootPath,
     home: vaultHome || (vaultRoot ? `${path.resolve(vaultRoot)}.intelio-home` : (profileHome || os.homedir())),
@@ -812,6 +819,10 @@ function createPwaServer({
         time: clockLabel(row.updated_at || row.updatedAt || row.created_at),
         updated_at: String(row.updated_at || row.updatedAt || row.created_at || '').slice(0, 40),
         source: String(row.source || ''),
+        // intelio home and missions read these for status and "Recent work".
+        last_active: typeof row.last_active === 'number' ? row.last_active : String(row.last_active || '').slice(0, 40),
+        ended_at: typeof row.ended_at === 'number' ? row.ended_at : String(row.ended_at || '').slice(0, 40),
+        message_count: Number(row.message_count) || 0,
       })).filter((row) => ID_RE.test(row.id));
     } catch {
       return [];
@@ -1453,6 +1464,32 @@ function createPwaServer({
         const skills = await cachedSkills(chosenProfile(req));
         if (!skills.ok) return send(res, 404, { error: 'This Hermes has no skills list.' });
         return send(res, 200, { data: skills.list });
+      }
+      if (req.method === 'POST' && (url.pathname === '/api/skills/preview' || url.pathname === '/api/skills/install')) {
+        // Paste-a-link skill install. Preview only downloads into memory; install writes the
+        // previewed files into one profile's skills folder (skills-install.cjs). Never runs them.
+        const bearer = presentedBearer(req);
+        if (!bearer.present && !mutationOk(req)) return send(res, 403, { error: 'Cross-origin request refused.' });
+        let body;
+        try { body = await readBody(req, 4096); } catch { return send(res, 400, { error: 'Send JSON.' }); }
+        if (sample) return send(res, 400, { error: 'Skill install is off in sample mode.', sample: true, label: 'SAMPLE DATA' });
+        try {
+          if (url.pathname === '/api/skills/preview') {
+            const profiles = (Array.isArray(body.profiles) ? body.profiles : [body.profile]).map((id) => String(id || '').trim().toLowerCase()).filter(Boolean).slice(0, 12);
+            // Preview writes nothing: the key only has to belong to the profile asking (x-intelio-profile).
+            if (bearer.present && !keyEquals(bearer.token, chosenProfile(req, {}))) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+            return send(res, 200, await skillInstaller.preview({ url: String(body.url || ''), profiles, category: String(body.category || '') }));
+          }
+          const id = String(body.profile || '').trim().toLowerCase();
+          if (!id || excludedAgent(id)) return send(res, 404, { error: 'Unknown agent.' });
+          if (bearer.present && !keyEquals(bearer.token, id)) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+          const result = await skillInstaller.install({ token: String(body.token || ''), profile: id, overwrite: body.overwrite === true });
+          log(`intelio skill install: ${result.skill} -> ${id}`);
+          return send(res, 200, result);
+        } catch (error) {
+          const status = Number(error?.status) || 500;
+          return send(res, status >= 400 && status < 600 ? status : 500, { error: status === 500 ? 'Could not install that skill.' : String(error.message || 'Could not install that skill.').slice(0, 300) });
+        }
       }
       if (req.method === 'GET' && url.pathname === '/api/jobs') {
         if (sample) return send(res, 200, { data: SAMPLE_HOME.jobs, sample: true, label: 'SAMPLE DATA' });

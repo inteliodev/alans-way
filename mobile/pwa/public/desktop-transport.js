@@ -334,6 +334,11 @@
     }
     if (name === 'screens') return fetchJson('/api/screens');
     if (name === 'skills') return fetchJson('/api/skills', { profile });
+    if (name === 'skill-preview') {
+      const profiles = Array.isArray(value.profiles) ? value.profiles.slice(0, 12) : [];
+      return fetchJson('/api/skills/preview', { method: 'POST', profile: profiles[0] || 'intelio', body: { url: String(value.url || ''), profiles, category: String(value.category || '') } });
+    }
+    if (name === 'skill-install') return fetchJson('/api/skills/install', { method: 'POST', profile: value.profile, body: { token: value.token, profile: value.profile, overwrite: value.overwrite === true } });
     if (name === 'phone-call') return fetchJson('/api/phone/call', { method: 'POST', profile: profile || 'intelio', body: { profile: profile || 'intelio' } });
     if (name === 'voice-status') return voiceFetch('/api/voice', { profile: profile || 'intelio' });
     if (name === 'voice-transcribe') {

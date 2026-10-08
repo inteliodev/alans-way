@@ -584,8 +584,9 @@ function paintScreenGrid() {
 }
 function scheduleLayout() {
   cancelAnimationFrame(resizeFrame);
-  resizeFrame = requestAnimationFrame(() => api.layout({ telegram: focusMode ? null : rect('telegram-slot'), browser: browserRect(), preview: rect('preview-screen'), obscured: modalOpen }));
+  resizeFrame = requestAnimationFrame(() => api.layout({ telegram: focusMode ? null : rect('telegram-slot'), browser: browserRect(), preview: rect('preview-screen'), obscured: modalOpen || Boolean(window.IntelioHome?.covers?.()) }));
 }
+window.intelioLayout = scheduleLayout; // intelio home/command bar overlays cover the native views
 // The mini VM window is anchored bottom-right until dragged; its saved offset
 // is relative to the workspace pane and clamped so it can never get lost.
 let previewDragging = false;
@@ -792,6 +793,7 @@ function showSettings(profile) {
   body.append(vaultHead, vaultNote, vaultList);
   paintSavedLogins(vaultList, profile);
   window.IntelioUI?.appendSettings(body, { element, command, state, toast });
+  window.IntelioHome?.appendSettings?.(body);
   const extensions = element('button', 'secondary-button', 'Manage browser extensions'); extensions.onclick = showExtensions;
   body.append(extensions, element('hr', 'section-divider'));
   body.append(element('h3', '', 'Telegram bots'));
