@@ -458,46 +458,44 @@
     if (!mine.length) list.append(el('li', 'session-empty', 'No sessions yet.'));
   }
 
+  /** While a reply streams, the typing bubble's one-line status is the latest running step. */
   function paintLiveTools() {
-    if (!ui.liveTools || !root.IntelioTranscript) return;
-    const items = (ui.liveSteps || []).map((step) => ({
-      kind: 'chip',
-      label: root.IntelioTranscript.labelFor({
-        name: step.name,
-        detail: step.detail || '',
-        running: step.running,
-        failed: step.failed,
-      }),
-      detail: step.detail || '',
-      running: Boolean(step.running),
-      failed: Boolean(step.failed),
-    }));
-    ui.liveTools.replaceChildren(...items.map((item) => chipNode(item)));
+    if (!ui.liveTools) return;
+    const status = root.IntelioTranscript?.typingStatus
+      ? root.IntelioTranscript.typingStatus(ui.liveSteps || [])
+      : '';
+    const line = ui.liveTools.statusLine;
+    if (line) {
+      line.textContent = status;
+      line.classList.toggle('hidden', !status);
+    }
     paintHeader();
   }
 
-  /** Agent work shows as a small thinking bubble on the agent's side; tap it to read the steps. */
-  function chipNode(item) {
-    const wrap = el('div', `tool-run thinking${item.running ? ' running' : ''}${item.failed ? ' failed' : ''}`);
-    const button = el('button', `tool-chip${item.running ? ' running' : ''}${item.failed ? ' failed' : ''}`);
-    button.type = 'button';
-    if (item.running) {
-      const dots = el('span', 'think-dots');
-      dots.setAttribute('aria-hidden', 'true');
-      dots.append(el('i'), el('i'), el('i'));
-      button.append(dots);
+  /**
+   * Agent work shows as one typing bubble on the agent's side (dots, an optional
+   * short status, and a small stop button while this app is running the reply).
+   * Tool steps are not listed in the chat.
+   */
+  function typingNode(status = '', onStop = null, stopLabel = 'Stop') {
+    const wrap = el('div', 'msg assistant typing-bubble');
+    wrap.setAttribute('role', 'status');
+    wrap.setAttribute('aria-label', 'The agent is working');
+    const dots = el('span', 'think-dots');
+    dots.setAttribute('aria-hidden', 'true');
+    dots.append(el('i'), el('i'), el('i'));
+    const line = el('span', 'typing-status', status);
+    line.classList.toggle('hidden', !status);
+    wrap.append(dots, line);
+    wrap.statusLine = line;
+    if (typeof onStop === 'function') {
+      const stop = el('button', 'typing-stop');
+      stop.type = 'button';
+      stop.title = stopLabel;
+      stop.setAttribute('aria-label', stopLabel);
+      stop.onclick = () => onStop();
+      wrap.append(stop);
     }
-    button.append(el('span', 'think-text', item.label));
-    if (item.detail) {
-      button.setAttribute('aria-expanded', 'false');
-      button.title = 'Show what the agent did';
-      const detail = el('div', 'tool-detail', item.detail);
-      button.onclick = () => {
-        const open = button.getAttribute('aria-expanded') === 'true';
-        button.setAttribute('aria-expanded', open ? 'false' : 'true');
-      };
-      wrap.append(button, detail);
-    } else wrap.append(button);
     return wrap;
   }
   /** A new thread: the agent's name in the intelio wordmark type, and one line on how to start. */
@@ -521,7 +519,7 @@
     const pane = $('remote-messages');
     if (!pane) return;
     pane.replaceChildren();
-    const items = root.IntelioTranscript ? root.IntelioTranscript.present(ui.messages) : ui.messages.map((message) => ({ kind: 'bubble', role: message.role === 'user' ? 'user' : 'assistant', text: textOf(message.content) }));
+    const items = root.IntelioTranscript?.conversation ? root.IntelioTranscript.conversation(ui.messages) : ui.messages.map((message) => ({ kind: 'bubble', role: message.role === 'user' ? 'user' : 'assistant', text: textOf(message.content) }));
     let pendingUser = '';
     const flushRead = () => {
       if (pendingUser && ui.readFor && pendingUser === ui.readFor) {
@@ -539,7 +537,7 @@
       }
       flushRead();
       if (item.kind === 'read' && item.text) pane.append(el('div', 'read-receipt', item.text));
-      else if (item.kind === 'chip') pane.append(chipNode(item));
+      else if (item.kind === 'typing') pane.append(typingNode(item.status || ''));
       else if (item.kind === 'bubble' && item.text) pane.append(el('div', `msg ${item.role === 'user' ? 'user' : 'assistant'}`, item.text));
     }
     flushRead();
@@ -1122,11 +1120,8 @@
     return true;
   }
 
-  function stopControl() {
-    const button = el('button', 'stop-all', 'Stop all');
-    button.type = 'button';
-    button.onclick = () => stopBops();
-    return button;
+  function stopControl(stopLabel = 'Stop') {
+    return typingNode('', () => stopBops(), stopLabel);
   }
 
   async function openSession(id) {
@@ -2168,7 +2163,7 @@
     if (receipt) pane?.append(receipt);
     paintHeader();
     if (plan.orchestration === 'app-fan-out') {
-      const stop = stopControl();
+      const stop = stopControl('Stop all');
       pane?.append(stop);
       setStatus('');
       try {
@@ -2185,10 +2180,9 @@
     ui.streamRaw = '';
     ui.toolEvents = false;
     ui.liveSteps = [];
-    ui.liveTools = el('div', 'tool-live');
+    ui.liveTools = stopControl();
     ui.streaming = el('div', 'msg assistant', '');
-    const stop = stopControl();
-    pane?.append(ui.streaming, ui.liveTools, stop);
+    pane?.append(ui.streaming, ui.liveTools);
     setStatus('');
     try {
       const jobs = [root.remoteHermes.request('send', { id: sessionId, profile, input: text, ...modelSendFields() })];
@@ -2211,6 +2205,8 @@
       ui.spokenProse = '';
       ui.busy = false;
       ui.streaming = null;
+      ui.liveTools?.remove?.();
+      ui.liveTools = null;
       ui.liveSteps = [];
       setStatus('');
       paintHeader();

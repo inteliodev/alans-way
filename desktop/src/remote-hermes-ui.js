@@ -48,44 +48,37 @@
     if (!state.sessions.length) list.append(el('li', 'muted', 'No sessions yet.'));
   }
 
-  function chipNode(item) {
-    const wrap = el('div', 'tool-run');
-    const button = el('button', `tool-chip${item.running ? ' running' : ''}${item.failed ? ' failed' : ''}`);
-    button.type = 'button';
-    button.append(el('span', 'mark', item.running ? '' : (item.failed ? '!' : '✓')));
-    button.append(document.createTextNode(` ${item.label}`));
-    if (item.detail) {
-      button.setAttribute('aria-expanded', 'false');
-      const detail = el('pre', 'tool-detail', item.detail);
-      button.onclick = () => {
-        const open = button.getAttribute('aria-expanded') === 'true';
-        button.setAttribute('aria-expanded', open ? 'false' : 'true');
-      };
-      wrap.append(button, detail);
-    } else wrap.append(button);
+  /** Agent work is one typing bubble with a short status; tool steps are not listed. */
+  function typingNode(status = '') {
+    const wrap = el('div', 'msg assistant typing-bubble');
+    wrap.setAttribute('role', 'status');
+    wrap.setAttribute('aria-label', 'The agent is working');
+    const dots = el('span', 'think-dots');
+    dots.setAttribute('aria-hidden', 'true');
+    dots.append(el('i'), el('i'), el('i'));
+    const line = el('span', 'typing-status', status);
+    line.hidden = !status;
+    wrap.append(dots, line);
+    wrap.statusLine = line;
     return wrap;
   }
 
   function paintLive() {
-    if (!state.liveTools || !window.IntelioTranscript) return;
-    const messages = (state.liveSteps || []).map((step) => ({
-      role: 'tool',
-      tool_name: step.name,
-      content: step.detail || '',
-      status: step.failed ? 'Failed' : (step.running ? 'Running' : 'Done'),
-    }));
-    const items = window.IntelioTranscript.present(messages).filter((item) => item.kind === 'chip');
-    state.liveTools.replaceChildren(...items.map((item) => chipNode(item)));
+    const line = state.liveTools?.statusLine;
+    if (!line || !window.IntelioTranscript?.typingStatus) return;
+    const status = window.IntelioTranscript.typingStatus(state.liveSteps || []);
+    line.textContent = status;
+    line.hidden = !status;
   }
 
   function renderPresented(messages) {
     const pane = $('rh-messages');
     pane.replaceChildren();
-    const items = window.IntelioTranscript
-      ? window.IntelioTranscript.present(messages)
+    const items = window.IntelioTranscript?.conversation
+      ? window.IntelioTranscript.conversation(messages)
       : messages.map((message) => ({ kind: 'bubble', role: message.role === 'user' ? 'user' : 'assistant', text: textOf(message.content) }));
     for (const item of items) {
-      if (item.kind === 'chip') pane.append(chipNode(item));
+      if (item.kind === 'typing') pane.append(typingNode(item.status || ''));
       else if (item.kind === 'bubble' && item.text) pane.append(el('div', `msg ${item.role === 'user' ? 'user' : 'assistant'}`, item.text));
     }
   }
@@ -118,16 +111,16 @@
     state.liveSteps = [];
     const pane = $('rh-messages');
     pane.append(el('div', 'msg user', input));
-    state.liveTools = el('div', 'tool-live');
+    state.liveTools = typingNode();
     state.streaming = el('div', 'msg assistant', '');
-    pane.append(state.liveTools, state.streaming);
+    pane.append(state.streaming, state.liveTools);
     $('rh-activity').textContent = 'Thinking…';
     try {
       await api.request('send', { id: state.activeId, input });
     } catch (error) {
       state.streaming.append(document.createTextNode(`\n[${error.message}]`));
     } finally {
-      state.busy = false; state.streaming = null; $('rh-send').disabled = false; $('rh-cancel').hidden = true; $('rh-activity').textContent = '';
+      state.busy = false; state.streaming = null; state.liveTools?.remove(); state.liveTools = null; $('rh-send').disabled = false; $('rh-cancel').hidden = true; $('rh-activity').textContent = '';
       await loadMessages().catch(() => {}); loadSessions();
     }
   }
