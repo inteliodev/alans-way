@@ -25,6 +25,12 @@ function mockHermes() {
       res.end('event: assistant.delta\ndata: {"delta":"SAMPLE DATA"}\n\n');
       return;
     }
+    if ((req.method === 'PATCH' || req.method === 'DELETE') && req.url === '/p/intelio/api/sessions/sample-tg') {
+      const chunks = [];
+      req.on('data', (chunk) => chunks.push(chunk));
+      req.on('end', () => res.end(JSON.stringify({ method: req.method, body: Buffer.concat(chunks).toString('utf8') })));
+      return;
+    }
     res.statusCode = 404;
     res.end('{}');
   });
@@ -370,6 +376,42 @@ test('the Access listener proxies Hermes, the desktop, and bootstrap without log
     assert.equal(logs.join('\n').includes(KEY), false);
     assert.equal(logs.join('\n').includes('desk-secret-not-logged'), false);
     assert.equal(logs.join('\n').includes('good-assertion'), false);
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
+  }
+});
+
+test('the Sessions tab can rename, pin, archive and delete one session through the Access listener only', async () => {
+  const upstream = await mockHermes();
+  const app = createPwaServer({
+    bind: '127.0.0.1',
+    port: 0,
+    localPort: 0,
+    upstream: `http://127.0.0.1:${upstream.address().port}`,
+    fetchImpl: globalThis.fetch,
+    profileKey: KEY,
+    accessMode: true,
+    accessVerify: async (token) => (token === 'good-assertion' ? { ok: true, login: 'hayden@intelio.co' } : { ok: false }),
+    log: () => {},
+  });
+  await app.listen();
+  const port = app.local.address().port;
+  const cookie = 'CF_Authorization=good-assertion';
+  try {
+    const renamed = await request(port, 'PATCH', '/p/intelio/api/sessions/sample-tg', { cookie, body: JSON.stringify({ title: 'Renamed', pinned: true }) });
+    assert.equal(renamed.status, 200);
+    assert.deepEqual(JSON.parse(renamed.body), { method: 'PATCH', body: JSON.stringify({ title: 'Renamed', pinned: true }) });
+    const removed = await request(port, 'DELETE', '/p/intelio/api/sessions/sample-tg', { cookie });
+    assert.equal(removed.status, 200);
+    assert.equal(JSON.parse(removed.body).method, 'DELETE');
+    // Other paths stay GET/POST only.
+    const other = await request(port, 'PATCH', '/p/intelio/api/sessions/sample-tg/messages', { cookie, body: '{}' });
+    assert.equal(other.status, 405);
+    const profile = await request(port, 'DELETE', '/p/intelio/api/profiles/prc', { cookie });
+    assert.equal(profile.status, 405);
+    const denied = await request(port, 'DELETE', '/p/intelio/api/sessions/sample-tg');
+    assert.equal(denied.status, 401);
   } finally {
     await new Promise((resolve) => app.close(resolve));
     await new Promise((resolve) => upstream.close(resolve));
