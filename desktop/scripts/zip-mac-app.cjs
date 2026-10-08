@@ -15,6 +15,12 @@ if (!fs.existsSync(plist)) {
   process.stderr.write(`missing ${app}\n`);
   process.exit(1);
 }
+// The packaged app throws on start without the intelio-repo resources (see stage-intelio-repo.cjs).
+const forks = path.join(app, 'Contents', 'Resources', 'intelio-repo', 'intelio', 'forks.json');
+if (!fs.existsSync(forks)) {
+  process.stderr.write(`missing ${path.relative(root, forks)}: run npm run package:mac (it stages intelio-repo)\n`);
+  process.exit(1);
+}
 const zip = path.resolve(`dist/Intelio-${version}-mac-arm64.zip`);
 fs.rmSync(zip, { force: true });
 const result = spawnSync('zip', ['-y', '-r', '-q', zip, 'intelio.app'], { cwd: root, stdio: 'inherit' });

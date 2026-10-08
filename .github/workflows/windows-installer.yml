@@ -115,12 +115,51 @@ jobs:
           npm run package:mac
           node scripts/zip-mac-app.cjs
           unzip -t dist/Intelio-*-mac-arm64.zip >/dev/null
+      - name: Check the zip carries the intelio-repo resources
+        run: |
+          unzip -l dist/Intelio-*-mac-arm64.zip > "$RUNNER_TEMP/mac-zip.txt"
+          grep -q 'intelio.app/Contents/Resources/intelio-repo/intelio/forks.json' "$RUNNER_TEMP/mac-zip.txt"
+          grep -q 'intelio.app/Contents/Resources/intelio-repo/intelio/profiles/' "$RUNNER_TEMP/mac-zip.txt"
+          grep -q 'intelio.app/Contents/Resources/intelio-repo/intelio/vendor/intelio-harness/src/' "$RUNNER_TEMP/mac-zip.txt"
+          if grep -q '__pycache__' "$RUNNER_TEMP/mac-zip.txt"; then echo "pycache in the zip"; exit 1; fi
       - name: Upload the macOS zip
         uses: actions/upload-artifact@v4
         with:
           name: Intelio-mac-arm64
           path: desktop/dist/Intelio-*-mac-arm64.zip
           if-no-files-found: error
+
+  # The zip is attached to the draft only after the app starts on a real Mac.
+  mac-smoke:
+    needs: mac-zip
+    runs-on: macos-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the macOS zip
+        uses: actions/download-artifact@v4
+        with:
+          name: Intelio-mac-arm64
+          path: desktop/dist
+      - name: Start the packaged app (--smoke-test)
+        shell: bash
+        run: |
+          APP_DIR="$RUNNER_TEMP/mac-app"
+          rm -rf "$APP_DIR" && mkdir -p "$APP_DIR"
+          ditto -x -k dist/Intelio-*-mac-arm64.zip "$APP_DIR"
+          test -f "$APP_DIR/intelio.app/Contents/Resources/intelio-repo/intelio/forks.json"
+          xattr -dr com.apple.quarantine "$APP_DIR/intelio.app" || true
+          "$APP_DIR/intelio.app/Contents/MacOS/intelio" --smoke-test > "$RUNNER_TEMP/smoke.log" 2>&1 &
+          PID=$!
+          for i in $(seq 1 90); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$PID" 2>/dev/null; then kill "$PID"; cat "$RUNNER_TEMP/smoke.log"; echo "smoke timed out"; exit 1; fi
+          wait "$PID"; CODE=$?
+          cat "$RUNNER_TEMP/smoke.log"
+          test "$CODE" -eq 0
+          grep -q 'smoke ok' "$RUNNER_TEMP/smoke.log"
       - name: Attach the macOS zip to the private draft
         shell: bash
         env:
