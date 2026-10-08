@@ -312,7 +312,7 @@ function createApprovalGate({
     if (typeof ask !== 'function') return 'unavailable';
     const controller = new AbortController();
     let timer;
-    const timeout = new Promise((resolve) => { timer = setTimeout(() => { controller.abort(); resolve('timeout'); }, timeoutMs); timer.unref?.(); });
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => { controller.abort(); resolve('timeout'); }, timeoutMs); });
     try {
       const answer = await Promise.race([
         Promise.resolve().then(() => ask({ ...request, signal: controller.signal, timeoutMs })).then((a) => (a === true || a === 'allow' ? 'allow' : a === 'timeout' ? 'timeout' : 'deny'), () => 'error'),
