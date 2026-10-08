@@ -118,6 +118,7 @@ body.remote-main .side-title { display: none; }
 .bot-role { flex: none; max-width: 46%; padding: 2px 8px; border-radius: 999px; background: #2a2a30; color: #c5c5d0; font-size: 11px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lead-name { font-size: 16px; }
 .lead-status { color: #6e6e73; font-size: 12px; }
+.lead-status.offline { color: #c2410c; }
 .sidebar-watching-wrap { padding: 0 8px 8px; }
 .watch-row, .thread-line { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 13px; font-weight: 400; cursor: pointer; }
 .watch-row strong, .thread-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -201,3 +202,9 @@ html, body { height: 100dvh; max-height: 100dvh; overflow: hidden; }
 .remote-thread { height: 100%; }
 .chat-header, .bops-bar, .composer-note, .remote-status, .tab-bar, .workspace-footer { flex-shrink: 0; }
 .workspace-pane { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+/* Pane actions float over the chat header while the browser pane is hidden (style.css).
+   Keep the header's own buttons clear of them, and show the VPS desktop status there
+   because the pane footer is off-screen in that mode. */
+.pane-status { display: none; align-items: center; gap: 6px; margin-right: 6px; padding: 0 8px; height: 26px; border-radius: 999px; font-size: 11px; color: #8e8e93; white-space: nowrap; }
+#shell.browser-hidden .pane-status { display: inline-flex; }
+#shell.browser-hidden .chat-header { padding-right: calc(var(--pane-actions-w, 0px) + 22px); }

@@ -478,7 +478,20 @@ function render(next) {
   $('vm-toggle').title = remote ? 'Local browser' : 'Agent computer';
   $('vm-toggle').setAttribute('aria-label', $('vm-toggle').title);
   $('vm-toggle').setAttribute('aria-pressed', String(remote));
-  $('shell').classList.toggle('browser-hidden', state.showBrowser === false);
+  const browserHidden = state.showBrowser === false;
+  $('shell').classList.toggle('browser-hidden', browserHidden);
+  // With the pane hidden its footer is off-screen, so the pane actions carry the VPS desktop status.
+  const paneStatus = $('pane-status');
+  if (paneStatus) {
+    const vpsStatus = state.remoteStatus || 'connecting';
+    $('pane-status-text').textContent = `VPS desktop · ${vpsStatus}`;
+    paneStatus.title = `VPS desktop viewer is ${vpsStatus}. This is the remote screen, not the agent chat connection.`;
+    paneStatus.querySelector('.status-dot')?.classList.toggle('offline', vpsStatus !== 'connected');
+  }
+  // The pane actions float over the chat header while the pane is hidden; reserve their width
+  // so they never sit on top of the header's own buttons (Call my phone).
+  const paneActions = document.querySelector('.pane-actions');
+  $('shell').style.setProperty('--pane-actions-w', browserHidden && paneActions ? `${Math.ceil(paneActions.getBoundingClientRect().width)}px` : '0px');
   document.querySelector('.workspace-pane')?.classList.toggle('agent-open', Boolean(agentPane && nowRemote));
   if (!nowRemote) agentPane = false;
   $('browser-collapse').title = state.showBrowser === false ? 'Show browser pane' : 'Hide browser pane';
@@ -502,7 +515,7 @@ function render(next) {
   $('control-button').title = tab ? `Browser runs on ${tab.host==='vps'?'the VPS':machine.controlLocal || 'your Mac'} · ${tab.controller === 'agent' ? 'Agent' : 'You'} control it` : 'Open a browser tab first';
   if (document.activeElement !== $('address')) $('address').value = tab?.internal ? '' : tab?.url || '';
   const agentName = tab ? state.bots.find(bot => bot.id === tab.botId)?.name || 'Agent' : '';
-  $('workspace-status').textContent = tab?.error ? `Page: ${tab.error}` : tab?.loading ? 'Loading…' : tab ? `${tab.controller === 'agent' ? `${agentName}${tab.agentBusy ? ' is working' : ' is browsing'}` : 'You'} in control${tab.controller === 'agent' ? ' · Take over anytime' : ''} · ${tab.host==='vps'?'VPS':(machine.statusLocal || 'Mac')}${tab.handoff?.phase==='handed_off'?` · Handed off to the ${tab.handoff.destinationHost==='vps'?'VPS':(machine.statusLocal || 'Mac')} — agents continue there`:tab.handoff&&tab.handoff.phase!=='reviewed'?' · Handoff: review page before continuing':''}` : state.activeTabId === 'vps' ? `VPS · ${state.remoteStatus}` : 'Ready';
+  $('workspace-status').textContent = tab?.error ? `Page: ${tab.error}` : tab?.loading ? 'Loading…' : tab ? `${tab.controller === 'agent' ? `${agentName}${tab.agentBusy ? ' is working' : ' is browsing'}` : 'You'} in control${tab.controller === 'agent' ? ' · Take over anytime' : ''} · ${tab.host==='vps'?'VPS':(machine.statusLocal || 'Mac')}${tab.handoff?.phase==='handed_off'?` · Handed off to the ${tab.handoff.destinationHost==='vps'?'VPS':(machine.statusLocal || 'Mac')} — agents continue there`:tab.handoff&&tab.handoff.phase!=='reviewed'?' · Handoff: review page before continuing':''}` : state.activeTabId === 'vps' ? `VPS desktop · ${state.remoteStatus}` : 'Ready';
   $('connection-status').textContent = state.api.ready ? 'Browser connector ready' : state.api.error ? 'Browser connector unavailable' : 'Browser connector starting…';
   const notes = { login: 'Sign in with your Telegram account. Your bots appear on the left.', connected: 'Your Telegram account · bot chats only', locked: 'Unlock Telegram to load your bot chats.', offline: 'Telegram is offline. Check your connection, then sync in Settings.', loading: 'Connecting to Telegram…' };
   if (!nowRemote) $('telegram-note').textContent = notes[state.telegramStatus] || notes.loading;

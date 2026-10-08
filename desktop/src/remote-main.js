@@ -232,6 +232,9 @@
     canvas.dataset.profile = id;
     canvas.dataset.orb = orb || signatureOf(id);
     canvas.dataset.accent = accent || accentOf(id);
+    // The orb is decoration next to the agent's name. The orb library labels the canvas with
+    // its animation name ("Connecting"), which screen readers announced as a status; hide it.
+    canvas.setAttribute('aria-hidden', 'true');
     if (root.ThinkingOrbs) {
       root.ThinkingOrbs.mount(canvas, { state: orb, display: px, size: 64, paused, speed: paused ? 1 : 0.42, accent: accent || accentOf(id) });
     }
@@ -343,7 +346,10 @@
     const badge = el('span', 'lead-badge');
     orb.append(canvas, badge);
     const count = workCount();
-    card.append(orb, el('strong', 'lead-name', lead.name), el('span', 'lead-status', count ? `Working on ${count} ${count === 1 ? 'thing' : 'things'}` : 'Online'));
+    // Report the real link to the VPS Hermes API instead of a fixed "Online".
+    const link = ui.link === 'offline' ? 'Offline · reconnecting' : ui.link === 'online' ? 'Online' : 'Connecting…';
+    const status = el('span', `lead-status${ui.link === 'offline' && !count ? ' offline' : ''}`, count ? `Working on ${count} ${count === 1 ? 'thing' : 'things'}` : link);
+    card.append(orb, el('strong', 'lead-name', lead.name), status);
     card.onclick = () => root.openAgentDetails?.(lead.id);
   }
 
@@ -1299,9 +1305,17 @@
     if (open && after && !ui.busy && sessionAt(after) !== sessionAt(before)) await loadMessages(open, seq);
   }
 
+  function setLink(next) {
+    if (ui.link === next) return;
+    ui.link = next;
+    paintAgents();
+  }
+
   async function runRefresh(quiet) {
     try {
-      const gone = await loadHome();
+      let gone;
+      // Only the home load decides the link state; a failing thread load is not "offline".
+      try { gone = await loadHome(); setLink('online'); } catch (error) { setLink('offline'); throw error; }
       if (!quiet || gone) {
         await Promise.all([ui.selected ? selectAgent(ui.selected) : null, loadAllSessions()]);
         return;
@@ -1750,6 +1764,7 @@
 
   function mountSample({ agent = 'intelio' } = {}) {
     ui.sample = true;
+    ui.link = 'online';
     ui.label = SAMPLE.label;
     ui.agents = SAMPLE.agents.map((item) => ({ ...item, orb: item.orb || signatureOf(item.id) }));
     ui.stamp = 'sample';
