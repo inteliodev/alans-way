@@ -1,7 +1,8 @@
 # intelio node — interface contract (v1)
 
 Goal: from the phone or any computer, the intelio agent on the VPS can use every enrolled
-computer (files, search, commands, screenshots) as that computer's signed-in user.
+computer (files, search, commands, screenshots) as that computer's signed-in user, plus the
+VPS itself as the built-in computer "cloud", so one set of tools covers local, cloud or both.
 Hermes reaches the computers ONLY through standard Hermes configuration (an MCP server entry)
 and the existing alans-way plugin; no Hermes source is changed, so Hermes updates do not break it.
 
@@ -46,12 +47,12 @@ Offline computer -> tool result `isError: true` with text "<name> is offline (la
 
 | tool | args | result |
 |---|---|---|
-| list_computers | – | name, id, os, user, online, last_seen, version |
+| list_computers | – | name, id, os, user, online, last_seen, version, kind (`cloud` for the VPS), paused |
 | computer_info | computer | os, arch, hostname, user, home, drives/volumes, shell |
 | list_dir | computer, path, show_hidden? | entries: name, type, size, mtime (max 2000, truncated flag) |
 | read_file | computer, path, offset?, limit?, encoding? (text\|base64) | content (text max 1 MB / base64 max 10 MB), total_size, truncated |
 | write_file | computer, path, content, encoding? (text\|base64), mode? (create\|overwrite\|append, default overwrite), make_dirs? | bytes_written, path |
-| search_files | computer, root, pattern (regex for content) ?, name_glob?, max_results? (default 200) | matches: path, line, text |
+| search_files | computer, root, pattern (regex for content) ?, name_glob?, max_results? (default 200), timeout_s? (default 60, max 300) | matches: path, line, text; timed_out / aborted / skipped_cloud_only when they apply |
 | run_command | computer, command, cwd?, timeout_s? (default 120, max 1800), shell? | exit_code, stdout, stderr (each max 200 KB, truncated flags), duration_ms |
 | screenshot | computer, display? | MCP image content (PNG) + text with display size |
 
@@ -64,10 +65,16 @@ Paths: absolute, or `~`-relative to the user's home. Shell: Windows = PowerShell
 - Commands that request elevation (`sudo`, `runas`, `Start-Process … -Verb RunAs`,
   `osascript … with administrator privileges`) are refused with a clear message unless the
   user approves a native confirm dialog on that computer.
-- Kill switch: Settings → "Allow intelio agents to use this computer" (default ON after the
-  user enrolls; OFF disconnects immediately).
+- Kill switches: on the computer, Settings → "Let my agents use this computer" or Stop on
+  the "agent is using this computer" notice (OFF disconnects immediately and aborts in-flight
+  calls); for any computer (including "cloud"), Settings → Your computers (the relay refuses
+  calls to a paused computer; the state survives restarts).
 - Audit: node appends every call (time, tool, args summary without file contents, result size,
-  exit code) to `<userData>/intelio-node/audit.jsonl`; relay logs the same summary.
+  exit code) to `<userData>/intelio-node/audit.jsonl` (Settings → View activity); the relay
+  appends the same summary (program name only, never command text) for every computer to
+  `~/.config/intelio/nodes-audit.jsonl` (Settings → All agent activity).
+- Managed work computers (ARLP PC on the Alliance network) are held off; see "Managed
+  computers" below.
 
 ## Device identity and revocation
 
@@ -104,7 +111,11 @@ describe how this repository implements it and what is left for stage 2.
 | Node executors (files, search, commands, screenshot) | `desktop/src/intelio/node/executors.cjs` |
 | Elevation detection | `desktop/src/intelio/node/elevation.cjs` |
 | Node client (dial out, enroll, backoff, ping, audit, kill switch) | `desktop/src/intelio/node/client.cjs` |
-| Electron glue (safeStorage, Settings, target URL, confirm dialog) | `desktop/src/intelio/node/electron.cjs` (started from `desktop/src/main.cjs`) |
+| Electron glue (safeStorage, Settings, target URL, confirm dialog, first run, managed hold) | `desktop/src/intelio/node/electron.cjs` (started from `desktop/src/main.cjs`) |
+| Search worker (bounded time, kill switch, cloud-only placeholders) | `desktop/src/intelio/node/search.cjs` |
+| "Agent is using this computer" notice | `desktop/src/intelio/node/indicator.cjs`, `indicator.html`, `indicator-preload.cjs` |
+| The "cloud" computer | `mobile/pwa/nodes-local.cjs` |
+| Person-only computers API | `mobile/pwa/nodes-human.cjs` |
 | Relay registry + live hub | `mobile/pwa/nodes.cjs` |
 | Relay MCP server for Hermes | `mobile/pwa/nodes-mcp.cjs` |
 | Operator CLI | `mobile/pwa/nodes-cli.cjs` |
@@ -130,7 +141,12 @@ requires `desktop/src/intelio/*.cjs`; the VPS runs from a full checkout.
   that never holds file contents, command text (only program name and length) or secrets.
 - MCP endpoint: `POST /mcp` only (GET/DELETE answer 405: no SSE, stateless), bearer
   required (401 otherwise), requests carrying an `Origin` header are refused (403) so a
-  browser page cannot reach it. Bind must be loopback; anything else throws at start.
+  browser page cannot reach it. The bind must be the literal `127.0.0.1` or `::1` (no
+  hostnames such as `localhost`, no wildcard or mapped-wildcard addresses); after binding
+  the relay checks the socket's real address and closes it if it is not loopback. If the
+  check fails the MCP endpoint stays off and the rest of the PWA keeps running.
+  `desktop/test/intelio-node-relay.test.cjs` covers this, and a static check makes sure
+  nothing under `desktop/src/intelio/node/` opens a listening port.
 
 ### Enroll, list, rename, revoke
 
@@ -162,8 +178,12 @@ A VPS-side rename pins the name; until then the name follows the computer's Sett
 - Identity: `{device_id, device_secret}` encrypted with Electron `safeStorage` in
   `<userData>/intelio-node/identity.bin`. If `safeStorage` is unavailable the node does
   not enroll (never stores the secret in plaintext) and Settings says why.
-- Settings → "Allow intelio agents to use this computer" (default ON) and "Computer name"
-  (default: OS hostname). OFF closes the socket immediately and refuses any in-flight call.
+- Settings → "Let my agents use this computer" (default ON once the first-run prompt is
+  allowed) and "Computer name" (default: OS hostname). OFF closes the socket immediately and
+  refuses any in-flight call.
+- Tailscale mode dialing a Tailscale IP verifies the phone listener's certificate against the
+  peer's MagicDNS name (`tailscale status --json`, fallback the known VPS name) instead of
+  failing the name check on the bare IP. Verification stays on.
 - Audit: `<userData>/intelio-node/audit.jsonl`, one JSON line per call (time, tool, args
   summary without file contents, result bytes, exit code, ok/error).
 - Elevation: commands matching sudo/doas/pkexec/su, runas, `Start-Process … -Verb RunAs`,
@@ -171,7 +191,10 @@ A VPS-side rename pins the name; until then the name follows the computer's Sett
   dialog on that computer is approved by the person there. Approval does not elevate:
   the command still runs as the user, and the OS shows its own UAC/sudo prompt.
 - Executors: computer_info, list_dir, read_file, write_file, search_files (pure-Node
-  walker; skips node_modules and .git unless the root is inside them), run_command
+  walker in a worker thread: a slow regex on a huge line can no longer freeze the app; the
+  time budget and the kill switch terminate it and partial matches are kept; OneDrive/iCloud
+  cloud-only placeholders are skipped instead of downloaded; skips node_modules and .git
+  unless the root is inside them), run_command
   (PowerShell on Windows, `$SHELL -lc` elsewhere; timeout kills the whole process tree),
   screenshot (`desktopCapturer` → PNG).
 - Result shapes: tools return one text item holding JSON (fields as in the table above);
@@ -181,6 +204,42 @@ A VPS-side rename pins the name; until then the name follows the computer's Sett
 - Unsupported Linux desktop sessions: everything except `screenshot` works wherever
   Electron runs; `screenshot` needs a session `desktopCapturer` can read (and on macOS
   the Screen Recording permission).
+
+## The "cloud" computer (the VPS itself)
+
+- `mobile/pwa/nodes-local.cjs`: the relay serves "cloud" in-process with the same executors
+  as a desktop node, as the VPS user the relay runs as. It adds no authority: agents already
+  have their own shell on the VPS as that user. It exists so agents can address local, cloud
+  or both with the same tools, and so the person gets the same kill switch and audit for it.
+- Aliases: `cloud`, `vps`, `intelio-vps`, the VPS hostname. Listed first. Never elevates
+  (sudo is refused with no prompt). Commands get the relay's environment minus intelio
+  settings and anything named like a key, token, secret, password, credential, cookie or auth.
+- `INTELIO_NODES_CLOUD=0` in `pwa.env` turns it off; `INTELIO_NODES_CLOUD_NAME` renames it.
+
+## Person-only API (the app's Computers list)
+
+`mobile/pwa/nodes-human.cjs`, mounted in `server.cjs`: `GET /api/computers`,
+`POST /api/computers/pause {computer, paused}`, `GET /api/computers/audit?limit=N`.
+Only a Cloudflare Access session (Access listener) or an allowed Tailscale login (tailnet
+listener) is accepted. Profile bearer keys (which agents hold) are refused, a request from the
+VPS itself is refused (agents run there), and POSTs must be same-origin. The desktop calls it
+without any profile key (`computersRequest` in `remote-hermes-main.cjs`).
+
+## First run, indicator, managed computers
+
+- First run: the app asks once, "Let my agents use this computer?" (Allow is the default
+  button). Until it is answered the node does not connect. Ticking the Settings box also
+  answers it.
+- While any agent call runs, a small always-on-top notice shows at the top of the screen
+  ("intelio agent is using this computer · running a command") with Stop, which turns this
+  computer's access off. It hides a few seconds after the last call. Settings shows the same.
+- Managed computers: if the computer looks managed (Windows domain `*alliance*`, SentinelOne,
+  or Cisco Umbrella installed) the node is HELD: it never connects and the first-run prompt is
+  not shown. Settings explains why and offers "IT has cleared this computer for intelio"; only
+  after that does the normal prompt/toggle apply. `INTELIO_NODE_HOLD=1` holds any computer
+  regardless. A managed computer only ever dials intelio cloud (app.intelio-ai.com), never
+  Tailscale. Detection only reads whether those tools are installed; nothing is changed,
+  disabled or routed around.
 
 ## Stage 2: persistent terminal sessions (extension point, not implemented)
 

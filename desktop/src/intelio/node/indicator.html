@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>intelio</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #17171b; color: #e6e6ee; font: 12px -apple-system, "Segoe UI", system-ui, sans-serif; overflow: hidden; user-select: none; }
+  .pill { display: flex; align-items: center; gap: 10px; height: 100%; padding: 0 8px 0 14px; box-sizing: border-box; border: 1px solid #3a3a44; border-radius: 12px; -webkit-app-region: drag; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #6aa0ff; box-shadow: 0 0 0 0 #6aa0ff88; animation: pulse 1.6s infinite; flex-shrink: 0; }
+  .stopped .dot { background: #8a8a99; animation: none; }
+  .text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .text b { font-weight: 600; }
+  button { -webkit-app-region: no-drag; background: #2b2b33; color: #f0f0f5; border: 1px solid #474752; border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  button:hover { background: #3a3a44; }
+  .stopped button { display: none; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 #6aa0ff88; } 70% { box-shadow: 0 0 0 8px #6aa0ff00; } 100% { box-shadow: 0 0 0 0 #6aa0ff00; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+</style>
+</head>
+<body>
+<div class="pill" id="pill">
+  <span class="dot"></span>
+  <span class="text" id="text"><b>intelio</b> agent is using this computer</span>
+  <button id="stop" title="Turn off agent access to this computer now (turn it back on in Settings)">Stop</button>
+</div>
+<script>
+  const text = document.getElementById('text');
+  const pill = document.getElementById('pill');
+  document.getElementById('stop').onclick = () => window.intelioIndicator.stop();
+  window.intelioIndicator.onState((s) => {
+    pill.classList.toggle('stopped', Boolean(s && s.stopped));
+    text.textContent = '';
+    const b = document.createElement('b');
+    b.textContent = 'intelio';
+    text.append(b, s && s.stopped ? ' agents stopped. Turn access back on in Settings.' : ` agent is using this computer${s && s.text ? ` · ${s.text}` : ''}`);
+  });
+</script>
+</body>
+</html>

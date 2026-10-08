@@ -50,6 +50,7 @@ function createNodeClient({
   log = () => {},
   connect = connectWebSocket,
   onState = () => {},
+  onActivity = () => {},
   now = () => Date.now(),
   pingMs = protocol.PING_MS,
   staleMs = protocol.STALE_MS,
@@ -80,8 +81,10 @@ function createNodeClient({
   }
 
   function abortCalls(reason) {
+    const had = inflight.size > 0;
     for (const [, call] of inflight) call.controller.abort(reason);
     inflight.clear();
+    if (had) { try { onActivity({ phase: 'abort', id: '', tool: '', active: [] }); } catch { /* listener */ } }
   }
 
   async function handleCall(conn, msg) {
@@ -90,7 +93,9 @@ function createNodeClient({
     const args = msg.args && typeof msg.args === 'object' ? msg.args : {};
     const started = now();
     const controller = new AbortController();
-    inflight.set(id, { controller });
+    inflight.set(id, { controller, tool, started });
+    const activity = (phase) => { try { onActivity({ phase, id, tool, active: [...inflight.values()].map((c) => c.tool) }); } catch { /* listener */ } };
+    activity('start');
     let result;
     if (!enabled) result = { ok: false, error: 'intelio access is turned off on this computer.', meta: {} };
     else {
@@ -99,6 +104,7 @@ function createNodeClient({
       }
     }
     inflight.delete(id);
+    activity('end');
     const bytes = result.ok ? protocol.contentSize(result.content) : 0;
     audit({
       time: new Date(started).toISOString(),
@@ -247,6 +253,8 @@ function createNodeClient({
     },
     forgetIdentity() { try { identity.clear(); } catch { /* ignore */ } },
     state: () => ({ ...state, enabled }),
+    /** Tools agents are running on this computer right now. */
+    active: () => [...inflight.values()].map((c) => ({ tool: c.tool, since: c.started })),
     get connection() { return ws; },
   };
 }

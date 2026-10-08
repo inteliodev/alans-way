@@ -538,7 +538,7 @@ function registerIpc() {
         if (command === 'remote-hermes-config' || command === 'remote-hermes-key' || command === 'remote-hermes-sign-in') { broadcast(); intelioNode?.kick(); }
         return result;
       }
-      case 'intelio-node-state': case 'intelio-node-config': {
+      case 'intelio-node-state': case 'intelio-node-config': case 'intelio-node-audit': case 'intelio-computers': case 'intelio-computers-pause': case 'intelio-computers-audit': {
         if (!intelioNode) return { enabled: false, status: 'unavailable', detail: 'intelio node is not running in this window.' };
         return intelioNode.command(command, value);
       }

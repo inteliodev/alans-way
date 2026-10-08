@@ -34,3 +34,10 @@ body { font-family: var(--intelio-font); background: var(--bg); color: var(--tex
 .primary-button { background: var(--intelio-surface); color: var(--bg); }
 .modal-card { background: #111111; border-color: rgba(229, 229, 229, 0.28); }
 .workspace-footer { color: #e5e5e5; }
+/* intelio computers (docs/intelio-node.md) */
+.intelio-node-held { color: #e3e3ed; }
+.intelio-node-activity { margin: 10px 0; max-height: 260px; overflow: auto; border: 1px solid #303038; border-radius: 9px; padding: 4px 10px; }
+.intelio-node-activity-list { margin: 0; padding-left: 0; list-style: none; font-size: 11px; line-height: 1.6; color: #a8a8b8; }
+.intelio-node-activity-list li { border-bottom: 1px solid #25252c; padding: 3px 0; overflow-wrap: anywhere; }
+.intelio-node-activity-list li.failed { color: #e08a8a; }
+.intelio-computer-row { margin: 8px 0; }

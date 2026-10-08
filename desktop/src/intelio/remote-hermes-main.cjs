@@ -931,7 +931,41 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return { mode: 'tailscale', host: cfg.host };
   }
 
-  return { register, command, open, publicState, watchVersion, viewerUrl, vncPassword, vault, nodeTarget, startupNotice: () => startupNotice };
+  /**
+   * The person's intelio computers API on the VPS (mobile/pwa/nodes-human.cjs).
+   * Never sends a profile key: the relay only answers the Access session
+   * (cloud) or an allowed Tailscale login, so agents holding keys cannot use it.
+   */
+  async function computersRequest(pathname, { method = 'GET', body, timeoutMs = 10000 } = {}) {
+    if (!/^\/api\/computers(?:\/[a-z-]+)?(?:\?[\w=&%.-]*)?$/.test(String(pathname))) throw new Error('Bad computers path.');
+    let cfg;
+    try { cfg = await config(); } catch { cfg = null; }
+    const base = pwaBase(cfg || {});
+    if (!base) throw new Error('Connect to the VPS (intelio cloud or Tailscale) to see your computers.');
+    const doFetch = selectFetch(cfg, { fetchImpl: globalThis.fetch, sessionFor });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await doFetch(`${base}${pathname}`, {
+        method,
+        headers: { Accept: 'application/json', Origin: base, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+        redirect: 'error',
+      });
+      let parsed = {};
+      try { parsed = await response.json(); } catch { parsed = {}; }
+      if (!response.ok) throw new Error(String(parsed.error || `The VPS answered ${response.status}.`).slice(0, 300));
+      return parsed;
+    } catch (error) {
+      if (error && error.name === 'AbortError') throw new Error('The VPS did not answer in time.');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return { register, command, open, publicState, watchVersion, viewerUrl, vncPassword, vault, nodeTarget, computersRequest, startupNotice: () => startupNotice };
 }
 
 module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, keysFromImport, profileNames, secureDelete, attachCloudSessionCookies, cloudCookieFilter, VNC_KEY };

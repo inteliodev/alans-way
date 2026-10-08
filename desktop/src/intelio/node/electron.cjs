@@ -1,7 +1,9 @@
 'use strict';
 /**
  * Electron glue for the intelio node (docs/intelio-node.md):
- * - prefs.intelioNode = { enabled (default true), name ('' = OS hostname) }
+ * - prefs.intelioNode = { enabled (default true), name ('' = OS hostname), asked (first-run
+ *   prompt answered), cleared / hold (managed work computers, see managedDevice) }
+ * - an always-on-top pill while an agent is using this computer, with Stop (indicator.cjs)
  * - device identity encrypted with safeStorage in <userData>/intelio-node/identity.bin
  * - audit log <userData>/intelio-node/audit.jsonl
  * - target: cloud origin + CF_Authorization cookie, or the tailnet phone listener
@@ -24,7 +26,49 @@ function nodePrefs(prefs) {
   return {
     enabled: raw.enabled !== false,
     name: typeof raw.name === 'string' ? raw.name.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 64) : '',
+    // First run: the app asks once ("Let my agents use this computer", Allow is the default).
+    asked: raw.asked === true,
+    // A managed work computer (see managedDevice) stays held until this is set after its IT team clears it.
+    cleared: raw.cleared === true,
+    // Hold this computer regardless of detection.
+    hold: raw.hold === true,
   };
+}
+
+// Signs of a managed work computer whose security team has not cleared the intelio node
+// (the ARLP PC on the Alliance network: Cisco Umbrella DNS filtering, SentinelOne, no admin).
+// Detection only decides to hold the node OFF; it never changes or works around those tools.
+const MANAGED_PATHS_WIN = [
+  'C:\\Program Files\\SentinelOne',
+  'C:\\ProgramData\\Sentinel',
+  'C:\\Program Files (x86)\\OpenDNS\\Umbrella Roaming Client',
+  'C:\\Program Files (x86)\\Cisco\\Cisco Secure Client\\Umbrella',
+  'C:\\Program Files (x86)\\Cisco\\Cisco AnyConnect Secure Mobility Client\\Umbrella',
+  'C:\\ProgramData\\Cisco\\Cisco Secure Client\\Umbrella',
+];
+const MANAGED_PATHS_MAC = ['/Library/Sentinel', '/Applications/SentinelOne', '/Applications/Cisco/Cisco Secure Client.app', '/opt/cisco/secureclient/umbrella'];
+
+/** { managed, reasons[] } for this computer. */
+function managedDevice({ env = process.env, platform = process.platform, exists = fs.existsSync } = {}) {
+  const reasons = [];
+  const domain = `${env.USERDNSDOMAIN || ''} ${env.USERDOMAIN || ''}`;
+  if (/alliance/i.test(domain)) reasons.push('it is joined to the Alliance domain');
+  const paths = platform === 'win32' ? MANAGED_PATHS_WIN : platform === 'darwin' ? MANAGED_PATHS_MAC : [];
+  for (const p of paths) {
+    let found = false;
+    try { found = exists(p); } catch { found = false; }
+    if (found) { reasons.push(/sentinel/i.test(p) ? 'SentinelOne is installed' : 'Cisco Umbrella is installed'); }
+  }
+  return { managed: reasons.length > 0, reasons: [...new Set(reasons)] };
+}
+
+/** Why the node is held off on this computer, or '' when it may run. */
+function holdReason({ env = process.env, prefs = {}, managed = { managed: false, reasons: [] } } = {}) {
+  const p = nodePrefs(prefs);
+  if (String(env.INTELIO_NODE_HOLD || '') === '1') return 'Held by INTELIO_NODE_HOLD=1 on this computer.';
+  if (p.hold) return 'Held in Settings.';
+  if (managed.managed && !p.cleared) return `Held because this looks like a managed work computer (${managed.reasons.join('; ')}). It stays off until its IT team clears it; then tick "IT has cleared this computer" in Settings.`;
+  return '';
 }
 
 function deviceName(prefs, hostname = os.hostname()) {
@@ -32,7 +76,7 @@ function deviceName(prefs, hostname = os.hostname()) {
 }
 
 /** WebSocket URLs to try for a remote-hermes node target. */
-function relayUrls(target, env = process.env) {
+function relayUrls(target, env = process.env, { cloudOnly = false } = {}) {
   const override = String(env.INTELIO_NODE_RELAY_URL || '').trim();
   if (override && /^wss?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\//i.test(override)) {
     // Loopback-only override for tests and SSH tunnels; never sends the cookie elsewhere.
@@ -44,7 +88,8 @@ function relayUrls(target, env = process.env) {
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return { urls: [url.toString()], headers: { Cookie: target.cookie }, mode: 'cloud' };
   }
-  if (target.mode === 'tailscale' && target.host) {
+  // A managed work computer only ever uses intelio cloud (app.intelio-ai.com), never Tailscale.
+  if (target.mode === 'tailscale' && target.host && !cloudOnly) {
     const raw = String(target.host).trim();
     const host = raw.includes(':') && !raw.startsWith('[') ? `[${raw}]` : raw;
     const wss = `wss://${host}:${RELAY_PORT}/node/connect`;
@@ -112,12 +157,47 @@ async function captureDisplay({ desktopCapturer, screen }, display) {
   return { png: source.thumbnail.toPNG(), width: size.width, height: size.height, count: displays.length, scale };
 }
 
-function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, getPrefs, savePreferences, remoteHermes, getMainWindow = () => null, env = process.env }) {
+function readLocalAudit(file, limit = 200, fsImpl = fs) {
+  let text = '';
+  try {
+    const stat = fsImpl.statSync(file);
+    const fd = fsImpl.openSync(file, 'r');
+    try {
+      const size = Math.min(stat.size, 2 * 1024 * 1024);
+      const buf = Buffer.alloc(size);
+      fsImpl.readSync(fd, buf, 0, size, stat.size - size);
+      text = buf.toString('utf8');
+    } finally { fsImpl.closeSync(fd); }
+  } catch { return []; }
+  const out = [];
+  for (const line of text.split('\n').slice(-limit - 1)) {
+    if (!line.trim()) continue;
+    try { out.push(JSON.parse(line)); } catch { /* partial first line */ }
+  }
+  return out.slice(-limit);
+}
+
+function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, getPrefs, savePreferences, remoteHermes, getMainWindow = () => null, env = process.env, BrowserWindow, ipcMain }) {
   const dir = path.join(app.getPath('userData'), 'intelio-node');
   const identity = createIdentityStore(path.join(dir, 'identity.bin'), safeStorage);
-  const audit = createAuditLog(path.join(dir, 'audit.jsonl'));
+  const auditFile = path.join(dir, 'audit.jsonl');
+  const audit = createAuditLog(auditFile);
   let listener = () => {};
   const name = () => deviceName(getPrefs());
+  let managedCache = null; // installed security tools do not change while the app runs
+  const managedNow = () => (managedCache = managedCache || managedDevice({ env }));
+  const held = () => holdReason({ env, prefs: getPrefs(), managed: managedNow() });
+  let askOpen = false;
+  let indicator = null;
+  try {
+    if (!BrowserWindow || !ipcMain) ({ BrowserWindow, ipcMain } = require('electron'));
+    if (env.INTELIO_E2E !== '1') {
+      indicator = require('./indicator.cjs').createIndicator({
+        BrowserWindow, ipcMain, screen,
+        onStop: () => { configure({ enabled: false }); indicator && indicator.stopped(); },
+      });
+    }
+  } catch { indicator = null; }
 
   async function confirmElevation({ command, reason }) {
     const controller = new AbortController();
@@ -147,7 +227,7 @@ function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, g
   });
 
   const client = createNodeClient({
-    getTarget: async () => relayUrls(await withTlsName(remoteHermes && typeof remoteHermes.nodeTarget === 'function' ? await remoteHermes.nodeTarget() : null), env),
+    getTarget: async () => relayUrls(await withTlsName(remoteHermes && typeof remoteHermes.nodeTarget === 'function' ? await remoteHermes.nodeTarget() : null), env, { cloudOnly: managedNow().managed }),
     getInfo: () => {
       let user = '';
       try { user = os.userInfo().username; } catch { user = ''; }
@@ -158,27 +238,60 @@ function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, g
     audit,
     log: (line) => process.stderr.write(`${line}\n`),
     onState: () => listener(),
+    onActivity: (event) => { try { indicator && indicator.update(event.active); } catch { /* indicator */ } listener(); },
   });
 
   function publicState() {
     const prefs = nodePrefs(getPrefs());
     const s = client.state();
+    const hold = held();
+    const m = managedNow();
     return {
       enabled: prefs.enabled,
       name: name(),
       customName: prefs.name,
       hostname: os.hostname(),
-      status: prefs.enabled ? s.status : 'off',
-      detail: s.detail,
+      status: hold ? 'held' : !prefs.asked ? 'ask' : prefs.enabled ? s.status : 'off',
+      detail: hold || s.detail,
+      held: Boolean(hold),
+      managed: m.managed,
+      managedReasons: m.reasons,
+      cleared: prefs.cleared,
+      asked: prefs.asked,
+      active: client.active(),
       enrolled: Boolean(identity.load()),
       encryptionAvailable: identity.available(),
-      auditFile: path.join(dir, 'audit.jsonl'),
+      auditFile,
     };
+  }
+
+  /** First run: ask once in the app. Allow (the default button) turns access on. */
+  async function askFirstRun() {
+    if (askOpen) return;
+    askOpen = true;
+    try {
+      const options = {
+        type: 'question',
+        buttons: ['Allow', 'Not now'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+        title: 'intelio',
+        message: 'Let my agents use this computer?',
+        detail: 'Your intelio agents on the VPS can then work with the files and terminal on this computer as you (including Claude Code or Codex if they are installed). They never get administrator rights, you can see when they are working, and Settings has an on/off switch and an activity log. Change this any time in Settings.',
+      };
+      const win = getMainWindow();
+      const answer = win && !win.isDestroyed() ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+      configure({ enabled: answer.response === 0, asked: true });
+    } catch { /* asked again next launch */ } finally { askOpen = false; }
   }
 
   function start() {
     if (env.INTELIO_E2E === '1' || env.INTELIO_NODE === '0') return;
-    if (nodePrefs(getPrefs()).enabled) setImmediate(() => client.start());
+    if (held()) { listener(); return; }
+    const prefs = nodePrefs(getPrefs());
+    if (!prefs.asked) { setTimeout(() => askFirstRun(), 1500); return; }
+    if (prefs.enabled) setImmediate(() => client.start());
   }
 
   function configure(value = {}) {
@@ -187,26 +300,45 @@ function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, g
     const next = { ...current };
     if (typeof value.enabled === 'boolean') next.enabled = value.enabled;
     if (typeof value.name === 'string') next.name = value.name.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 64);
+    if (value.asked === true || typeof value.enabled === 'boolean') next.asked = true;
+    if (typeof value.cleared === 'boolean') next.cleared = value.cleared;
+    if (typeof value.hold === 'boolean') next.hold = value.hold;
     prefs.intelioNode = next;
     savePreferences();
-    if (!next.enabled) client.stop('turned off');
-    else if (!current.enabled) {
+    const running = client.state().enabled;
+    const shouldRun = next.enabled && next.asked && !held() && env.INTELIO_NODE !== '0' && env.INTELIO_E2E !== '1';
+    if (!shouldRun) { if (running || client.state().status !== 'off') client.stop(held() ? 'held' : 'turned off'); }
+    else if (!running) {
       if (client.state().status === 'revoked') client.forgetIdentity();
       client.start();
     } else if (next.name !== current.name) client.reconnect();
+    if (!next.asked && !held() && env.INTELIO_NODE !== '0' && env.INTELIO_E2E !== '1') setImmediate(() => askFirstRun());
+    listener();
     return publicState();
+  }
+
+  async function computers(nameArg, value = {}) {
+    if (!remoteHermes || typeof remoteHermes.computersRequest !== 'function') throw new Error('Connect to the VPS to see your computers.');
+    if (nameArg === 'intelio-computers') return remoteHermes.computersRequest('/api/computers');
+    if (nameArg === 'intelio-computers-pause') {
+      return remoteHermes.computersRequest('/api/computers/pause', { method: 'POST', body: { computer: String(value.computer || '').slice(0, 128), paused: value.paused !== false } });
+    }
+    const limit = Math.min(500, Math.max(1, Number(value.limit) || 200));
+    return remoteHermes.computersRequest(`/api/computers/audit?limit=${limit}`);
   }
 
   async function command(nameArg, value = {}) {
     if (nameArg === 'intelio-node-state') return publicState();
     if (nameArg === 'intelio-node-config') return configure(value || {});
+    if (nameArg === 'intelio-node-audit') return { file: auditFile, entries: readLocalAudit(auditFile, Math.min(1000, Math.max(1, Number(value && value.limit) || 200))) };
+    if (nameArg === 'intelio-computers' || nameArg === 'intelio-computers-pause' || nameArg === 'intelio-computers-audit') return computers(nameArg, value || {});
     throw new Error(`Unknown intelio node command ${String(nameArg).slice(0, 40)}.`);
   }
 
   return {
     start,
-    kick: () => { if (nodePrefs(getPrefs()).enabled) client.kick(); },
-    stop: () => client.stop('app quitting'),
+    kick: () => { const p = nodePrefs(getPrefs()); if (p.enabled && p.asked && !held()) client.kick(); },
+    stop: () => { client.stop('app quitting'); try { indicator && indicator.close(); } catch { /* closing */ } },
     command,
     publicState,
     onChange(fn) { listener = typeof fn === 'function' ? fn : () => {}; },
@@ -214,4 +346,4 @@ function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, g
   };
 }
 
-module.exports = { setupIntelioNode, nodePrefs, deviceName, relayUrls, withTlsName, isTailnetIp, createIdentityStore, captureDisplay, RELAY_PORT };
+module.exports = { setupIntelioNode, nodePrefs, deviceName, relayUrls, withTlsName, isTailnetIp, createIdentityStore, captureDisplay, managedDevice, holdReason, readLocalAudit, RELAY_PORT };
