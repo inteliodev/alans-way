@@ -155,3 +155,32 @@ test('a missing keychain leaves the import file in place', () => {
   assert.equal(result.unavailable, true);
   assert.equal(unlinked, false);
 });
+
+test('bootstrap keys cover every listed agent, not just the first four', () => {
+  const { secretsFromBootstrap } = require('../src/intelio/remote-hermes-main.cjs');
+  const long = 'k'.repeat(32);
+  const parsed = secretsFromBootstrap({
+    intelio: long, prc: long, arlp: long, 'new-agent_2': long,
+    vnc: 'desk', default: long, '../etc': long, UPPER: long, short: 'x', nested: { a: long }, empty: '',
+  });
+  assert.deepEqual(Object.keys(parsed).sort(), ['arlp', 'intelio', 'new-agent_2', 'prc', 'upper', 'vnc'].sort());
+  assert.equal(parsed.vnc, 'desk');
+  const many = {};
+  for (let i = 0; i < 100; i += 1) many[`agent${i}`] = long;
+  assert.equal(Object.keys(secretsFromBootstrap(many)).length, 64);
+  assert.deepEqual(secretsFromBootstrap(null), {});
+  assert.deepEqual(secretsFromBootstrap([long]), {});
+});
+
+test('a new agent fetches its key right away and selecting it retries before giving up', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const main = fs.readFileSync(path.join(__dirname, '../src/intelio/remote-hermes-main.cjs'), 'utf8');
+  const remote = fs.readFileSync(path.join(__dirname, '../src/remote-main.js'), 'utf8');
+  const create = main.slice(main.indexOf('async function createAgent('), main.indexOf('function keyNote('));
+  assert.match(create, /refreshKeys\(\{ minGapMs: 0 \}\)/);
+  assert.match(create, /keySaved/);
+  assert.match(main, /case 'refresh-keys':/);
+  assert.match(remote, /request\('refresh-keys', \{ profile: id \}\)/);
+  assert.equal(remote.includes('No key saved for'), false);
+});

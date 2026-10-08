@@ -2154,7 +2154,7 @@
     save.addEventListener('click', () => createAgent(name.value, title.value, chosenOrb, soul.value, chosenColor));
     actions.append(cancel, save);
     frag.append(labeledField('Name', name), labeledField('Title or role', title), starts, labeledField('Instructions', soul), actions);
-    frag.append(el('p', '', 'Creates an isolated profile from intelio. Messaging platforms stay off. Ready after the next agent restart.'));
+    frag.append(el('p', '', 'Creates an isolated profile from intelio. Messaging platforms stay off. Ready to message right away.'));
     setTimeout(() => {
       if (!gallery.isConnected) return;
       loading.remove();
@@ -2184,7 +2184,7 @@
       orb: body.orb || orb,
       color: body.color || color || '',
       needsSignIn: body.needsSignIn === true,
-      gatewayNote: body.gatewayNote || 'Ready after the next agent restart',
+      gatewayNote: body.gatewayNote || '',
       status: 'online',
     };
     if (!state.home.profiles.some((item) => item.id === created.id)) state.home.profiles.push(created);
