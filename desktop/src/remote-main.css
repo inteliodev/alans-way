@@ -138,6 +138,7 @@ body.remote-main .chat-header > #chat-call { position: static; left: auto; right
 body.remote-main .chat-header > #bots-toggle { grid-area: toggle; justify-self: start; }
 body.remote-main .bots-hidden .chat-header > #bots-toggle { margin-left: 64px; }
 body.remote-main #chat-call { grid-area: call; justify-self: end; border-radius: 50%; border: 1px solid #3a3a44; background: #1c1c21; color: #f4f4f8; }
+#chat-call.hidden { display: none !important; }
 body.remote-main .phone-note { grid-area: note; margin: 4px 8px 0; text-align: center; }
 .phone-note, .composer-note { margin: 0 12px 8px; font-size: 12px; color: #6e6e73; text-align: center; }
 .side-bottom { display: flex; align-items: center; justify-content: flex-start; gap: 4px; margin-top: auto; flex-shrink: 0; padding: 8px 10px 12px; }
