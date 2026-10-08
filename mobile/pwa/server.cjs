@@ -880,10 +880,10 @@ function createPwaServer({
       "img-src 'self' data: blob: crx:",
     );
     html = html.replace(/(href|src)="(?!\/|https?:|data:)([^"]+)"/g, '$1="/ui/$2"');
-    html = html.replace('</head>', '<script src="/desktop-boot.js?v=28"></script></head>');
+    html = html.replace('</head>', '<script src="/desktop-boot.js?v=29"></script></head>');
     html = html.replace(
       '<script src="/ui/renderer.js"></script>',
-      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=28"></script><script src="/ui/renderer.js"></script>',
+      '<script src="/ui/intelio/host-labels.cjs"></script><script src="/desktop-transport.js?v=29"></script><script src="/ui/renderer.js"></script>',
     );
     return html;
   }
@@ -1198,6 +1198,47 @@ function createPwaServer({
     return result;
   }
 
+  /** Every listed profile's key (and the VNC secret), so an agent created after the first sign-in gets its key too. */
+  async function bootstrapBody() {
+    const body = { vnc: vncSecret };
+    const names = ['intelio', 'prc', 'alignment', 'hhp'];
+    let listed = [];
+    try { listed = await loadProfiles(); } catch { listed = []; }
+    for (const row of Array.isArray(listed) ? listed : []) {
+      const id = String(row?.id || '');
+      if (/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) && id !== 'vnc' && !names.includes(id) && names.length < 64) names.push(id);
+    }
+    for (const name of names) {
+      try { body[name] = bearerKey(name); } catch { body[name] = ''; }
+    }
+    return body;
+  }
+  /**
+   * The same key bootstrap for a desktop app on the Tailscale route. All three
+   * must hold: an allowed Tailscale login (the tailnet session), a profile key
+   * this app already has (so only a set-up intelio app can ask), and a peer
+   * that is not the VPS itself (agents run there and hold profile keys). No
+   * key or secret is ever logged.
+   */
+  async function tailnetBootstrap(req, res, session) {
+    if (!session || session.access || session.keyed || session.sample || !session.login) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
+    if (req.method !== 'GET') return send(res, 405, { error: 'Not found.' });
+    const ip = normalizeIp(req.socket.remoteAddress);
+    if (await peerIsSelf(ip)) {
+      log('intelio-pwa denied key bootstrap from this server');
+      return send(res, 403, { error: 'Not from this server.' });
+    }
+    const presented = presentedBearer(req);
+    let profileId = '';
+    try { profileId = chosenProfile(req, {}); } catch { profileId = ''; }
+    if (!presented.present || !profileId || !keyEquals(presented.token, profileId)) {
+      log('intelio-pwa denied key bootstrap without a profile key');
+      return send(res, 401, { error: 'A saved agent key is needed.' });
+    }
+    const body = await bootstrapBody();
+    log(`intelio-pwa key bootstrap over tailnet login=${session.login} profiles=${Object.keys(body).filter((name) => name !== 'vnc').length}`);
+    return send(res, 200, body);
+  }
   function hermesDesktopPath(pathname) {
     if (pathname === '/health' || pathname === '/intelio/bootstrap') return true;
     return /^\/p\/[a-z0-9][a-z0-9_-]{0,63}\/(?:api|v1)\//.test(pathname);
@@ -1205,19 +1246,7 @@ function createPwaServer({
   async function proxyDesktopHermes(req, res, url, session) {
     if (url.pathname === '/intelio/bootstrap') {
       if (!session.access) return send(res, 401, { error: 'Sign in again.' });
-      const body = { vnc: vncSecret };
-      // Every listed profile, so an agent created after the first sign-in gets its key too.
-      const names = ['intelio', 'prc', 'alignment', 'hhp'];
-      let listed = [];
-      try { listed = await loadProfiles(); } catch { listed = []; }
-      for (const row of Array.isArray(listed) ? listed : []) {
-        const id = String(row?.id || '');
-        if (/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) && id !== 'vnc' && !names.includes(id) && names.length < 64) names.push(id);
-      }
-      for (const name of names) {
-        try { body[name] = bearerKey(name); } catch { body[name] = ''; }
-      }
-      return send(res, 200, body);
+      return send(res, 200, await bootstrapBody());
     }
     let target;
     let profileId = '';
@@ -1381,6 +1410,7 @@ function createPwaServer({
       }
       if (!session) return send(res, 401, { error: 'This Tailscale identity is not allowed.' });
       if (req.accessListener && hermesDesktopPath(url.pathname)) return await proxyDesktopHermes(req, res, url, session);
+      if (!req.accessListener && url.pathname === '/intelio/bootstrap') return await tailnetBootstrap(req, res, session);
       if (req.method === 'GET' && (url.pathname === '/session' || url.pathname === '/session/')) {
         return send(res, 200, { ok: true, login: session.login || '' });
       }

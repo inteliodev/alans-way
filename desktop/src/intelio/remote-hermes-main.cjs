@@ -224,15 +224,78 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     }
   }
 
+  /** Merges a bootstrap reply into the encrypted key store. Values are never logged. */
+  function storeBootstrap(body) {
+    const parsed = secretsFromBootstrap(body);
+    if (!profileNames(parsed).length) return { ok: false, reason: 'server' };
+    const keys = readKeys();
+    const added = profileNames(parsed).filter((name) => !keys[name]);
+    for (const name of Object.keys(parsed)) keys[name] = safeStorage.encryptString(parsed[name]).toString('base64');
+    writeKeys(keys);
+    return { ok: true, added };
+  }
+
   /**
-   * Fetches the profile keys over the signed-in cloud origin. The tailnet
-   * listener never hands keys out, so this needs the cloud sign-in cookie even
-   * when the app is on Tailscale. Keys merge in; a key the reply does not
-   * mention stays. Returns { ok, added, reason }.
+   * On the Tailscale route the phone service hands the same keys out to an
+   * allowed Tailscale login that presents a key this app already holds (and is
+   * not the VPS itself). Same port and listener as every other tailnet call.
+   * Returns { ok, added } or { ok: false, reason }; 'unavailable' means "try
+   * the cloud sign-in instead".
+   */
+  async function bootstrapOverTailnet() {
+    let cfg;
+    try { cfg = await config(); } catch { return { ok: false, reason: 'unavailable' }; }
+    if (cfg?.origin || cfg?.activeMode === 'cloud') return { ok: false, reason: 'unavailable' };
+    const base = pwaBase(cfg);
+    if (!base) return { ok: false, reason: 'unavailable' };
+    const saved = profileNames(readKeys());
+    const order = [harnessId(cfg.profile || '') || '', 'intelio', ...saved].filter((name, index, all) => name && saved.includes(name) && all.indexOf(name) === index);
+    let profile = '';
+    let key = '';
+    for (const name of order) {
+      key = await getKey(name).catch(() => '');
+      if (key) { profile = name; break; }
+    }
+    if (!key) return { ok: false, reason: 'unavailable' };
+    if (!safeStorage || !safeStorage.isEncryptionAvailable()) return { ok: false, reason: 'keychain' };
+    const doFetch = selectFetch(cfg, { fetchImpl: globalThis.fetch, sessionFor });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    let response;
+    try {
+      response = await doFetch(`${base}/intelio/bootstrap?profile=${encodeURIComponent(profile)}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${key}`, Accept: 'application/json', 'x-intelio-profile': profile },
+        signal: controller.signal,
+        redirect: 'error',
+      });
+    } catch {
+      process.stderr.write('Intelio key bootstrap over Tailscale failed.\n');
+      return { ok: false, reason: 'unavailable' };
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!response || !response.ok) return { ok: false, reason: response?.status === 404 ? 'unavailable' : 'server' };
+    let body;
+    try { body = await response.json(); } catch { return { ok: false, reason: 'server' }; }
+    return storeBootstrap(body);
+  }
+
+  /**
+   * Fetches the profile keys over whichever route the app is connected
+   * through: the tailnet listener on Tailscale (falling back to the cloud
+   * sign-in when it cannot answer), else the signed-in cloud origin. Keys
+   * merge in; a key the reply does not mention stays. Returns { ok, added, reason }.
    */
   async function maybeBootstrap(force = false) {
     if (!force && (!resolved || resolved.mode !== 'cloud')) return { ok: false, reason: 'not-cloud' };
     if (!force && profileNames(readKeys()).length) return { ok: true, added: [] };
+    if (resolved && resolved.mode !== 'cloud') {
+      // Connected over Tailscale: ask the tailnet listener first; the cloud
+      // sign-in is only the fallback.
+      const viaTailnet = await bootstrapOverTailnet();
+      if (viaTailnet.ok || viaTailnet.reason === 'keychain') return viaTailnet;
+    }
     const origin = resolved?.mode === 'cloud' ? resolved.origin : cloudTargets().origin;
     if (!(await hasCloudCookie(origin))) return { ok: false, reason: 'sign-in' };
     if (!safeStorage || !safeStorage.isEncryptionAvailable()) return { ok: false, reason: 'keychain' };
@@ -250,13 +313,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     if (!response || !response.ok) return { ok: false, reason: response?.status === 401 || response?.status === 403 || (response?.status >= 300 && response?.status < 400) ? 'sign-in' : 'server' };
     let body;
     try { body = await response.json(); } catch { return { ok: false, reason: 'server' }; }
-    const parsed = secretsFromBootstrap(body);
-    if (!profileNames(parsed).length) return { ok: false, reason: 'server' };
-    const keys = readKeys();
-    const added = profileNames(parsed).filter((name) => !keys[name]);
-    for (const name of Object.keys(parsed)) keys[name] = safeStorage.encryptString(parsed[name]).toString('base64');
-    writeKeys(keys);
-    return { ok: true, added };
+    return storeBootstrap(body);
   }
 
   // One refresh at a time, and not more than once every few seconds.
@@ -366,6 +423,8 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
       else refreshKeys().catch(() => {});
     } else {
       needsSignIn = false;
+      // Same on Tailscale: fetch keys for agents created since this app was set up.
+      if (gen === generation) refreshKeys().catch(() => {});
     }
     return resolved;
   }
