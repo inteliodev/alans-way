@@ -122,10 +122,10 @@ test('cloud terminal on the relay: person only (Access session), never a profile
 });
 
 test('coding tools are found on PATH or in the usual folders without running anything', () => {
-  const home = '/home/me';
-  const seen = new Set(['/home/me/.local/bin/claude', '/opt/tools/codex']);
+  const home = '/home/user';
+  const seen = new Set(['/home/user/.local/bin/claude', '/opt/tools/codex']);
   const found = findCodingTools({ platform: 'linux', home, env: { PATH: '/usr/bin:/opt/tools' }, exists: (p) => seen.has(p) });
-  assert.deepEqual(found, { claude: '/home/me/.local/bin/claude', codex: '/opt/tools/codex' });
+  assert.deepEqual(found, { claude: '/home/user/.local/bin/claude', codex: '/opt/tools/codex' });
   const win = findCodingTools({ platform: 'win32', home: 'C:\\Users\\me', env: { PATH: 'C:\\x', APPDATA: 'C:\\Users\\me\\AppData\\Roaming' }, exists: (p) => p === path.join('C:\\Users\\me\\AppData\\Roaming', 'npm', 'claude.cmd') });
   assert.equal(win.claude, path.join('C:\\Users\\me\\AppData\\Roaming', 'npm', 'claude.cmd'));
   assert.equal(win.codex, null);
