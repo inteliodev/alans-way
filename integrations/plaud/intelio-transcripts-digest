@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+"""Print a compact JSON digest of the newest Plaud transcripts for the Intelio page.
+Read-only. Usage: intelio-transcripts-digest [limit]"""
+import json, pathlib, re, sys
+
+root = pathlib.Path.home() / ".hermes/profiles/intelio/transcripts"
+limit = int(sys.argv[1]) if len(sys.argv) > 1 else 12
+out = []
+files = sorted((p for p in root.glob("*.md")), key=lambda p: (p.name[:10], p.stat().st_mtime), reverse=True)
+for p in files[:limit]:
+    text = p.read_text(encoding="utf-8", errors="replace")
+    fm = dict(re.findall(r"^(\w+):\s*(.*)$", text.split("\n---", 2)[0], re.M))
+    summary = text.split("## Summary", 1)[-1].split("## Transcript", 1)[0]
+    lines = [l.strip() for l in summary.splitlines() if l.strip()]
+    prose = " ".join(l for l in lines if not l.startswith(("#", "-", "*", "|", "Date of"))).replace("**", "")
+    actions, grab = [], False
+    for l in lines:
+        if l.startswith("#"):
+            grab = bool(re.search(r"action|next step|to-?do|follow", l, re.I))
+            continue
+        if grab and l[:1] in "-*" or re.match(r"^[-*]\s*\[ \]", l):
+            actions.append(re.sub(r"^[-*]\s*(\[ \]\s*)?", "", l).replace("**", ""))
+    out.append({
+        "id": fm.get("plaud_id", ""), "title": fm.get("title", p.stem).strip('"'), "date": fm.get("date", ""),
+        "duration": fm.get("duration", ""), "clients": [c.strip() for c in fm.get("clients", "[]").strip("[]").split(",") if c.strip()],
+        "excerpt": prose[:260], "actions": [a[:140] for a in actions[:4]], "file": p.name,
+    })
+print(json.dumps({"total": len(files), "items": out}, ensure_ascii=True, separators=(",", ":")))

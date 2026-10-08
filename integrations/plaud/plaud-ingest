@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Plaud -> intelio transcript ingest.
+
+Pulls every Plaud recording (transcript + AI summary) via the official `plaud`
+CLI and writes one markdown file per recording into the intelio profile, then
+copies it into the matching client profile(s) by keyword. Idempotent: state in
+~/.plaud-ingest/state.json. Read-only against Plaud.
+"""
+import json, os, re, subprocess, sys, time, datetime, pathlib
+
+HOME = pathlib.Path.home()
+PLAUD = str(HOME / ".local/bin/plaud")
+PROFILES = HOME / ".hermes/profiles"
+STATE_DIR = HOME / ".plaud-ingest"
+STATE = STATE_DIR / "state.json"
+INDEX = PROFILES / "intelio/transcripts/index.jsonl"
+ID_RE = re.compile(r"^\s*(of_[0-9a-f]{32})\s+(.*?)\s+(\d{4}-\d{2}-\d{2})\s+(\S+)\s*$")
+
+# client profile -> keyword patterns (case-insensitive) matched on title+summary
+CLIENTS = {
+    "prc": r"\bPRC\b|property resources co|prc equity|prcdashboard",
+    "alignment": r"alignment property|alignment pa\b|alignmentpa|\bAPA\b|alignment bot|alignment'?s (team|clients?|deal|platform)",
+    "hhp": r"\bHHP\b",
+    "arlp": r"\bARLP\b|alliance resource|minerals acquisition group",
+}
+BANNER = re.compile(r"^\s*─+.*─+\s*$")
+
+def run(args, timeout=120):
+    env = dict(os.environ, PATH=f"{HOME}/.local/bin:" + os.environ.get("PATH", ""), NO_COLOR="1", FORCE_COLOR="0")
+    p = subprocess.run([PLAUD, *args], capture_output=True, text=True, timeout=timeout, env=env)
+    out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", p.stdout or "")
+    if p.returncode != 0:
+        raise RuntimeError(f"plaud {' '.join(args)} -> {p.returncode}: {(p.stderr or out)[-400:]}")
+    return out
+
+def list_all(date_from=None):
+    items, page = [], 1
+    while True:
+        args = ["files", "-p", str(page), "-s", "50"] + (["--date-from", date_from] if date_from else [])
+        rows = [m.groups() for line in run(args).splitlines() if (m := ID_RE.match(line))]
+        items += rows
+        if len(rows) < 50 or page > 200:
+            return items
+        page += 1
+        time.sleep(0.5)
+
+def strip_header(text, label):
+    """Drop the CLI's spinner/header lines; return (full_title_or_None, body)."""
+    title = None
+    out = []
+    for l in text.splitlines():
+        if l.startswith("- Fetching") or (not out and not l.strip()):
+            continue
+        m = re.match(r"^(Transcript|Summary|Notes):\s*(.+)$", l)
+        if m and title is None and not out:
+            title = m.group(2).strip()
+            continue
+        if BANNER.match(l):
+            continue
+        out.append(l)
+    return title, "\n".join(out).strip()
+
+
+def classify(title, summary):
+    hay = f"{title}\n{summary}"
+    return [c for c, pat in CLIENTS.items() if re.search(pat, hay, re.I)]
+
+
+def render(fid, title, date, dur, clients, summary, transcript, ingested=None):
+    ingested = ingested or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    return (
+        f"---\nsource: plaud\nplaud_id: {fid}\ntitle: \"{title.replace(chr(34), chr(39))}\"\n"
+        f"date: {date}\nduration: {dur}\nclients: [{', '.join(clients)}]\ningested: {ingested}\n---\n\n"
+        f"# {title}\n\n## Summary\n\n{summary}\n\n## Transcript\n\n{transcript}\n"
+    )
+
+
+def write_everywhere(name, body, clients):
+    for prof in ["intelio", *clients]:
+        if (PROFILES / prof).exists():
+            d = PROFILES / prof / "transcripts"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / name).write_text(body, encoding="utf-8")
+
+
+def repair():
+    """Re-parse already-ingested files: full titles, no banners, stricter client tags.
+    Only touches transcripts/ folders this script owns; no Plaud calls."""
+    src = PROFILES / "intelio/transcripts"
+    for prof in CLIENTS:
+        d = PROFILES / prof / "transcripts"
+        if d.exists():
+            for f in d.glob("*.md"):
+                f.unlink()
+    state = {"done": {}}
+    rows = []
+    for f in sorted(src.glob("*.md")):
+        text = f.read_text(encoding="utf-8", errors="replace")
+        head, _, rest = text.partition("\n---\n")
+        fm = dict(re.findall(r"^(\w+):\s*(.*)$", head, re.M))
+        summary = rest.split("## Summary", 1)[-1].split("## Transcript", 1)[0]
+        transcript = rest.split("## Transcript", 1)[-1]
+        t1, summary = strip_header(summary.strip(), "Summary")
+        t2, transcript = strip_header(transcript.strip(), "Transcript")
+        title = t1 or t2 or fm.get("title", f.stem).strip('"')
+        fid, date, dur = fm.get("plaud_id", ""), fm.get("date", ""), fm.get("duration", "")
+        clients = classify(title, summary)
+        name = f"{date}-{slug(title)}-{fid[3:9]}.md"
+        if name != f.name:
+            f.unlink()
+        write_everywhere(name, render(fid, title, date, dur, clients, summary, transcript, fm.get("ingested")), clients)
+        state["done"][fid] = {"file": name, "clients": clients, "at": int(time.time())}
+        rows.append({"id": fid, "title": title, "date": date, "duration": dur, "clients": clients, "file": name})
+    INDEX.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    STATE.write_text(json.dumps(state))
+    counts = {c: sum(c in r["clients"] for r in rows) for c in CLIENTS}
+    print(f"repaired {len(rows)} transcripts; client copies: {counts}")
+
+def slug(s):
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:70] or "recording"
+
+def main():
+    if "--repair" in sys.argv:
+        return repair()
+    full = "--backfill" in sys.argv
+    STATE_DIR.mkdir(exist_ok=True)
+    state = json.loads(STATE.read_text()) if STATE.exists() else {"done": {}}
+    since = None if (full or not state["done"]) else (datetime.date.today() - datetime.timedelta(days=3)).isoformat()
+    files = list_all(since)
+    new = [f for f in files if f[0] not in state["done"]]
+    print(f"listed {len(files)} recordings (since {since or 'beginning'}), {len(new)} new")
+    (PROFILES / "intelio/transcripts").mkdir(parents=True, exist_ok=True)
+    added = 0
+    for fid, title, date, dur in new:
+        t1 = t2 = None
+        try:
+            t2, transcript = strip_header(run(["transcript", fid, "--polished"], 300), "Transcript")
+            if not transcript or "no transcript" in transcript.lower()[:80]:
+                t2, transcript = strip_header(run(["transcript", fid], 300), "Transcript")
+        except Exception as e:
+            transcript = f"(transcript unavailable: {str(e)[:160]})"
+        try:
+            t1, summary = strip_header(run(["summary", fid, "--all"], 300), "Summary")
+        except Exception as e:
+            summary = f"(summary unavailable: {str(e)[:160]})"
+        if transcript.startswith("(transcript unavailable") and summary.startswith("(summary unavailable"):
+            print(f"skip for now (not processed yet?): {fid} {title[:60]}")
+            continue
+        title = t1 or t2 or title  # the `files` table truncates long titles
+        clients = classify(title, summary)
+        name = f"{date}-{slug(title)}-{fid[3:9]}.md"
+        write_everywhere(name, render(fid, title, date, dur, clients, summary, transcript), clients)
+        with INDEX.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"id": fid, "title": title, "date": date, "duration": dur, "clients": clients, "file": name}) + "\n")
+        state["done"][fid] = {"file": name, "clients": clients, "at": int(time.time())}
+        STATE.write_text(json.dumps(state))
+        added += 1
+        print(f"+ {date} {title[:70]} -> {['intelio', *clients]}")
+        time.sleep(0.7)
+    print(f"done: {added} ingested, {len(state['done'])} total")
+
+if __name__ == "__main__":
+    main()
