@@ -18,6 +18,9 @@ const PUBLIC_BASE = 'https://2-24-110-12.sslip.io/twilio';
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const SPOKEN_PREFIX = 'spoken reply, no markdown';
 const FILLER = 'one sec';
+const STILL_WORKING = 'Still working on it.';
+const STILL_WORKING_MS = 12000;
+const STILL_WORKING_MAX = 3;
 const GREETING = "Hi, it's intelio. What do you need?";
 const FAILED_SAY = 'Sorry, intelio could not stay on the line. Try again in a minute.';
 
@@ -255,10 +258,25 @@ function readRaw(req, limit) {
   });
 }
 
+// Hermes answers POST /api/sessions with {"object":"hermes.session","session":{"id":...}}.
+// Older shapes put the id at the top level or under data; all three are accepted.
+// Hermes refuses a second session with the same title (HTTP 400 invalid_title), so every
+// call gets its own: "Phone call Oct 8, 10:41 AM · 1a2b3c" (Central time, last 6 of the CallSid).
+function callTitle(callSid, at = Date.now(), attempt = 0) {
+  let stamp = '';
+  try {
+    stamp = new Date(at).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  } catch { stamp = new Date(at).toISOString().slice(0, 16).replace('T', ' '); }
+  const tail = String(callSid || '').replace(/[^A-Za-z0-9]/g, '').slice(-6) || crypto.randomBytes(3).toString('hex');
+  const extra = attempt ? `-${crypto.randomBytes(2).toString('hex')}` : '';
+  return `Phone call ${stamp} · ${tail}${extra}`.slice(0, 120);
+}
+
 function sessionIdFrom(body) {
   if (!body || typeof body !== 'object') return '';
   const nested = body.data && typeof body.data === 'object' ? body.data : {};
-  return String(body.id || body.session_id || body.sessionId || nested.id || nested.session_id || '');
+  const session = body.session && typeof body.session === 'object' ? body.session : {};
+  return String(session.id || body.id || body.session_id || body.sessionId || nested.id || nested.session_id || '');
 }
 
 function sendFrame(socket, opcode, payload) {
@@ -460,20 +478,37 @@ function createBridge({
     return { status: response.status || 200, body: text.slice(0, BODY_LIMIT), type };
   }
 
-  async function createSession(profile) {
+  async function createSession(profile, callSid, attempts = 2) {
+    let lastError = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await createSessionOnce(profile, callTitle(callSid, now(), attempt));
+      } catch (error) {
+        lastError = error;
+        if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+    }
+    throw lastError || new Error('session');
+  }
+
+  async function createSessionOnce(profile, title) {
     const key = await keyFor(profile);
     const response = await fetchImpl(hermesUrl(config.hermes, profile, '/api/sessions'), {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ title: 'Phone call' }),
+      body: JSON.stringify({ title }),
       redirect: 'error',
     });
     const text = typeof response.text === 'function' ? await response.text() : '';
-    if (!response.ok) throw new Error('session');
+    if (!response.ok) {
+      let code = '';
+      try { code = String(JSON.parse(text)?.error?.code || ''); } catch { code = ''; }
+      throw Object.assign(new Error('session'), { detail: `HTTP ${response.status}${code ? ` ${code}` : ''}` });
+    }
     let body = {};
     try { body = JSON.parse(text); } catch { body = {}; }
     const id = sessionIdFrom(body);
-    if (!id) throw new Error('session');
+    if (!id) throw Object.assign(new Error('session'), { detail: 'no session id in the Hermes reply' });
     return id;
   }
 
@@ -489,10 +524,22 @@ function createBridge({
       if (String(token || '').trim()) spoke = true;
       sendText(socket, JSON.stringify({ type: 'text', token: String(token), last: Boolean(last), interruptible: true }));
     };
+    let reminders = 0;
+    let reminder = null;
+    // A long agent turn (tools, browsing) must not leave the caller in dead air:
+    // "one sec" after 1.5s, then a short reminder every 12s until the reply starts.
+    const remind = () => {
+      reminder = null;
+      if (spoke || !state.alive(turn) || socket.destroyed || reminders >= STILL_WORKING_MAX) return;
+      reminders += 1;
+      sendText(socket, JSON.stringify({ type: 'text', token: STILL_WORKING, last: false, interruptible: true }));
+      reminder = timers.set(() => remind(), STILL_WORKING_MS);
+    };
     const filler = () => {
       if (fillerSent || spoke || !state.alive(turn)) return;
       fillerSent = true;
       sendText(socket, JSON.stringify({ type: 'text', token: FILLER, last: false, interruptible: true }));
+      reminder = timers.set(() => remind(), STILL_WORKING_MS);
     };
     const timer = timers.set(() => filler(), 1500);
     const pump = (final) => {
@@ -544,6 +591,7 @@ function createBridge({
       if (state.alive(turn)) say('Sorry, try again in a minute.', true);
     } finally {
       timers.clear(timer);
+      if (reminder) timers.clear(reminder);
     }
   }
 
@@ -623,12 +671,12 @@ function createBridge({
           ready = true;
           profile = row.profile;
           note(`relay open call ${callLabel} profile ${profile} from ${normalizeNumber(message.from)}`);
-          createSession(profile).then((id) => {
+          createSession(profile, String(message.callSid || '')).then((id) => {
             sessionId = id;
             note(`relay session ready call ${callLabel} profile ${profile}`);
             startQueued();
-          }).catch(() => {
-            note(`session create failed for ${profile}`);
+          }).catch((error) => {
+            note(`session create failed for ${profile}${error?.detail ? ` (${cleanLabel(error.detail, 60)})` : ''}`);
             sendText(socket, JSON.stringify({ type: 'text', token: 'Sorry, try again in a minute.', last: true, interruptible: true }));
             socket.end();
           });
@@ -766,7 +814,10 @@ module.exports = {
   PUBLIC_BASE,
   SPOKEN_PREFIX,
   FILLER,
+  STILL_WORKING,
   GREETING,
+  sessionIdFrom,
+  callTitle,
   normalizeNumber,
   maskNumber,
   parseNumberMap,
