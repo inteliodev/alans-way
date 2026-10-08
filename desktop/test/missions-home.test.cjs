@@ -18,7 +18,7 @@ function transcript({ open = true, last = 'SAMPLE DATA · Drafted the outline.' 
       { id: '3', content: 'Share with the team', status: open ? 'pending' : 'completed' },
     ] })], timestamp: t + 1 },
     { role: 'tool', tool_call_id: 'c1', content: '{"todos":[],"revision":1}', timestamp: t + 2 },
-    { role: 'assistant', content: '', tool_calls: [call('c2', 'write_file', { path: '/home/agent/work/checklist.md', content: 'x' }), call('c3', 'delegate_task', { tasks: [{ goal: 'SAMPLE DATA research competitors' }] })], timestamp: t + 3 },
+    { role: 'assistant', content: '', tool_calls: [call('c2', 'write_file', { path: '/home/user/work/checklist.md', content: 'x' }), call('c3', 'delegate_task', { tasks: [{ goal: 'SAMPLE DATA research competitors' }] })], timestamp: t + 3 },
     { role: 'tool', tool_call_id: 'c2', content: 'ok', timestamp: t + 4 },
     { role: 'tool', tool_call_id: 'c3', content: '{"status":"completed"}', timestamp: t + 5 },
     { role: 'assistant', content: last, timestamp: t + 6 },
@@ -106,8 +106,8 @@ test('home feed: recent work across agents, active missions, continue cards from
 
 test('continue: connector items need a machine and a path, and the stub offers nothing', async () => {
   const connector = {
-    files: [{ machine: 'Mac', path: '/Users/sample/deck.key', modifiedAt: new Date(NOW - 60000).toISOString() }, { path: '/no/machine.txt' }],
-    repos: [{ machine: 'Mac', path: '/Users/sample/alans-way', branch: 'main', changed: 3, modifiedAt: NOW - 120000 }, { machine: 'Mac', path: '/clean', changed: 0 }],
+    files: [{ machine: 'Mac', path: '/Users/user/deck.key', modifiedAt: new Date(NOW - 60000).toISOString() }, { path: '/no/machine.txt' }],
+    repos: [{ machine: 'Mac', path: '/Users/user/alans-way', branch: 'main', changed: 3, modifiedAt: NOW - 120000 }, { machine: 'Mac', path: '/clean', changed: 0 }],
   };
   const cards = Feed.continueCards({ sessions: [], connector, now: NOW });
   assert.deepEqual(cards.map((card) => card.kind), ['file', 'repo']);
