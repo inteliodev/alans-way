@@ -263,7 +263,7 @@
     if (name.toLowerCase() === 'intelio') return 'intelio';
     return name || 'intelio';
   }
-  const CLIENT_VERSION = 'intelio-pwa-22';
+  const CLIENT_VERSION = 'intelio-pwa-23';
 
   function activityFor(id, still) {
     const signature = signatureOf(id);

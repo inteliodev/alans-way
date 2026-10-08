@@ -78,10 +78,14 @@ function runCommand(bin, args, timeoutMs = 20000) {
   });
 }
 
+// `hermes profile list` prints a header row ("Profile  Model  Gateway ..."), a rule line,
+// one row per profile (the active one marked with ◆) and "No profiles found." when empty.
+// Only the profile rows name agents; the header must not become an agent called "profile".
 function slugsFromList(stdout) {
   const found = [];
   for (const line of String(stdout || '').split(/\r?\n/)) {
-    const token = line.replace(/[*★]/g, ' ').trim().split(/\s+/)[0] || '';
+    if (/^\s*profile\s+model\b/i.test(line) || /^\s*no profiles found\b/i.test(line)) continue;
+    const token = line.replace(/[*★◆]/g, ' ').trim().split(/\s+/)[0] || '';
     const slug = token.toLowerCase();
     if (!slug || slug === 'default' || !SLUG.test(slug) || found.includes(slug)) continue;
     found.push(slug);
