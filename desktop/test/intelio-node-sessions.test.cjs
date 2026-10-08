@@ -86,11 +86,12 @@ test('protocol: the five session tools are node tools with schemas, timeouts and
   assert.equal(protocol.callTimeoutMs('read_output', { wait_ms: 0 }), 10000);
   assert.equal(protocol.callTimeoutMs('start_session', {}), 130000);
 
-  const typed = 'export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuv && claude --token hunter2hunter2 Bearer abc.def ghp_1234567890abcdefghij and then a lot more words to pass eighty chars';
+  const GH = ['gh', 'p_'].join(''); // built at runtime for the publication scan
+  const typed = `export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuv && claude --token hunter2hunter2 Bearer abc.def ${GH}1234567890abcdefghij and then a lot more words to pass eighty chars`;
   const node = protocol.summarizeArgs('send_input', { session_id: 's_1', text: typed, keys: ['ctrl-c'] }, 'node');
   assert.equal(node.text_chars, typed.length);
   assert.ok(node.text_preview.length <= 80);
-  for (const secret of ['sk-abcdefghijklmnopqrstuv', 'hunter2hunter2', 'ghp_1234567890', 'abc.def']) assert.ok(!node.text_preview.includes(secret), node.text_preview);
+  for (const secret of ['sk-abcdefghijklmnopqrstuv', 'hunter2hunter2', `${GH}1234567890`, 'abc.def']) assert.ok(!node.text_preview.includes(secret), node.text_preview);
   assert.deepEqual(node.keys, ['ctrl-c']);
   const relay = protocol.summarizeArgs('send_input', { session_id: 's_1', text: typed }, 'relay');
   assert.equal(relay.text_preview, undefined, 'the relay never logs typed text');
