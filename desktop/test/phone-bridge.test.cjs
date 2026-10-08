@@ -307,7 +307,8 @@ test('voice allowlist, profile routing, and one-use relay nonce', async () => {
 test('relay streams spoken sentences and stops on interrupt', async () => {
   let hold = null;
   const hermes = mockHermes((call) => {
-    if (call.url.endsWith('/api/sessions')) return jsonResponse(200, { id: 'sess-1' });
+    // The shape Hermes really returns for POST /api/sessions (gateway/platforms/api_server.py).
+    if (call.url.endsWith('/api/sessions')) return jsonResponse(201, { object: 'hermes.session', session: { id: 'sess-1', source: 'api_server', title: 'Phone call' } });
     if (call.url.includes('/chat/stream')) {
       const input = JSON.parse(call.body).input;
       assert.equal(input.startsWith('spoken reply, no markdown\n\n'), true);
@@ -360,7 +361,7 @@ test('relay streams spoken sentences and stops on interrupt', async () => {
     assert.equal(socket.messages.every((message) => message.interruptible === true), true);
     const stream = hermes.calls.find((call) => call.url.includes('/chat/stream'));
     assert.equal(JSON.parse(stream.body).input.includes('what time is it'), true);
-    assert.equal(JSON.parse(hermes.calls.find((call) => call.url.endsWith('/api/sessions')).body).title, 'Phone call');
+    assert.match(JSON.parse(hermes.calls.find((call) => call.url.endsWith('/api/sessions')).body).title, /^Phone call .+ · CA777$/);
 
     socket.send({ type: 'prompt', voicePrompt: 'tool please', last: true });
     await waitFor(socket.messages, (message) => message.token === 'one sec');
@@ -380,6 +381,8 @@ test('relay streams spoken sentences and stops on interrupt', async () => {
     const releaseWait = await takeHold();
     clock.fire();
     await waitFor(socket.messages, (message, index) => index >= quiet && message.token === 'one sec');
+    await waitFor(socket.messages, (message, index) => index >= quiet && message.token === bridge.STILL_WORKING);
+    assert.equal(socket.messages.slice(quiet).filter((message) => message.token === bridge.STILL_WORKING).length <= 3, true);
     releaseWait();
     assert.equal(logs.some((line) => line.includes(TOKEN) || line.includes(KEY) || line.includes('what time is it') || line.includes('+19188991650')), false);
     socket.close();
@@ -479,4 +482,59 @@ test('installer dry run describes Caddy and changes nothing', () => {
   assert.match(result.stdout, /Caddy/);
   assert.match(result.stdout, /does not restart hermes-gateway/);
   assert.equal(fs.existsSync(path.join(home, '.config', 'intelio-phone', 'env')), false);
+});
+
+test('session ids are read from the real Hermes reply and the older shapes', () => {
+  assert.equal(bridge.sessionIdFrom({ object: 'hermes.session', session: { id: 'api_1_abc' } }), 'api_1_abc');
+  assert.equal(bridge.sessionIdFrom({ id: 'sess-1' }), 'sess-1');
+  assert.equal(bridge.sessionIdFrom({ data: { id: 'sess-2' } }), 'sess-2');
+  assert.equal(bridge.sessionIdFrom({ object: 'hermes.session' }), '');
+  assert.equal(bridge.sessionIdFrom(null), '');
+});
+
+test('a Hermes reply without a session id is retried, logged with a reason, then apologised for', async () => {
+  const hermes = mockHermes((call) => {
+    if (call.url.endsWith('/api/sessions')) return jsonResponse(201, { object: 'hermes.session' });
+    return null;
+  });
+  await withBridge({ fetchImpl: hermes.fetchImpl }, async ({ port, logs }) => {
+    const fields = { CallSid: 'CA0000000000000000000000000000fff001', From: '+19188991650', To: '+19185550100' };
+    const voice = await post(port, '/twilio/voice', fields, bridge.computeSignature(TOKEN, `${BASE}/voice`, fields));
+    const nonce = voice.body.match(/name="nonce" value="([^"]+)"/)[1];
+    const socket = await connectRelay(port, bridge.computeSignature(TOKEN, bridge.relayUrl(BASE), {}));
+    socket.send({ type: 'setup', callSid: fields.CallSid, from: '+19188991650', customParameters: { nonce } });
+    const said = await waitFor(socket.messages, (message) => message.type === 'text' && message.last === true);
+    assert.match(said.token, /try again/i);
+    assert.equal(hermes.calls.filter((call) => call.url.endsWith('/api/sessions')).length, 2);
+    const failed = logs.find((line) => String(line).includes('session create failed'));
+    assert.match(failed, /no session id in the Hermes reply/);
+    socket.close();
+  });
+});
+
+test('every call gets its own session title, and a taken title is retried with a new one', async () => {
+  const first = bridge.callTitle('CA0000000000000000000000000000abc123', Date.UTC(2026, 9, 8, 15, 41));
+  assert.equal(first, 'Phone call Oct 8, 10:41 AM · abc123');
+  assert.notEqual(bridge.callTitle('CAx', 0, 1), bridge.callTitle('CAx', 0, 0));
+  const titles = [];
+  const hermes = mockHermes((call) => {
+    if (call.url.endsWith('/api/sessions')) {
+      titles.push(JSON.parse(call.body).title);
+      if (titles.length === 1) return jsonResponse(400, { error: { message: "Title 'x' is already in use", code: 'invalid_title' } });
+      return jsonResponse(201, { object: 'hermes.session', session: { id: 'sess-new' } });
+    }
+    return null;
+  });
+  await withBridge({ fetchImpl: hermes.fetchImpl }, async ({ port, logs }) => {
+    const fields = { CallSid: 'CA0000000000000000000000000000fff002', From: '+19188991650', To: '+19185550100' };
+    const voice = await post(port, '/twilio/voice', fields, bridge.computeSignature(TOKEN, `${BASE}/voice`, fields));
+    const nonce = voice.body.match(/name="nonce" value="([^"]+)"/)[1];
+    const socket = await connectRelay(port, bridge.computeSignature(TOKEN, bridge.relayUrl(BASE), {}));
+    socket.send({ type: 'setup', callSid: fields.CallSid, from: '+19188991650', customParameters: { nonce } });
+    await waitFor(logs, (line) => String(line).includes('relay session ready'));
+    assert.equal(titles.length, 2);
+    assert.notEqual(titles[0], titles[1]);
+    assert.equal(socket.messages.some((message) => /try again/i.test(String(message.token || ''))), false);
+    socket.close();
+  });
 });
