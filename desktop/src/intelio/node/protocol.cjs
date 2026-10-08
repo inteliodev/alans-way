@@ -21,6 +21,8 @@ const LIMITS = Object.freeze({
   searchMax: 2000,
   searchFileBytes: 2 * 1024 * 1024,
   searchLineChars: 300,
+  searchDefaultS: 60,
+  searchMaxS: 300,
   runDefaultS: 120,
   runMaxS: 1800,
   runOutputBytes: 200 * 1024,
@@ -90,6 +92,7 @@ const TOOLS = Object.freeze([
         pattern: { type: 'string' },
         name_glob: { type: 'string' },
         max_results: { type: 'integer', minimum: 1, maximum: LIMITS.searchMax },
+        timeout_s: { type: 'integer', minimum: 1, maximum: LIMITS.searchMaxS, description: 'Time budget (default 60 s). A search that runs out returns partial results.' },
       },
       required: ['computer', 'root'],
     },
@@ -128,6 +131,7 @@ function callTimeoutMs(tool, args = {}) {
   let seconds = LIMITS.runDefaultS;
   const asked = Number(args && args.timeout_s);
   if (tool === 'run_command' && Number.isFinite(asked) && asked > 0) seconds = Math.min(asked, LIMITS.runMaxS);
+  if (tool === 'search_files') seconds = Number.isFinite(asked) && asked > 0 ? Math.min(asked, LIMITS.searchMaxS) : LIMITS.searchDefaultS;
   return (seconds + 10) * 1000;
 }
 

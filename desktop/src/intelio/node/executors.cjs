@@ -19,6 +19,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { LIMITS } = require('./protocol.cjs');
 const { detectElevation, shellElevates } = require('./elevation.cjs');
+const { runSearch, globToRegExp, compilePattern: compileSearchPattern } = require('./search.cjs');
 
 class ToolError extends Error {}
 
@@ -39,27 +40,8 @@ function intArg(value, { min = 0, max = Number.MAX_SAFE_INTEGER, fallback } = {}
   return Math.min(max, Math.max(min, Math.floor(n)));
 }
 
-function globToRegExp(glob, caseless) {
-  let re = '';
-  for (const ch of String(glob)) {
-    if (ch === '*') re += '[^/\\\\]*';
-    else if (ch === '?') re += '[^/\\\\]';
-    else re += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-  }
-  return new RegExp(`^${re}$`, caseless ? 'i' : '');
-}
-
 function compilePattern(pattern) {
-  let source = String(pattern);
-  let flags = '';
-  const inline = /^\(\?([a-z]+)\)/.exec(source);
-  if (inline) {
-    source = source.slice(inline[0].length);
-    flags = [...new Set(inline[1].split('').filter((f) => 'ims'.includes(f)))].join('');
-  }
-  try { return new RegExp(source, flags); } catch (error) {
-    throw new ToolError(`pattern is not a valid regular expression: ${error.message}`);
-  }
+  try { return compileSearchPattern(pattern); } catch (error) { throw new ToolError(error.message); }
 }
 
 /** Kill a process and everything it started. */
@@ -173,7 +155,9 @@ function createExecutors({
       try {
         const mounts = (await fsp.readFile('/proc/mounts', 'utf8')).split('\n').map((l) => l.split(' ')).filter((p) => p[0] && p[0].startsWith('/dev/'));
         for (const [, mount] of mounts) if (!mount.startsWith('/snap') && !mount.startsWith('/boot')) out.push({ path: mount.replace(/\\040/g, ' '), ...(await statfs(mount)) });
-      } catch { out.push({ path: '/', ...(await statfs('/')) }); }
+      } catch { /* no /proc: fall through to / */ }
+      // Containers and some VMs mount / from an overlay, not /dev/*: still report the root.
+      if (!out.length) out.push({ path: '/', ...(await statfs('/')) });
     }
     return out;
   }
@@ -269,62 +253,41 @@ function createExecutors({
       return { content: [json({ path: file, bytes_written: data.length, mode })], meta: { bytes: data.length } };
     },
 
-    async search_files(args) {
+    async search_files(args, ctx = {}) {
       const root = resolvePath(args.root, 'root');
       if (!args.pattern && !args.name_glob) throw new ToolError('Give pattern (regular expression for file lines), name_glob, or both.');
-      const regex = args.pattern ? compilePattern(args.pattern) : null;
-      const nameRe = args.name_glob ? globToRegExp(args.name_glob, caseless) : null;
+      if (args.pattern) compilePattern(args.pattern); // a bad pattern is a readable error before any walking
       const maxResults = intArg(args.max_results, { min: 1, max: limits.searchMax, fallback: limits.searchDefault });
-      const segments = root.split(/[\\/]+/).map((s) => (caseless ? s.toLowerCase() : s));
-      const insideSkipped = segments.includes('node_modules') || segments.includes('.git');
-      const skip = (name) => !insideSkipped && (name === 'node_modules' || name === '.git');
-      const deadline = Date.now() + 60000;
-      const matches = [];
-      let filesScanned = 0;
-      let truncated = false;
-      let rootStat;
-      try { rootStat = await fsp.stat(root); } catch (error) { throw fsError(error, root); }
-      const stack = rootStat.isDirectory() ? [root] : [];
-      const files = rootStat.isDirectory() ? [] : [root];
-      const visitFile = async (full) => {
-        const base = path.basename(full);
-        if (nameRe && !nameRe.test(base)) return;
-        filesScanned += 1;
-        if (!regex) { matches.push({ path: full, line: null, text: null }); return; }
-        let st;
-        try { st = await fsp.stat(full); } catch { return; }
-        if (st.size > limits.searchFileBytes) return;
-        let buf;
-        try { buf = await fsp.readFile(full); } catch { return; }
-        if (buf.subarray(0, 4096).includes(0)) return;
-        const lines = buf.toString('utf8').split(/\r?\n/);
-        for (let i = 0; i < lines.length; i += 1) {
-          regex.lastIndex = 0;
-          if (regex.test(lines[i])) {
-            matches.push({ path: full, line: i + 1, text: lines[i].slice(0, limits.searchLineChars) });
-            if (matches.length >= maxResults) return;
-          }
-        }
-      };
-      for (const f of files) await visitFile(f);
-      while (stack.length && matches.length < maxResults) {
-        if (Date.now() > deadline) { truncated = true; break; }
-        const dir = stack.pop();
-        let entries;
-        try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { continue; }
-        entries.sort((a, b) => a.name.localeCompare(b.name));
-        const subdirs = [];
-        for (const entry of entries) {
-          const full = path.join(dir, entry.name);
-          if (entry.isDirectory()) { if (!skip(entry.name)) subdirs.push(full); continue; }
-          if (!entry.isFile()) continue;
-          await visitFile(full);
-          if (matches.length >= maxResults) break;
-        }
-        stack.push(...subdirs.reverse());
+      const budgetS = intArg(args.timeout_s, { min: 1, max: limits.searchMaxS, fallback: limits.searchDefaultS });
+      try { await fsp.stat(root); } catch (error) { throw fsError(error, root); }
+      // Runs in a worker thread: a slow regex can never freeze the app, and the
+      // deadline or the kill switch terminates it (see search.cjs).
+      let out;
+      try {
+        out = await runSearch({
+          root,
+          pattern: args.pattern ? String(args.pattern) : '',
+          nameGlob: args.name_glob ? String(args.name_glob) : '',
+          caseless,
+          maxResults,
+          deadline: Date.now() + budgetS * 1000,
+          fileBytes: limits.searchFileBytes,
+          lineChars: limits.searchLineChars,
+          platform,
+        }, { signal: ctx.signal });
+      } catch (error) {
+        throw error && error.code ? fsError(error, root) : new ToolError(String(error && error.message || error).slice(0, 300));
       }
-      if (matches.length >= maxResults) truncated = true;
-      return { content: [json({ root, matches, truncated, files_scanned: filesScanned })], meta: { count: matches.length } };
+      const matches = out.matches;
+      const truncated = matches.length >= maxResults || Boolean(out.timed_out) || Boolean(out.aborted);
+      const result = { root, matches, truncated, files_scanned: out.files_scanned || 0 };
+      if (out.skipped_cloud_only) {
+        result.skipped_cloud_only = out.skipped_cloud_only;
+        result.cloud_note = 'Skipped files that are online-only (OneDrive/iCloud placeholders); reading them would download them. read_file one to fetch it.';
+      }
+      if (out.timed_out) result.note = `Stopped after ${budgetS} s (timeout_s); results are partial. Narrow root, name_glob or pattern.`;
+      if (out.aborted) result.note = 'Stopped: intelio access was turned off on this computer.';
+      return { content: [json(result)], meta: { count: matches.length, ...(out.timed_out ? { timed_out: true } : {}) } };
     },
 
     async run_command(args, ctx = {}) {
