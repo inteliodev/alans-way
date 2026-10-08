@@ -13,6 +13,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { createNodeClient, createAuditLog } = require('./client.cjs');
 const { createExecutors, osLabel } = require('./executors.cjs');
+const { tailnetNameFor } = require('../tailscale.cjs');
+const { VPS_HOST } = require('../remote-hermes.cjs');
 
 const RELAY_PORT = 8643;
 const CONFIRM_TIMEOUT_MS = 120000;
@@ -45,9 +47,32 @@ function relayUrls(target, env = process.env) {
   if (target.mode === 'tailscale' && target.host) {
     const raw = String(target.host).trim();
     const host = raw.includes(':') && !raw.startsWith('[') ? `[${raw}]` : raw;
-    return { urls: [`wss://${host}:${RELAY_PORT}/node/connect`, `ws://${host}:${RELAY_PORT}/node/connect`], headers: {}, mode: 'tailscale' };
+    const wss = `wss://${host}:${RELAY_PORT}/node/connect`;
+    const urls = [];
+    // The phone listener's certificate is issued for its *.ts.net name. Dialing a bare
+    // Tailscale IP fails the name check (and ws:// fails against TLS), so verify against
+    // the MagicDNS name for that IP when we know it.
+    const tlsName = String(target.tlsName || '').trim().toLowerCase();
+    if (isTailnetIp(raw) && /^([a-z0-9-]+\.)+ts\.net$/.test(tlsName)) urls.push({ url: wss, servername: tlsName });
+    urls.push(wss, `ws://${host}:${RELAY_PORT}/node/connect`);
+    return { urls, headers: {}, mode: 'tailscale' };
   }
   return null;
+}
+
+function isTailnetIp(host) {
+  const h = String(host || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h);
+  if (v4) return Number(v4[1]) === 100 && Number(v4[2]) >= 64 && Number(v4[2]) <= 127;
+  return /^fd7a:115c:a1e0:/.test(h);
+}
+
+/** Adds tlsName for a Tailscale-IP target: the peer's MagicDNS name, else the known VPS name. */
+async function withTlsName(target, { nameFor = tailnetNameFor, fallback = VPS_HOST } = {}) {
+  if (!target || target.mode !== 'tailscale' || !isTailnetIp(target.host) || target.tlsName) return target;
+  let name = '';
+  try { name = await nameFor(String(target.host).replace(/^\[|\]$/g, '')); } catch { name = ''; }
+  return { ...target, tlsName: name || fallback };
 }
 
 function createIdentityStore(file, safeStorage, fsImpl = fs) {
@@ -122,7 +147,7 @@ function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, g
   });
 
   const client = createNodeClient({
-    getTarget: async () => relayUrls(remoteHermes && typeof remoteHermes.nodeTarget === 'function' ? await remoteHermes.nodeTarget() : null, env),
+    getTarget: async () => relayUrls(await withTlsName(remoteHermes && typeof remoteHermes.nodeTarget === 'function' ? await remoteHermes.nodeTarget() : null), env),
     getInfo: () => {
       let user = '';
       try { user = os.userInfo().username; } catch { user = ''; }
@@ -189,4 +214,4 @@ function setupIntelioNode({ app, safeStorage, dialog, desktopCapturer, screen, g
   };
 }
 
-module.exports = { setupIntelioNode, nodePrefs, deviceName, relayUrls, createIdentityStore, captureDisplay, RELAY_PORT };
+module.exports = { setupIntelioNode, nodePrefs, deviceName, relayUrls, withTlsName, isTailnetIp, createIdentityStore, captureDisplay, RELAY_PORT };

@@ -125,8 +125,12 @@ function createNodeClient({
     setState('connecting', target.mode || '');
     let conn = null;
     let lastError = null;
-    for (const url of target.urls) {
-      try { conn = await connect(url, { headers: target.headers || {}, maxMessage: protocol.MAX_FRAME_BYTES }); break; } catch (error) { lastError = error; }
+    for (const entry of target.urls) {
+      // An entry is a URL, or { url, servername } to verify TLS against a name other than the dialed host.
+      const url = typeof entry === 'string' ? entry : entry && entry.url;
+      if (!url) continue;
+      const servername = typeof entry === 'object' && entry.servername ? entry.servername : undefined;
+      try { conn = await connect(url, { headers: target.headers || {}, maxMessage: protocol.MAX_FRAME_BYTES, ...(servername ? { servername } : {}) }); break; } catch (error) { lastError = error; }
     }
     if (!conn) {
       if (lastError && (lastError.status === 401 || lastError.status === 403 || (lastError.status >= 300 && lastError.status < 400))) return 'unauthorized';

@@ -238,7 +238,7 @@ function refuseUpgrade(socket, status = 401) {
  * Client handshake over http(s). url is ws:, wss:, http: or https:.
  * Resolves a WsConnection; rejects with error.status set when the server answers HTTP instead.
  */
-function connectWebSocket(rawUrl, { headers = {}, timeoutMs = 15000, maxMessage = DEFAULT_MAX_MESSAGE, agent } = {}) {
+function connectWebSocket(rawUrl, { headers = {}, timeoutMs = 15000, maxMessage = DEFAULT_MAX_MESSAGE, agent, servername = '', ca } = {}) {
   return new Promise((resolve, reject) => {
     let url;
     try { url = new URL(rawUrl); } catch { reject(new Error('Bad WebSocket URL.')); return; }
@@ -246,15 +246,20 @@ function connectWebSocket(rawUrl, { headers = {}, timeoutMs = 15000, maxMessage 
     if (!secure && url.protocol !== 'ws:' && url.protocol !== 'http:') { reject(new Error('WebSocket URL must be ws(s) or http(s).')); return; }
     const key = crypto.randomBytes(16).toString('base64');
     const lib = secure ? https : http;
+    // servername: dial the address in the URL but verify TLS against this name (a
+    // Tailscale IP whose certificate is issued for its *.ts.net name). Verification stays on.
+    const tlsName = secure && servername ? String(servername) : '';
     const req = lib.request({
       hostname: url.hostname.replace(/^\[|\]$/g, ''),
       port: url.port || (secure ? 443 : 80),
       path: `${url.pathname || '/'}${url.search || ''}`,
       method: 'GET',
       agent,
+      ...(tlsName ? { servername: tlsName } : {}),
+      ...(secure && ca ? { ca } : {}),
       headers: {
         ...headers,
-        Host: url.host,
+        Host: tlsName ? `${tlsName}${url.port ? `:${url.port}` : ''}` : url.host,
         Connection: 'Upgrade',
         Upgrade: 'websocket',
         'Sec-WebSocket-Key': key,
