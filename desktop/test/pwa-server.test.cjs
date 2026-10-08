@@ -444,7 +444,7 @@ test('a wide browser gets the desktop window and a phone stays on the phone shel
     const boot = fs.readFileSync(path.join(__dirname, '../../mobile/pwa/public/desktop-boot.js'), 'utf8');
     assert.match(boot, /max-width: 999px/);
     assert.match(page.body, /\/ui\/intelio\/desktop-voice\.cjs/);
-    assert.match(page.body, /desktop-transport\.js\?v=23/);
+    assert.match(page.body, /desktop-transport\.js\?v=24/);
     assert.match(page.body, /\/ui\/intelio\/model-picker\.cjs/);
     const voiceJs = await request(address.port, 'GET', '/ui/intelio/desktop-voice.cjs');
     assert.equal(voiceJs.status, 200);
