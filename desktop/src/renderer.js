@@ -102,10 +102,11 @@ function pinTab(label, selected, onClick) {
 }
 function paneAgentName(id) {
   const key = String(id || '').trim().toLowerCase();
+  const card = agentUi.card && agentUi.card.id === key ? String(agentUi.card.name || '').trim() : '';
+  // The server's name wins; the built-in names cover a missing name or a bare slug.
+  if (card && card.toLowerCase() !== key) return card.toLowerCase() === 'intelio' ? 'intelio' : card;
   const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
-  if (known[key]) return known[key];
-  if (agentUi.card && agentUi.card.id === key && agentUi.card.name) return agentUi.card.name;
-  return '';
+  return known[key] || card;
 }
 window.renderIntelioTabs = () => renderTabs();
 function renderTabs() {

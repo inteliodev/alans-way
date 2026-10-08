@@ -234,3 +234,17 @@ test('the profile switcher uses the PWA orb types', () => {
   assert.equal(titled[1].title, '');
   assert.equal(titled[2].title, 'Research');
 });
+
+test('server display names win; built-in names cover a missing name or a bare slug', () => {
+  const { canonicalName } = require('../src/intelio/remote-main-data.cjs');
+  assert.equal(canonicalName('prc', 'Outreach'), 'Outreach');
+  assert.equal(canonicalName('prc', 'prc'), 'PRC');
+  assert.equal(canonicalName('hhp', ''), 'HHP');
+  assert.equal(canonicalName('intelio', 'Intelio'), 'intelio');
+  assert.equal(canonicalName('ops', ''), 'Ops');
+  const { agents } = chooseSidebar({
+    remote: { enabled: true, host: 'vps' },
+    remoteAgents: [{ id: 'prc', name: 'Outreach' }, { id: 'hhp', name: 'hhp' }, { id: 'ops', name: 'Ops Desk' }],
+  });
+  assert.deepEqual(agents.map((agent) => agent.name), ['Outreach', 'HHP', 'Ops Desk']);
+});

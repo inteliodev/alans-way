@@ -225,14 +225,18 @@
     }
   }
 
+  /**
+   * The server's display name wins. The built-in names only stand in when the
+   * server sent no name or just echoed the profile slug (e.g. "prc").
+   */
   function shownAgent(id, name) {
     const key = String(id || '').trim().toLowerCase();
+    const raw = String(name || '').trim();
+    if (raw.toLowerCase() === 'intelio') return 'intelio';
+    if (raw && raw.toLowerCase() !== key) return raw;
     const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
     if (known[key]) return known[key];
-    const raw = String(name || '').trim();
-    if (!raw) return 'Agent';
-    if (raw.toLowerCase() === 'intelio') return 'intelio';
-    return raw;
+    return raw || 'Agent';
   }
 
   function workCount() {
