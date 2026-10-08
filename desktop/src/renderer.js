@@ -258,7 +258,7 @@ function agentProfileId(id) {
 }
 function openAgentPane(id, tab) {
   agentPane = true;
-  if (typeof tab === 'string' && ['details', 'memory', 'phone'].includes(tab)) agentUi.tab = tab;
+  if (typeof tab === 'string' && ['details', 'memory', 'phone', 'accounts'].includes(tab)) agentUi.tab = tab;
   const profile = agentProfileId(id || window.IntelioRemote?.selectedId?.() || 'intelio');
   if (state?.showBrowser === false) command('settings', { showBrowser: true }).catch(() => {});
   loadAgentCard(profile);
@@ -802,6 +802,7 @@ function showSettings(profile) {
   body.append(element('hr', 'section-divider'));
   const sync = element('button', 'secondary-button', 'Sync Telegram bots'); sync.onclick = () => { command('sync-telegram'); toast('Reading Telegram’s bot chat list…'); };
   body.append(sync, element('p', 'settings-note', labels.stay || 'Bot discovery reads Telegram Web A’s local cache. Newly opened bot chats appear after Telegram saves them. Your Telegram session and browser logins stay on this Mac.'));
+  if (window.IntelioAccounts) { body.append(element('hr', 'section-divider')); window.IntelioAccounts.appendActivity(body, {}); }
 }
 function showAvatarEditor(botId = state.selectedBotId || orderedBots()[0]?.id) {
   if (!botId) return toast('Open a Telegram bot before customizing its avatar.');

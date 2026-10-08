@@ -1249,7 +1249,7 @@
     wrap.append(head);
     if (state.colorOpen && card) wrap.append(colorPicker(card));
     const tabs = el('div', 'profile-subtabs');
-    for (const [id, label] of [['computer', 'Computer'], ['details', 'Details'], ['memory', 'Memory'], ['phone', card?.phoneSoon === false ? 'Phone' : 'Phone soon']]) {
+    for (const [id, label] of [['computer', 'Computer'], ['details', 'Details'], ['memory', 'Memory'], ['phone', card?.phoneSoon === false ? 'Phone' : 'Phone soon'], ['accounts', 'Accounts']]) {
       const button = el('button', 'profile-subtab', label);
       button.type = 'button';
       button.setAttribute('aria-selected', String(id === 'computer' ? state.browserPane !== 'agent' : state.profileTab === id));
@@ -1263,7 +1263,10 @@
       tabs.append(button);
     }
     wrap.append(tabs);
+    const showTab = () => { const on = tabs.querySelector('[aria-selected="true"]'); if (on) tabs.scrollLeft += Math.max(0, on.getBoundingClientRect().right - tabs.getBoundingClientRect().right); };
+    if (typeof ResizeObserver === 'function') new ResizeObserver(showTab).observe(tabs); else requestAnimationFrame(showTab);
     if (!card) wrap.append(el('p', 'profile-muted', state.profileNote || 'Loading profile…'));
+    else if (state.profileTab === 'accounts') wrap.append(window.IntelioAccounts ? window.IntelioAccounts.pane(card.id, { phone: true }) : el('p', 'profile-muted', 'Accounts are not available.'));
     else if (state.profileTab === 'memory') wrap.append(profileMemory(card));
     else if (state.profileTab === 'phone') wrap.append(profilePhone(card));
     else wrap.append(profileDetails(card));
@@ -1955,6 +1958,7 @@
     wrap.append(el('p', '', 'Domain and username only. The password stays in this agent’s vault.'));
     wrap.append(el('h2', '', 'Appearance'));
     wrap.append(themeIconButton(), el('p', '', 'Light is the default. Your choice is saved on this device.'));
+    if (window.IntelioAccounts) window.IntelioAccounts.appendActivity(wrap, { profiles: vpsAgents(state.home.profiles || []).map((p) => p.id) });
     wrap.append(el('h2', '', 'About'));
     wrap.append(el('p', '', 'intelio · Alan’s Way'));
     wrap.append(el('p', 'version', `Version ${CLIENT_VERSION}`));
