@@ -915,13 +915,13 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   async function nodeTarget() {
     if (!resolved) return null;
     if (resolved.mode === 'cloud') {
-      if (needsSignIn) return null;
+      if (needsSignIn || !(await hasCloudCookie(resolved.origin))) return null;
       const ses = sessionFor(resolved.partition || CLOUD_PARTITION);
       if (!ses || !ses.cookies) return null;
       let cookies = [];
       try { cookies = await ses.cookies.get({ url: resolved.origin }); } catch { return null; }
       const cookie = mergeAccessCookies('', cookies);
-      if (!/(?:^|; )CF_Authorization=/.test(cookie)) return null;
+      if (!cookie) return null;
       return { mode: 'cloud', origin: resolved.origin, cookie };
     }
     let cfg;
