@@ -175,6 +175,11 @@ body:not(.remote-main) #agent-caption-actions { display: flex !important; }
 #chat-avatar canvas.orb { width: 28px; height: 28px; }
 body.remote-main #shell { grid-template-columns: 268px var(--chat-width) 5px minmax(280px, 1fr); }
 body.remote-main #shell.browser-hidden { grid-template-columns: 268px minmax(0, 1fr) 0 0 !important; }
+/* Hiding the agent list must drop its column. The rules above out-rank style.css's
+   #shell.bots-hidden, so without these the chat fell into the 268px agent column and the
+   browser took the rest, which looked like the chat closing. */
+body.remote-main #shell.bots-hidden { grid-template-columns: var(--chat-width) 5px minmax(280px, 1fr); }
+body.remote-main #shell.bots-hidden.browser-hidden { grid-template-columns: minmax(0, 1fr) 0 0 !important; }
 body.remote-main .side-caption:not(.threads-caption):not(.watching-caption) { align-items: center; gap: 8px; padding: 18px 12px 10px 14px; }
 /* The tab switch and the agent actions share one 268px row: the bare agent count goes (the list shows them). */
 body.remote-main #bot-count { display: none; }
@@ -186,14 +191,17 @@ body.remote-main #bot-list { flex: 0 1 auto; max-height: 46%; }
 body.remote-main .remote-split { grid-template-columns: minmax(0, 1fr); }
 body.remote-main .remote-sessions { display: none !important; }
 body.remote-main .side-title { display: none; }
-.lead-card { display: flex; flex-direction: column; align-items: center; gap: 4px; width: calc(100% - 16px); margin: 8px; padding: 14px 10px; border: 0; border-radius: 18px; background: #fff; color: #111113; box-shadow: 0 8px 22px rgba(28, 32, 48, 0.08); }
+.lead-card { display: flex; flex-direction: column; align-items: center; gap: 2px; width: calc(100% - 16px); margin: 6px 8px; padding: 10px 10px 9px; border: 0; border-radius: 18px; background: #fff; color: #111113; box-shadow: 0 8px 22px rgba(28, 32, 48, 0.08); }
 .lead-card.hidden { display: none; }
-.lead-orb { position: relative; }
+.lead-orb { position: relative; display: block; }
+/* The orb library sizes the canvas bitmap at display x devicePixelRatio and sets no CSS size,
+   so on a 150-200% screen the lead orb drew at 1.5-2x. Pin its on-screen size. */
+.lead-orb canvas.orb { display: block; width: 56px; height: 56px; }
 .lead-badge { position: absolute; right: 2px; bottom: 2px; width: 12px; height: 12px; border-radius: 50%; background: #7a5cff; border: 2px solid #fff; }
 .bot-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .bot-line .bot-name { flex: 1; min-width: 0; }
 .bot-role { flex: none; max-width: 46%; padding: 2px 8px; border-radius: 999px; background: #2a2a30; color: #c5c5d0; font-size: 11px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lead-name { font-size: 16px; }
+.lead-name { font-size: 15px; line-height: 1.2; }
 .lead-status { color: #6e6e73; font-size: 12px; }
 .lead-status.offline { color: #c2410c; }
 .sidebar-watching-wrap { padding: 0 8px 8px; }
