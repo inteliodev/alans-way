@@ -476,15 +476,22 @@
     paintHeader();
   }
 
+  /** Agent work shows as a small thinking bubble on the agent's side; tap it to read the steps. */
   function chipNode(item) {
-    const wrap = el('div', 'tool-run');
+    const wrap = el('div', `tool-run thinking${item.running ? ' running' : ''}${item.failed ? ' failed' : ''}`);
     const button = el('button', `tool-chip${item.running ? ' running' : ''}${item.failed ? ' failed' : ''}`);
     button.type = 'button';
-    button.append(el('span', 'mark', item.running ? '' : (item.failed ? '!' : '✓')));
-    button.append(root.document.createTextNode(` ${item.label}`));
+    if (item.running) {
+      const dots = el('span', 'think-dots');
+      dots.setAttribute('aria-hidden', 'true');
+      dots.append(el('i'), el('i'), el('i'));
+      button.append(dots);
+    }
+    button.append(el('span', 'think-text', item.label));
     if (item.detail) {
       button.setAttribute('aria-expanded', 'false');
-      const detail = el('pre', 'tool-detail', item.detail);
+      button.title = 'Show what the agent did';
+      const detail = el('div', 'tool-detail', item.detail);
       button.onclick = () => {
         const open = button.getAttribute('aria-expanded') === 'true';
         button.setAttribute('aria-expanded', open ? 'false' : 'true');
@@ -493,6 +500,15 @@
     } else wrap.append(button);
     return wrap;
   }
+  /** A new thread: the agent's name in the intelio wordmark type, and one line on how to start. */
+  function emptyThread() {
+    const agent = selectedAgent();
+    const wrap = el('div', 'chat-empty');
+    wrap.append(el('div', 'chat-wordmark', agent ? shownAgent(agent.id, agent.name) : 'intelio'));
+    wrap.append(el('p', 'chat-empty-hint', 'Describe the task in your own words. I’ll pick the right tools, explain my plan, and check in before risky steps.'));
+    return wrap;
+  }
+
   function readReceipt() {
     if (!ui.readAt) return null;
     const text = root.IntelioTranscript?.readText
@@ -527,6 +543,7 @@
       else if (item.kind === 'bubble' && item.text) pane.append(el('div', `msg ${item.role === 'user' ? 'user' : 'assistant'}`, item.text));
     }
     flushRead();
+    if (!pane.children?.length && !ui.sessionId && !ui.busy && ui.selected && ui.freshThread) pane.append(emptyThread());
     pane.scrollTop = pane.scrollHeight;
     const raf = root.requestAnimationFrame;
     if (typeof raf === 'function') raf(() => { pane.scrollTop = pane.scrollHeight; });
@@ -1147,52 +1164,91 @@
     return day.getTime();
   }
 
-  /** Date buckets like the Hermes desktop sidebar. */
+  /**
+   * Date buckets like the Hermes desktop sidebar. The newest bucket has no heading:
+   * rows sit straight under SESSIONS.
+   */
   function sessionGroup(session, now) {
-    if (session.pinned && !ui.showArchived) return 'Pinned';
     const at = sessionAt(session);
     if (!at) return 'Older';
     const today = startOfToday(now);
-    if (at >= today) return 'Today';
+    if (at >= today) return '';
     if (at >= today - DAY_MS) return 'Yesterday';
-    if (at >= today - 6 * DAY_MS) return 'Previous 7 days';
-    if (at >= today - 29 * DAY_MS) return 'Previous 30 days';
+    if (at >= today - 6 * DAY_MS) return 'Earlier this week';
+    if (at >= today - 13 * DAY_MS) return 'Last week';
+    if (at >= today - 29 * DAY_MS) return 'Earlier this month';
     return 'Older';
   }
 
+  /** Short relative time: now, 28m, 2h, 3d, 2w, then a date. */
   function sessionStamp(session, now) {
     const at = sessionAt(session);
     if (!at) return sessionWhen(session);
-    const when = new Date(at);
-    const time = when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    const today = startOfToday(now);
-    if (at >= today) return time;
-    if (at >= today - 6 * DAY_MS) return `${when.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
-    return when.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const minutes = Math.max(0, Math.round((now - at) / 60000));
+    if (minutes < 1) return 'now';
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h`;
+    const days = Math.round(hours / 24);
+    if (days < 7) return `${days}d`;
+    if (days < 28) return `${Math.round(days / 7)}w`;
+    return new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
-  /** Agent filter chips: All plus one per agent, each with its orb colour. */
+  function agentDot(agent, id) {
+    const dot = el('span', 'session-dot');
+    dot.style.background = agent?.color || accentOf(agent?.id || id);
+    dot.setAttribute('aria-hidden', 'true');
+    return dot;
+  }
+
+  /** Agent filter: a menu under the SESSIONS heading's filter button. */
+  /** The filter menu node is moved into the list on each paint, so keep a reference to it. */
+  function agentMenuNode() {
+    if (!ui.agentMenuNode) ui.agentMenuNode = $('session-agents');
+    return ui.agentMenuNode;
+  }
+
   function paintAgentChips() {
-    const host = $('session-agents');
+    const host = agentMenuNode();
     if (!ui.agents.some((agent) => agent.id === ui.sessionAgent)) ui.sessionAgent = '';
     if (!host) return;
     host.replaceChildren();
+    host.classList.toggle('hidden', !ui.agentFilterOpen);
     const chip = (id, label, agent) => {
       const button = el('button', 'session-chip');
       button.type = 'button';
       button.dataset.agent = id;
+      button.setAttribute('role', 'menuitemradio');
+      button.setAttribute('aria-checked', String(ui.sessionAgent === id));
       button.setAttribute('aria-pressed', String(ui.sessionAgent === id));
-      if (agent) {
-        const dot = el('span', 'session-chip-dot');
-        dot.style.background = agent.color || accentOf(agent.id);
-        button.append(dot);
-      }
+      if (agent) button.append(agentDot(agent, id));
       button.append(el('span', '', label));
-      button.onclick = () => { ui.sessionAgent = id; paintAllSessions(); };
+      button.onclick = (event) => { event?.stopPropagation?.(); ui.sessionAgent = id; ui.agentFilterOpen = false; paintAllSessions(); };
       host.append(button);
     };
-    chip('', 'All');
+    chip('', 'All agents');
     for (const agent of ui.agents) chip(agent.id, shownAgent(agent.id, agent.name), agent);
+  }
+
+  function sectionHead(label, { filter = false } = {}) {
+    const head = el('li', 'session-section');
+    head.append(el('span', 'session-section-mark'));
+    head.append(el('span', 'session-section-label', label));
+    if (filter) {
+      const agent = ui.agents.find((item) => item.id === ui.sessionAgent);
+      if (agent) head.append(el('span', 'session-section-filter', `· ${shownAgent(agent.id, agent.name)}`));
+      const button = el('button', `session-filter${ui.sessionAgent ? ' active' : ''}`);
+      button.type = 'button';
+      button.title = 'Filter by agent';
+      button.setAttribute('aria-label', 'Filter by agent');
+      button.setAttribute('aria-haspopup', 'menu');
+      button.setAttribute('aria-expanded', String(Boolean(ui.agentFilterOpen)));
+      button.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>';
+      button.onclick = (event) => { event?.stopPropagation?.(); ui.agentFilterOpen = !ui.agentFilterOpen; paintAgentChips(); button.setAttribute('aria-expanded', String(ui.agentFilterOpen)); };
+      head.append(button);
+    }
+    return head;
   }
 
   function sessionItem(session, now) {
@@ -1206,20 +1262,13 @@
     item.setAttribute('role', 'button');
     item.setAttribute('aria-current', String(active));
     const title = session.title || 'Untitled session';
+    item.title = `${title} · ${name}${session.preview ? `\n${session.preview}` : ''}`;
     item.setAttribute('aria-label', `${title}, ${name}`);
-    const avatar = el('span', 'avatar');
-    const canvas = el('canvas');
-    mountOrb(canvas, session.profileId || name, agent?.orb || signatureOf(session.profileId), 28, true);
-    avatar.append(canvas);
-    const copy = el('span', 'all-session-copy');
-    const top = el('span', 'all-session-top');
-    top.append(el('span', 'session-title', title));
+    item.append(agentDot(agent, session.profileId));
+    item.append(el('span', 'session-title', title));
+    if (!ui.sessionAgent) item.append(el('span', 'session-agent', name));
     const when = sessionStamp(session, now);
-    if (when) top.append(el('span', 'session-time', when));
-    const meta = el('div', 'session-meta');
-    meta.append(el('span', 'agent-name', name));
-    if (session.preview) meta.append(el('span', 'session-preview', session.preview));
-    copy.append(top, meta);
+    if (when) item.append(el('span', 'session-time', when));
     const more = el('button', 'session-more', '⋯');
     more.type = 'button';
     more.title = 'Session actions';
@@ -1230,8 +1279,12 @@
       if (ui.sessionMenuFor === session.id) { closeSessionMenu(); return; }
       openSessionMenu(item, session);
     };
-    item.append(avatar, copy, more);
-    item.onclick = () => openListed(session);
+    item.append(more);
+    // Shift-click pins or unpins, as in the Hermes desktop sidebar.
+    item.onclick = (event) => {
+      if (event?.shiftKey) { updateSession(session, { pinned: !session.pinned }); return; }
+      openListed(session);
+    };
     item.addEventListener('keydown', (event) => {
       if (event.target !== item) return;
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault?.(); openListed(session); }
@@ -1247,17 +1300,27 @@
     const rows = sessionRows();
     const now = Date.now();
     list.replaceChildren();
+    if (!ui.showArchived) {
+      const pinned = rows.filter((session) => session.pinned);
+      list.append(sectionHead('Pinned'));
+      if (pinned.length) for (const session of pinned) list.append(sessionItem(session, now));
+      else list.append(el('li', 'session-hint', 'Shift-click a chat to pin'));
+    }
+    list.append(sectionHead(ui.showArchived ? 'Archived' : 'Sessions', { filter: true }));
+    const host = agentMenuNode();
+    if (host) list.append(host);
     let group = '';
-    for (const session of rows) {
+    const rest = ui.showArchived ? rows : rows.filter((session) => !session.pinned);
+    for (const session of rest) {
       const next = sessionGroup(session, now);
       if (next !== group) {
         group = next;
-        list.append(el('li', 'session-group', group));
+        if (group) list.append(el('li', 'session-group', group));
       }
       list.append(sessionItem(session, now));
     }
-    if (!rows.length) {
-      const empty = ui.showArchived ? 'No archived sessions.' : (ui.allSessions.length ? 'No sessions match.' : 'No sessions yet. Start one with New chat.');
+    if (!rest.length) {
+      const empty = ui.showArchived ? 'No archived sessions.' : (ui.allSessions.length ? 'No sessions match.' : 'No sessions yet. Start one with New session.');
       list.append(el('li', 'session-empty', empty));
     }
     const archived = ui.allSessions.filter((session) => session.archived).length;
@@ -1403,7 +1466,7 @@
   async function newChat(agentId) {
     const id = agentId || ui.sessionAgent || ui.selected || ui.agents[0]?.id;
     if (!id) return;
-    await selectAgent(id);
+    await selectAgent(id, { fresh: true });
     paintAllSessions();
     $('remote-input')?.focus?.();
   }
@@ -1451,10 +1514,11 @@
     paintAllSessions();
   }
 
-  async function selectAgent(id, { sessionId = '' } = {}) {
+  async function selectAgent(id, { sessionId = '', fresh = false } = {}) {
     const seq = ++ui.viewSeq;
     ui.selected = id;
     if (typeof root.onIntelioAgent === 'function') root.onIntelioAgent(id);
+    ui.freshThread = fresh;
     ui.sessionId = '';
     ui.messages = [];
     paintAgents();
@@ -1487,9 +1551,13 @@
       ui.sessions = Array.isArray(result?.data) ? result.data : [];
       paintAgents();
       paintSessions();
-      const target = sessionId && ui.sessions.some((session) => session.id === sessionId) ? sessionId : ui.sessions[0]?.id;
+      // fresh: New session keeps the composer on an empty thread; the session is created on first send.
+      const target = sessionId && ui.sessions.some((session) => session.id === sessionId) ? sessionId : (fresh ? '' : ui.sessions[0]?.id);
       if (target) await openSession(target);
+      else if (fresh) loadModelOptions().catch(() => {});
       else {
+        ui.freshThread = true;
+        paintMessages();
         setStatus('No sessions for this agent yet. Send a message to start one.');
         loadModelOptions().catch(() => {});
       }
@@ -1619,6 +1687,26 @@
     $('tab-sessions')?.addEventListener('click', () => setSidebar('sessions'));
     $('session-search')?.addEventListener('input', (event) => { ui.sessionQuery = event.target.value || ''; paintAllSessions(); });
     $('session-new')?.addEventListener('click', () => { newChat(); });
+    for (const button of root.document.querySelectorAll?.('[data-session-open]') || []) {
+      button.addEventListener('click', () => {
+        const id = ui.selected || ui.agents[0]?.id || 'intelio';
+        const target = button.dataset.sessionOpen;
+        if (target === 'computer') root.openAgentComputer?.(id);
+        else root.openAgentDetails?.(id, target);
+      });
+    }
+    root.document.addEventListener?.('keydown', (event) => {
+      const key = String(event.key || '').toLowerCase();
+      if (key === 'n' && (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && root.document.body?.classList?.contains('remote-main')) {
+        event.preventDefault?.();
+        newChat();
+      }
+    });
+    root.document.addEventListener?.('pointerdown', (event) => {
+      if (!ui.agentFilterOpen || event.target?.closest?.('.session-agents, .session-filter')) return;
+      ui.agentFilterOpen = false;
+      paintAgentChips();
+    }, true);
     $('threads-new')?.addEventListener('click', () => { newChat(ui.selected); });
     $('session-archived')?.addEventListener('click', () => { ui.showArchived = !ui.showArchived; paintAllSessions(); });
     $('remote-input')?.addEventListener('keydown', (event) => {
@@ -1902,6 +1990,8 @@
     ui.readAt = Date.now();
     if (fromInput && input) input.value = '';
     const pane = $('remote-messages');
+    ui.freshThread = false;
+    pane?.querySelector?.('.chat-empty')?.remove?.();
     pane?.append(el('div', 'msg user', text));
     const receipt = readReceipt();
     if (receipt) pane?.append(receipt);

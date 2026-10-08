@@ -256,8 +256,9 @@ function agentProfileId(id) {
   if (value === 'default' || value === 'kid-a' || value === 'kida' || compact === 'kid-a' || value.includes('alignment-bot-vps') || compact.includes('alignment-bot-vps')) return 'intelio';
   return value;
 }
-function openAgentPane(id) {
+function openAgentPane(id, tab) {
   agentPane = true;
+  if (typeof tab === 'string' && ['details', 'memory', 'phone'].includes(tab)) agentUi.tab = tab;
   const profile = agentProfileId(id || window.IntelioRemote?.selectedId?.() || 'intelio');
   if (state?.showBrowser === false) command('settings', { showBrowser: true }).catch(() => {});
   loadAgentCard(profile);
