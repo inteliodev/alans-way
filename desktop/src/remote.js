@@ -2,6 +2,27 @@ import RFB from '../node_modules/@novnc/novnc/core/rfb.js';
 const api = window.workspace;
 const $ = (id) => document.getElementById(id);
 let rfb, currentUrl = '', connected = false, state, connectionVersion = 0;
+// Auto-reconnect after a drop: 2 s, 4 s, 8 s … capped at 60 s. Reset on connect.
+let retryTimer = null, retryAttempt = 0;
+const RETRY_MIN_MS = 2000, RETRY_MAX_MS = 60000;
+function retryDelay(attempt) { return Math.min(RETRY_MAX_MS, RETRY_MIN_MS * 2 ** Math.max(0, attempt)); }
+function cancelRetry() { clearTimeout(retryTimer); retryTimer = null; }
+function cloudMode() { return state?.remoteHermes?.activeMode === 'cloud'; }
+function disconnectMessage(seconds) {
+  const when = seconds ? ` in ${seconds} s` : '';
+  return cloudMode() ? `Reconnecting to intelio cloud${when}…` : `Check Tailscale and your desktop viewer. Reconnecting${when}…`;
+}
+function scheduleRetry(url, version) {
+  cancelRetry();
+  const wait = retryDelay(retryAttempt);
+  retryAttempt += 1;
+  showEmpty('Desktop disconnected', disconnectMessage(Math.round(wait / 1000)));
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (version !== connectionVersion || url !== currentUrl || connected) return;
+    connect(url, { retry: true });
+  }, wait);
+}
 function toSocket(value) {
   const url = new URL(value);
   if (url.protocol === 'https:' || url.protocol === 'http:') {
@@ -51,12 +72,15 @@ function requestRemoteFit(client) {
   clearTimeout(client._intelioFit);
   client._intelioFit = setTimeout(run, 160);
 }
-function connect(value) {
+function connect(value, { retry = false } = {}) {
+  cancelRetry();
+  if (!retry) retryAttempt = 0;
   const version = ++connectionVersion;
   rfb?.disconnect(); connected = false; currentUrl = value;
   $('connection-dot').classList.remove('connected');
   if (!value) { showEmpty('Your agent’s computer', 'Connect your VPS to see its desktop here.', 'Connect VPS'); return; }
-  showEmpty('Connecting…', 'Opening your VPS desktop through its existing viewer.', 'Connection settings'); status('connecting');
+  showEmpty(retry ? 'Reconnecting…' : 'Connecting…', retry ? disconnectMessage(0) : 'Opening your VPS desktop through its existing viewer.', retry ? 'Reconnect' : 'Connection settings'); status('connecting');
+  let rejected = false;
   try {
     rfb = new RFB($('screen'), toSocket(value));
     rfb.scaleViewport = true; rfb.resizeSession = false; rfb.clipViewport = false; rfb.focusOnClick = true; rfb.viewOnly = !state?.remoteControl; rfb.background = screenBg();
@@ -66,11 +90,13 @@ function connect(value) {
     }
     rfb.addEventListener('connect', () => {
       if (version !== connectionVersion) return;
-      connected = true; $('remote-empty').classList.add('hidden'); $('connection-dot').classList.add('connected'); status('connected'); requestRemoteFit(rfb); render(state);
+      connected = true; retryAttempt = 0; cancelRetry(); $('remote-empty').classList.add('hidden'); $('connection-dot').classList.add('connected'); status('connected'); requestRemoteFit(rfb); render(state);
     });
     rfb.addEventListener('disconnect', () => {
       if (version !== connectionVersion) return;
-      connected = false; api.command('remote-control',{enabled:false}).catch(()=>{}); $('connection-dot').classList.remove('connected'); showEmpty('Desktop disconnected', 'Check Tailscale and your desktop viewer, then reconnect.'); status('disconnected');
+      connected = false; api.command('remote-control',{enabled:false}).catch(()=>{}); $('connection-dot').classList.remove('connected'); status('disconnected');
+      // A rejected login keeps its own message and is not retried.
+      if (!rejected) scheduleRetry(value, version);
     });
     rfb.addEventListener('credentialsrequired', () => {
       const asked = version;
@@ -83,7 +109,7 @@ function connect(value) {
         $('credentials').classList.remove('hidden'); $('vnc-password').focus();
       });
     });
-    rfb.addEventListener('securityfailure', () => { if (version === connectionVersion) { showEmpty('Connection needs attention', 'The desktop rejected the connection. Check the viewer URL and credentials.', 'Connection settings'); status('authentication failed'); } });
+    rfb.addEventListener('securityfailure', () => { if (version === connectionVersion) { rejected = true; cancelRetry(); showEmpty('Connection needs attention', 'The desktop rejected the connection. Check the viewer URL and credentials.', 'Connection settings'); status('authentication failed'); } });
   } catch (error) { showEmpty('Unable to connect', error.message, 'Connection settings'); status('disconnected'); }
 }
 function applyTheme(theme) {

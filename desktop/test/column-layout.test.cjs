@@ -3,11 +3,17 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+// A Windows checkout with core.autocrlf=true has CRLF line endings; the
+// multi-line patterns below are written with \n.
+function source(name) {
+  return fs.readFileSync(path.join(__dirname, '../src', name), 'utf8').replace(/\r\n/g, '\n');
+}
+
 test('each column stays inside the viewport and the details tab names the agent on screen', () => {
-  const css = fs.readFileSync(path.join(__dirname, '../src/remote-main.css'), 'utf8');
-  const card = fs.readFileSync(path.join(__dirname, '../src/agent-card.css'), 'utf8');
-  const renderer = fs.readFileSync(path.join(__dirname, '../src/renderer.js'), 'utf8');
-  const remote = fs.readFileSync(path.join(__dirname, '../src/remote-main.js'), 'utf8');
+  const css = source('remote-main.css');
+  const card = source('agent-card.css');
+  const renderer = source('renderer.js');
+  const remote = source('remote-main.js');
   assert.match(css, /html, body \{ height: 100dvh; max-height: 100dvh; overflow: hidden; \}/);
   assert.match(css, /#shell \{ height: 100dvh; max-height: 100dvh; min-height: 0; overflow: hidden; grid-template-rows: minmax\(0, 1fr\); \}/);
   assert.match(css, /#shell > \.sidebar,\n#shell > \.chat-pane,\n#shell > \.workspace-pane \{ min-height: 0; max-height: 100%; overflow: hidden; \}/);

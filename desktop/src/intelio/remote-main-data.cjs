@@ -59,10 +59,13 @@ function byNewest(rows) {
   return rows.slice().sort((a, b) => sessionTime(b) - sessionTime(a) || String(a.id || '').localeCompare(String(b.id || '')));
 }
 
+/** The server's display name wins unless it is missing or just the slug. */
 function canonicalName(id, provided) {
+  const raw = String(provided || '').trim();
+  if (raw.toLowerCase() === 'intelio') return 'intelio';
+  if (raw && raw.toLowerCase() !== String(id || '').toLowerCase()) return raw;
   const known = NAMED_AGENTS.find((agent) => agent.id === id);
   if (known) return known.name;
-  const raw = String(provided || '').trim();
   return raw || titleCase(id);
 }
 
@@ -239,4 +242,4 @@ function createRemoteMain({ getConfig, getKey, keyNames = () => [], fetchImpl = 
   };
 }
 
-module.exports = { NAMED_AGENTS, sourceLabel, agentsFromKeys, selectHarnessAgents, sessionTime, byNewest, createRemoteMain };
+module.exports = { NAMED_AGENTS, sourceLabel, agentsFromKeys, selectHarnessAgents, sessionTime, byNewest, canonicalName, createRemoteMain };

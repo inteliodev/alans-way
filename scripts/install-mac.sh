@@ -5,7 +5,7 @@
 #
 # Clones or fast-forwards the repo into $ALANS_WAY_DIR (default ~/alans-way),
 # builds the app locally (so macOS does not quarantine it), replaces
-# /Applications/alans-way-localapp.app and opens it. Sign-ins and settings live
+# /Applications/intelio.app (removing an older alans-way-localapp.app) and opens it. Sign-ins and settings live
 # outside the bundle and survive upgrades. Safe to re-run.
 set -eu
 
@@ -18,8 +18,10 @@ if [ -f "$FORKS" ]; then
   [ -n "$PARSED" ] && REPO_URL="$PARSED"
 fi
 DIR="${ALANS_WAY_DIR:-$HOME/alans-way}"
-APP_NAME="alans-way-localapp"
+# electron-packager names the bundle after the name passed in package:mac.
+APP_NAME="intelio"
 DEST="/Applications/$APP_NAME.app"
+OLD_DEST="/Applications/alans-way-localapp.app"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'install-mac: %s\n' "$*" >&2; exit 1; }
@@ -50,20 +52,24 @@ npm run package:mac --silent >/dev/null 2>&1 || npm run package:mac
 BUILT="$DIR/desktop/dist/$APP_NAME-darwin-arm64/$APP_NAME.app"
 [ -d "$BUILT" ] || die "build finished but $BUILT is missing"
 
-if pgrep -f "$DEST/Contents/MacOS/" >/dev/null 2>&1; then
-  say "Quitting the running app"
-  osascript -e "quit app \"$APP_NAME\"" >/dev/null 2>&1 || true
-  i=0
-  while pgrep -f "$DEST/Contents/MacOS/" >/dev/null 2>&1 && [ "$i" -lt 15 ]; do sleep 1; i=$((i + 1)); done
-  pkill -f "$DEST/Contents/MacOS/" 2>/dev/null || true
-  sleep 1
-fi
+for RUNNING in "$DEST" "$OLD_DEST"; do
+  if pgrep -f "$RUNNING/Contents/MacOS/" >/dev/null 2>&1; then
+    say "Quitting the running app"
+    osascript -e "quit app \"$(basename "$RUNNING" .app)\"" >/dev/null 2>&1 || true
+    i=0
+    while pgrep -f "$RUNNING/Contents/MacOS/" >/dev/null 2>&1 && [ "$i" -lt 15 ]; do sleep 1; i=$((i + 1)); done
+    pkill -f "$RUNNING/Contents/MacOS/" 2>/dev/null || true
+    sleep 1
+  fi
+done
 
 say "Installing to $DEST"
 rm -rf "$DEST.new"
 ditto "$BUILT" "$DEST.new"
 rm -rf "$DEST"
 mv "$DEST.new" "$DEST"
+# The renamed bundle replaces the old one; settings live outside both.
+[ -d "$OLD_DEST" ] && rm -rf "$OLD_DEST"
 open "$DEST"
 
 CONN="$HOME/Library/Application Support/Hermes Workspace/connection.json"

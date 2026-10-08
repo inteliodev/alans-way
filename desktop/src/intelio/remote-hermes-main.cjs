@@ -11,7 +11,7 @@ const { harnessId, buildCard } = require('./agent-card.cjs');
 const { vaultOrigin, postProfileVault } = require('./remote-vault.cjs');
 const { createRemoteMain } = require('./remote-main-data.cjs');
 const { checkTailscale, assertInstallUrl, installUrl } = require('./tailscale.cjs');
-const { normalizeConnectionMode, chooseConnection, labelWithMode, allowedSignInUrl, mergeAccessCookies, CLOUD_PARTITION } = require('./cloud-connection.cjs');
+const { normalizeConnectionMode, chooseConnection, labelWithMode, allowedSignInUrl, mergeAccessCookies, cloudTargets, CLOUD_PARTITION } = require('./cloud-connection.cjs');
 
 function unquote(value) {
   return String(value || '').trim().replace(/^['"]|['"]$/g, '');
@@ -100,10 +100,25 @@ function secretsFromBootstrap(body) {
   return parsed;
 }
 
-function attachCloudSessionCookies(ses) {
+/**
+ * Only requests to the intelio cloud origin (its https and wss URLs) read the
+ * session's cookies. Every other request in the cloud partition passes through
+ * untouched, so the hook does not do a cookie-store read per request.
+ */
+function cloudCookieFilter(origin) {
+  let url;
+  try { url = new URL(origin); } catch { return null; }
+  const socket = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  // Match patterns ignore ports; the handler compares the full origin.
+  return { origin: url.origin, urls: [`${url.protocol}//${url.hostname}/*`, `${socket}//${url.hostname}/*`] };
+}
+
+function attachCloudSessionCookies(ses, origin = cloudTargets().origin) {
   if (!ses || ses.__intelioAccessCookie || !ses.webRequest || typeof ses.webRequest.onBeforeSendHeaders !== 'function') return;
+  const filter = cloudCookieFilter(origin);
+  if (!filter) return;
   ses.__intelioAccessCookie = true;
-  ses.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (details, callback) => {
+  ses.webRequest.onBeforeSendHeaders({ urls: filter.urls }, (details, callback) => {
     const finish = (requestHeaders) => { try { callback({ requestHeaders }); } catch { /* the request already moved on */ } };
     const headers = { ...(details?.requestHeaders || {}) };
     let pageUrl = '';
@@ -113,6 +128,10 @@ function attachCloudSessionCookies(ses) {
       else if (parsed.protocol === 'ws:') parsed.protocol = 'http:';
       pageUrl = parsed.origin;
     } catch {
+      finish(headers);
+      return;
+    }
+    if (pageUrl !== filter.origin) {
       finish(headers);
       return;
     }
@@ -553,7 +572,7 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     let cfg;
     try { cfg = await config(); } catch { cfg = null; }
     const cloud = Boolean(cfg?.origin || cfg?.activeMode === 'cloud');
-    const key = await getKey(id).catch(() => '') || await getKey('intelio').catch(() => '');
+    const key = await keyForPwa(id, cloud);
     if (!key && !cloud) throw Object.assign(new Error("Voice isn't set up on the server yet"), { code: 'VOICE_OFF' });
     const base = pwaBase(cfg || {});
     if (!base) throw Object.assign(new Error("Voice isn't set up on the server yet"), { code: 'VOICE_OFF' });
@@ -633,9 +652,24 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return { audio: bytes.toString('base64'), type: response.headers.get('content-type') || 'audio/wav' };
   }
 
+  /**
+   * The profile's own key. On the Access listener (cloud) mobile/pwa/server.cjs
+   * compares the bearer with the key of the profile named by ?profile= or
+   * x-intelio-profile, so the intelio key sent for another profile is a 401;
+   * cloud falls back to the Access cookie instead. The tailnet listener does
+   * not check the bearer, so the intelio key stays a fallback there.
+   */
+  async function keyForPwa(id, cloud) {
+    const own = await getKey(id).catch(() => '');
+    if (own || cloud) return own;
+    return getKey('intelio').catch(() => '');
+  }
+
   async function phoneCall(profile) {
     const id = harnessId(profile) || 'intelio';
-    const key = await getKey(id).catch(() => '') || await getKey('intelio').catch(() => '');
+    let cfg;
+    try { cfg = await config(); } catch { cfg = null; }
+    const key = await keyForPwa(id, Boolean(cfg?.origin || cfg?.activeMode === 'cloud'));
     const remote = await pwaRequest(id, key, '/api/phone/call', { profile: id }, { timeoutMs: 8000, expectId: false });
     return { ready: remote?.ready === true };
   }
@@ -645,13 +679,14 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     const key = await getKey(id).catch(() => '');
     const remote = key ? await pullPwaCard(id, key, '/api/agent/card') : null;
     if (remote) return remote;
+    // Hermes has no memory route (GET /api/memory never existed); the memory
+    // text comes only from the phone server's /api/agent/card above.
     const jobs = await client.optional('GET', '/api/jobs', { profile: id });
-    const memory = await client.optional('GET', '/api/memory', { profile: id });
     return buildCard({
       id,
       jobs,
-      userText: memory?.user || memory?.USER || '',
-      memoryText: memory?.memory || memory?.MEMORY || memory?.text || '',
+      userText: '',
+      memoryText: '',
       computer: { status: 'stopped' },
     });
   }
@@ -875,4 +910,4 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
   return { register, command, open, publicState, watchVersion, viewerUrl, vncPassword, vault, startupNotice: () => startupNotice };
 }
 
-module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, keysFromImport, profileNames, secureDelete, VNC_KEY };
+module.exports = { setupRemoteHermes, importRemoteHermesKey, keyFromImport, keysFromImport, profileNames, secureDelete, attachCloudSessionCookies, cloudCookieFilter, VNC_KEY };

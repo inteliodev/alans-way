@@ -15,6 +15,9 @@ import yaml
 PIN_RELATIVE = Path("pin") / "hermes.yaml"
 UPSTREAM = "NousResearch/hermes-agent"
 REPOSITORY = "https://github.com/NousResearch/hermes-agent"
+# Alan's Way divergence: the server runs the inteliodev fork of Hermes, so a
+# pin may name that repository. See intelio/SYNC.md.
+REPOSITORIES = (REPOSITORY, "https://github.com/inteliodev/hermes-agent")
 PROFILE_FIELDS = ("name", "panels", "skills", "allowed_folders")
 PIN_FIELDS = ("upstream", "repository", "commit", "verified_on")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -95,8 +98,8 @@ def load_pin(path: Path) -> HermesPin:
     verified_on = _required_string(data, "verified_on", path)
     if upstream != UPSTREAM:
         raise HarnessRefused(f"pin upstream must be {UPSTREAM}: {path}")
-    if repository != REPOSITORY:
-        raise HarnessRefused(f"pin repository must be {REPOSITORY}: {path}")
+    if repository not in REPOSITORIES:
+        raise HarnessRefused(f"pin repository must be one of {', '.join(REPOSITORIES)}: {path}")
     if _COMMIT.fullmatch(commit) is None:
         raise HarnessRefused(f"pin commit must be a 40-character SHA: {path}")
     if _DATE.fullmatch(verified_on) is None:

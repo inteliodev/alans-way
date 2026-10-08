@@ -1223,13 +1223,20 @@ function createWindow() {
   startApi();
   // Read the real pointer position, even over native child views or another app.
   // This never installs a global input hook or moves the system cursor.
+  // Every 100 ms, and only when the position actually changed, so an idle
+  // pointer costs no IPC.
+  let lastPointer = '';
   pointerTimer = setInterval(() => {
     if (!win || win.isDestroyed() || !win.isVisible() || win.isMinimized()) return;
     if (win.webContents.isDestroyed() || win.webContents.isCrashed()) return;
     const point = screen.getCursorScreenPoint(), bounds = win.getContentBounds();
     const zoom = win.webContents.getZoomFactor();
-    win.webContents.send('workspace:pointer', { x: (point.x - bounds.x) / zoom, y: (point.y - bounds.y) / zoom });
-  }, 50);
+    const next = { x: (point.x - bounds.x) / zoom, y: (point.y - bounds.y) / zoom };
+    const signature = `${Math.round(next.x)},${Math.round(next.y)}`;
+    if (signature === lastPointer) return;
+    lastPointer = signature;
+    win.webContents.send('workspace:pointer', next);
+  }, 100);
   pointerTimer.unref();
   activityTimer = setInterval(() => { if (activity.expire() || JSON.stringify(computeBotWork()) !== lastBotWorkSignature) broadcast(); }, 500);
   activityTimer.unref();

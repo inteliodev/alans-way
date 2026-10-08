@@ -17,7 +17,7 @@ from intelio_harness.loader import (
 ROOT = repo_root()
 PIN = ROOT / "pin" / "hermes.yaml"
 EXAMPLE = ROOT / "examples" / "example-client"
-VERIFIED_COMMIT = "5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662"
+VERIFIED_COMMIT = "d9ef91e9d5a00c185fabc47d332994ab2280480a"
 
 
 def test_example_profile_loads_verified_pin():
@@ -27,9 +27,9 @@ def test_example_profile_loads_verified_pin():
     assert profile.skills == ("sample-skill",)
     assert profile.allowed_folders == ("sample-notes",)
     assert pin.upstream == "NousResearch/hermes-agent"
-    assert pin.repository == "https://github.com/NousResearch/hermes-agent"
+    assert pin.repository == "https://github.com/inteliodev/hermes-agent"
     assert pin.commit == VERIFIED_COMMIT
-    assert pin.verified_on == "2026-10-03"
+    assert pin.verified_on == "2026-10-07"
     assert default_pin_path() == PIN
 
 
@@ -95,9 +95,9 @@ def test_cli_json_loads_example_profile():
     assert payload["profile"]["allowed_folders"] == ["sample-notes"]
     assert payload["profile"]["directory"] == str(EXAMPLE.resolve())
     assert payload["pin"]["upstream"] == "NousResearch/hermes-agent"
-    assert payload["pin"]["repository"] == "https://github.com/NousResearch/hermes-agent"
+    assert payload["pin"]["repository"] == "https://github.com/inteliodev/hermes-agent"
     assert payload["pin"]["commit"] == VERIFIED_COMMIT
-    assert payload["pin"]["verified_on"] == "2026-10-03"
+    assert payload["pin"]["verified_on"] == "2026-10-07"
     assert result.stderr == ""
 
 
@@ -124,7 +124,7 @@ def test_repo_has_no_hermes_checkout():
     pin_text = PIN.read_text(encoding="utf-8")
     assert "NousResearch/hermes-agent" in pin_text
     assert len(pin_text) < 2000
-    assert (ROOT / "brand" / "window-title.txt").read_text(encoding="utf-8").strip() == "Intelio"
+    assert (ROOT / "brand" / "window-title.txt").read_text(encoding="utf-8").strip() == "intelio"
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:

@@ -12,6 +12,7 @@ from alans_way.safety import redact
 _SHA = re.compile(r"\b([0-9a-f]{40})\b")
 _UPSTREAM_SHA = re.compile(r"\bupstream\s+([0-9a-f]{7,40})\b")
 _DESCRIBE_SHA = re.compile(r"\+\d+\.g([0-9a-f]{7,40})\b")
+_LOCAL_SHA = re.compile(r"\blocal\s+([0-9a-f]{7,40})\b")
 _PROFILE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
@@ -50,6 +51,27 @@ def matches_pin(pin_commit: str, found: str) -> bool:
     if _SHA.fullmatch(pin) is None or re.fullmatch(r"[0-9a-f]{7,40}", short) is None:
         return False
     return pin.startswith(short) or short.startswith(pin)
+
+
+def pinned_head(text: str, pin_commit: str) -> str | None:
+    """The running head when it is the pinned commit, else None.
+
+    The pin is a fork build (inteliodev/hermes-agent). Hermes prints
+    `upstream <origin/main> · local <HEAD> (+N carried commits)` for a fork
+    checkout, and often a `+N.g<HEAD>` describe suffix. `upstream` is
+    whatever origin/main is on that host, so when a `local` head is printed
+    only that head counts; otherwise the describe suffix, `upstream`, or a
+    full SHA may name the running commit.
+    """
+    if not isinstance(text, str) or not text:
+        return None
+    lowered = text.lower()
+    tokens = _LOCAL_SHA.findall(lowered) or (
+        _DESCRIBE_SHA.findall(lowered) + _UPSTREAM_SHA.findall(lowered) + _SHA.findall(lowered))
+    for token in tokens:
+        if matches_pin(pin_commit, token):
+            return token
+    return None
 
 
 def launch_argv(hermes_profile: str) -> list[str]:
@@ -97,11 +119,13 @@ def probe_hermes(hermes_profile: str, pin_commit: str, environ: dict | None = No
         base["error"] = redact(stderr.strip())[:300] or f"probe failed (exit {proc.returncode})"
         base["summary"] = f"probe failed (exit {proc.returncode})"
         return base
-    found = installed_sha(stdout)
+    # A fork checkout's running build is its `local` head, not origin/main.
+    local = _LOCAL_SHA.findall(stdout.lower())
+    found = local[0] if local else installed_sha(stdout)
     base["version"] = redact(stdout.strip())[:500]
     base["command_ok"] = True
     base["error"] = None
-    if found and matches_pin(pin_commit, found):
+    if pinned_head(stdout, pin_commit):
         base["match"] = "commit"
         base["commit"] = pin_commit
         base["summary"] = "installed commit matches the pin"

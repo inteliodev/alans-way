@@ -113,10 +113,22 @@
     call: null,
     callTimer: null,
     mic: null,
+    // Bumped whenever the visible agent or thread changes; a response that
+    // started under an older value belongs to a view that is gone.
+    viewSeq: 0,
+    refreshing: null,
+    refreshAgain: false,
+    refreshTimer: null,
+    lastRefreshAt: 0,
+    needsSignIn: false,
+    pendingVoice: '',
+    phoneReady: {},
     claudeUrl: '',
     claudeAll: false,
     claudeFor: '',
   };
+  const REFRESH_MS = 45000;
+  const FOCUS_REFRESH_GAP_MS = 5000;
 
   function bopsApi() {
     if (root.IntelioBops) return root.IntelioBops;
@@ -228,14 +240,18 @@
     }
   }
 
+  /**
+   * The server's display name wins. The built-in names only stand in when the
+   * server sent no name or just echoed the profile slug (e.g. "prc").
+   */
   function shownAgent(id, name) {
     const key = String(id || '').trim().toLowerCase();
+    const raw = String(name || '').trim();
+    if (raw.toLowerCase() === 'intelio') return 'intelio';
+    if (raw && raw.toLowerCase() !== key) return raw;
     const known = { intelio: 'intelio', prc: 'PRC', alignment: 'Alignment', hhp: 'HHP' };
     if (known[key]) return known[key];
-    const raw = String(name || '').trim();
-    if (!raw) return 'Agent';
-    if (raw.toLowerCase() === 'intelio') return 'intelio';
-    return raw;
+    return raw || 'Agent';
   }
 
   function workCount() {
@@ -915,11 +931,7 @@
         showInline('composer-note', '');
         const pending = stopRecorder();
         pending.then((blob) => blob && transcribeBlob(blob).then((text) => {
-          if (text && ui.call?.active) {
-            const input = $('remote-input');
-            if (input) input.value = text;
-            send({ preventDefault() {} });
-          }
+          if (text && ui.call?.active) voiceTranscript(text);
         })).catch((error) => {
           showInline('composer-note', error?.code === 'VOICE_OFF' ? voiceApi().NOT_READY : (error?.message || voiceApi().NOT_READY));
         });
@@ -964,6 +976,26 @@
     }
   }
 
+  function paintPhoneButton() {
+    const button = $('chat-call');
+    if (!button) return;
+    const ready = !ui.sample && ui.phoneReady[ui.selected] === true;
+    button.classList.toggle('hidden', !ready);
+    if (!ready) showInline('phone-note', '');
+  }
+
+  /** The call button shows only when the agent card says its phone line is live. */
+  async function loadPhoneReady(id) {
+    if (ui.sample || !id || !root.remoteHermes) { paintPhoneButton(); return; }
+    let ready = false;
+    try {
+      const card = await root.remoteHermes.request('agent-card', { profile: id });
+      ready = card?.phoneSoon === false;
+    } catch { ready = false; }
+    ui.phoneReady[id] = ready;
+    if (ui.selected === id) paintPhoneButton();
+  }
+
   async function callPhone() {
     const api = root.remoteHermes;
     let ready = false;
@@ -1002,6 +1034,7 @@
     if (!api) return;
     if (ui.call?.active) {
       ui.call = api.endCall(ui.call, Date.now());
+      ui.pendingVoice = '';
       stopMic();
       showInline('composer-note', '');
       paintCall();
@@ -1050,16 +1083,23 @@
     banner.textContent = ui.label || '';
   }
 
-  async function loadMessages(id) {
+  function currentView(seq, sessionId) {
+    return seq === ui.viewSeq && (sessionId === undefined || sessionId === ui.sessionId);
+  }
+
+  /** Paints the thread only if it is still the one on screen when the reply lands. */
+  async function loadMessages(id, seq = ui.viewSeq) {
     if (ui.sample) {
       ui.messages = SAMPLE.messages[id] || [];
       paintMessages();
-      return;
+      return true;
     }
     const api = root.remoteHermes;
     const result = await api.request('messages', { id, profile: ui.selected });
+    if (!currentView(seq, id)) return false;
     ui.messages = result?.data || [];
     paintMessages();
+    return true;
   }
 
   function stopControl() {
@@ -1070,6 +1110,7 @@
   }
 
   async function openSession(id) {
+    const seq = ++ui.viewSeq;
     ui.readFor = '';
     ui.readAt = 0;
     ui.sessionId = id;
@@ -1078,8 +1119,10 @@
     const send = $('remote-send');
     if (input) input.disabled = false;
     if (send) send.disabled = false;
-    try { await loadMessages(id); } catch (error) { setStatus(error.message); showProfileError(error.message); }
-    loadModelOptions().catch(() => {});
+    try { await loadMessages(id, seq); } catch (error) {
+      if (currentView(seq, id)) { setStatus(error.message); showProfileError(error.message); }
+    }
+    if (currentView(seq, id)) loadModelOptions().catch(() => {});
   }
 
   function sessionRows() {
@@ -1180,12 +1223,15 @@
   }
 
   async function selectAgent(id, { sessionId = '' } = {}) {
+    const seq = ++ui.viewSeq;
     ui.selected = id;
     if (typeof root.onIntelioAgent === 'function') root.onIntelioAgent(id);
     ui.sessionId = '';
     ui.messages = [];
     paintAgents();
     paintMessages();
+    paintPhoneButton();
+    if (!ui.sample) loadPhoneReady(id);
     const keys = ui.keys || [];
     if (!ui.sample && keys.length && !keys.includes(id)) {
       ui.sessions = [];
@@ -1207,6 +1253,8 @@
     }
     try {
       const result = await root.remoteHermes.request('sessions', { profile: id, limit: 100 });
+      // A newer selection (fast switching) owns the screen now.
+      if (!currentView(seq)) return;
       ui.sessions = Array.isArray(result?.data) ? result.data : [];
       paintAgents();
       paintSessions();
@@ -1216,30 +1264,98 @@
         setStatus('No sessions for this agent yet. Send a message to start one.');
         loadModelOptions().catch(() => {});
       }
-    } catch (error) { setStatus(error.message); showProfileError(error.message); }
+    } catch (error) {
+      if (currentView(seq)) { setStatus(error.message); showProfileError(error.message); }
+    }
   }
 
-  async function refresh() {
-    if (ui.sample || !root.remoteHermes) return;
+  async function loadHome() {
+    const home = await root.remoteHermes.request('agents');
+    const listed = home?.agents || [];
+    ui.agents = chooseSidebar({ remote: { enabled: true, host: 'vps', profilesWithKeys: ui.keys }, remoteAgents: listed }).agents;
+    ui.sample = Boolean(home?.sample);
+    ui.label = home?.label || '';
+    paintBanner();
+    const gone = !ui.selected || !ui.agents.some((agent) => agent.id === ui.selected);
+    if (gone) ui.selected = ui.agents[0]?.id || '';
+    paintAgents();
+    paintHeader();
     try {
-      const home = await root.remoteHermes.request('agents');
-      const listed = home?.agents || [];
-      ui.agents = chooseSidebar({ remote: { enabled: true, host: 'vps', profilesWithKeys: ui.keys }, remoteAgents: listed }).agents;
-      ui.sample = Boolean(home?.sample);
-      ui.label = home?.label || '';
-      paintBanner();
-      if (!ui.selected || !ui.agents.some((agent) => agent.id === ui.selected)) ui.selected = ui.agents[0]?.id || '';
-      paintAgents();
-      try {
-        const screens = await root.remoteHermes.request('screens');
-        ui.screens = Array.isArray(screens?.data) ? screens.data : [];
-      } catch { ui.screens = []; }
-      paintWatching();
+      const screens = await root.remoteHermes.request('screens');
+      ui.screens = Array.isArray(screens?.data) ? screens.data : [];
+    } catch { ui.screens = []; }
+    paintWatching();
+    return gone;
+  }
+
+  /** Reloads the selected agent's thread list in place; the open thread stays open. */
+  async function refreshThreads(id) {
+    const seq = ui.viewSeq;
+    const open = ui.sessionId;
+    const before = ui.sessions.find((session) => session.id === open);
+    const result = await root.remoteHermes.request('sessions', { profile: id, limit: 100 });
+    if (!currentView(seq) || ui.selected !== id) return;
+    ui.sessions = Array.isArray(result?.data) ? result.data : [];
+    paintSessions();
+    paintAgents();
+    const after = ui.sessions.find((session) => session.id === open);
+    if (open && after && !ui.busy && sessionAt(after) !== sessionAt(before)) await loadMessages(open, seq);
+  }
+
+  async function runRefresh(quiet) {
+    try {
+      const gone = await loadHome();
+      if (!quiet || gone) {
+        await Promise.all([ui.selected ? selectAgent(ui.selected) : null, loadAllSessions()]);
+        return;
+      }
       await Promise.all([
-        ui.selected ? selectAgent(ui.selected) : null,
+        ui.selected && !ui.busy ? refreshThreads(ui.selected).catch(() => {}) : null,
         loadAllSessions(),
       ]);
-    } catch (error) { setStatus(error.message); showProfileError(error.message); }
+    } catch (error) {
+      if (!quiet) { setStatus(error.message); showProfileError(error.message); }
+    }
+  }
+
+  /**
+   * Full refresh (connection changed) reselects the agent. A quiet refresh
+   * (timer, window focus) only updates agents, threads and watching. Never two
+   * at once: a full refresh asked for mid-flight runs right after.
+   */
+  function refresh({ quiet = false } = {}) {
+    if (ui.sample || !root.remoteHermes) return Promise.resolve();
+    if (ui.refreshing) {
+      if (!quiet) ui.refreshAgain = true;
+      return ui.refreshing;
+    }
+    ui.lastRefreshAt = Date.now();
+    ui.refreshing = runRefresh(quiet).finally(() => {
+      ui.refreshing = null;
+      if (ui.refreshAgain) {
+        ui.refreshAgain = false;
+        refresh();
+      }
+    });
+    return ui.refreshing;
+  }
+
+  function autoRefresh({ focus = false } = {}) {
+    if (ui.sample || !ui.stamp || ui.needsSignIn || !root.remoteHermes) return null;
+    if (root.document?.visibilityState === 'hidden') return null;
+    if (focus && Date.now() - ui.lastRefreshAt < FOCUS_REFRESH_GAP_MS) return null;
+    return refresh({ quiet: true });
+  }
+
+  function startAutoRefresh() {
+    if (ui.refreshTimer || typeof root.setInterval !== 'function') return;
+    ui.refreshTimer = root.setInterval(() => { autoRefresh(); }, REFRESH_MS);
+    ui.refreshTimer?.unref?.();
+  }
+
+  function stopAutoRefresh() {
+    if (ui.refreshTimer && typeof root.clearInterval === 'function') root.clearInterval(ui.refreshTimer);
+    ui.refreshTimer = null;
   }
 
   function wire() {
@@ -1253,11 +1369,13 @@
     if (mic) mic.onclick = () => dictate();
     const model = $('remote-model');
     if (model) model.onclick = (event) => { event.preventDefault(); event.stopPropagation(); toggleModelMenu(); };
-    root.document.addEventListener('pointerdown', (event) => {
+    root.document.addEventListener?.('pointerdown', (event) => {
       if (event.target.closest?.('#remote-model, #model-menu')) return;
       const menu = $('model-menu');
       if (menu && !menu.classList.contains('hidden')) closeModelMenu();
     });
+    root.addEventListener?.('focus', () => { autoRefresh({ focus: true }); });
+    startAutoRefresh();
     const headerCall = $('chat-call');
     if (headerCall) headerCall.onclick = () => callPhone();
     $('tab-agents')?.addEventListener('click', () => setSidebar('agents'));
@@ -1570,29 +1688,71 @@
     return { model: ui.modelId, provider: ui.modelProvider, effort: ui.modelEffort || 'auto' };
   }
 
-  async function send(event) {
+  /** Drops a run that never started (no session), so no task bar is left "working". */
+  function clearRun(token) {
+    if (ui.bopsToken !== token) return;
+    ui.bops = null;
+    ui.bopsToken += 1;
+    paintBops();
+    paintHeader();
+  }
+
+  /** A call transcript waits for the current reply instead of being dropped. */
+  function voiceTranscript(text) {
+    const said = String(text || '').trim();
+    if (!said) return 'empty';
+    if (ui.busy) {
+      ui.pendingVoice = ui.pendingVoice ? `${ui.pendingVoice} ${said}` : said;
+      showInline('composer-note', 'Queued · sends when this reply finishes');
+      return 'queued';
+    }
+    send(null, said);
+    return 'sent';
+  }
+
+  function flushVoice() {
+    if (!ui.pendingVoice || ui.busy) return;
+    const text = ui.pendingVoice;
+    ui.pendingVoice = '';
+    showInline('composer-note', '');
+    voiceTranscript(text);
+  }
+
+  async function send(event, spoken) {
     event?.preventDefault?.();
     const input = $('remote-input');
-    const text = input?.value.trim();
+    const fromInput = spoken === undefined;
+    const text = fromInput ? input?.value.trim() : String(spoken || '').trim();
     if (!text || ui.busy || ui.sample) return;
+    const seq = ui.viewSeq;
+    const profile = ui.selected;
+    let sessionId = ui.sessionId;
     const api = bopsApi();
-    const run = api.startRun({ text, profile: ui.selected, agentName: selectedAgent()?.name || ui.selected });
+    const run = api.startRun({ text, profile, agentName: selectedAgent()?.name || profile });
     ui.bops = run;
     ui.bopsToken += 1;
     const token = ui.bopsToken;
     paintBops();
     const plan = api.executionPlan(run);
-    if (!ui.sessionId && plan.orchestration !== 'app-fan-out') {
+    if (!sessionId && plan.orchestration !== 'app-fan-out') {
       try {
-        const created = await root.remoteHermes.request('create-session', { profile: ui.selected, title: `App chat ${new Date().toLocaleString()}` });
-        ui.sessionId = created?.session?.id || created?.id || '';
-        if (!ui.sessionId) throw new Error('Hermes did not return a session id.');
-      } catch (error) { setStatus(error.message); return; }
+        const created = await root.remoteHermes.request('create-session', { profile, title: `App chat ${new Date().toLocaleString()}` });
+        sessionId = created?.session?.id || created?.id || '';
+        if (!sessionId) throw new Error('Hermes did not return a session id.');
+      } catch (error) {
+        setStatus(error.message);
+        clearRun(token);
+        return;
+      }
+      // The user moved to another agent or thread meanwhile: keep the text in
+      // the composer and do not write into that other thread.
+      if (!currentView(seq)) { clearRun(token); return; }
+      ui.sessionId = sessionId;
     }
     ui.busy = true;
     ui.readFor = text;
     ui.readAt = Date.now();
-    input.value = '';
+    if (fromInput && input) input.value = '';
     const pane = $('remote-messages');
     pane?.append(el('div', 'msg user', text));
     const receipt = readReceipt();
@@ -1609,6 +1769,7 @@
         ui.busy = false;
         setStatus('');
         paintHeader();
+        flushVoice();
       }
       return;
     }
@@ -1621,7 +1782,7 @@
     pane?.append(ui.streaming, ui.liveTools, stop);
     setStatus('');
     try {
-      const jobs = [root.remoteHermes.request('send', { id: ui.sessionId, profile: ui.selected, input: text, ...modelSendFields() })];
+      const jobs = [root.remoteHermes.request('send', { id: sessionId, profile, input: text, ...modelSendFields() })];
       if (plan.handoff) jobs.push(runHandoff(plan.handoff, token));
       await Promise.all(jobs);
       if (!ui.bops?.tasks?.some((task) => task.status === 'blocked')) {
@@ -1644,7 +1805,9 @@
       ui.liveSteps = [];
       setStatus('');
       paintHeader();
-      await loadMessages(ui.sessionId).catch(() => {});
+      // Reload only if that thread is (again) the one on screen.
+      if (ui.sessionId === sessionId) await loadMessages(sessionId, ui.viewSeq).catch(() => {});
+      flushVoice();
     }
   }
 
@@ -1656,6 +1819,7 @@
     const remote = next?.remoteHermes || {};
     ui.keys = remote.profilesWithKeys || [];
     ui.keyless = ui.keys.length === 0;
+    ui.needsSignIn = Boolean(remote.needsSignIn);
     const stamp = `${remote.host}|${remote.port}|${remote.activeMode || ''}|${remote.needsSignIn ? 1 : 0}|${[...ui.keys].sort().join(',')}`;
     const search = $('bot-search');
     ui.query = search && !search.classList.contains('hidden') ? search.value : ui.query;
@@ -1698,5 +1862,6 @@
     signatureOf, accentOf, switcherRows, seedAgents, remoteConfigured, chooseSidebar, sessionAt, sessionRows, SAMPLE,
     sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => { const agent = selectedAgent(); return agent ? shownAgent(agent.id, agent.name) : ''; }, selectedId: () => ui.selected || '',
     presentBops, focusBops, stopBops, actBops, pushFrame, toggleCall, applyLook, bopsEffect: () => ui.lastEffect,
+    autoRefresh, startAutoRefresh, stopAutoRefresh, voiceTranscript, selectAgent, shownAgent, REFRESH_MS,
   };
 });
