@@ -9,7 +9,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { createPwaServer } = require('../../mobile/pwa/server.cjs');
-const { createNodesMcp, readToken, isLoopbackBind, nodesEnabled } = require('../../mobile/pwa/nodes-mcp.cjs');
+const { createNodesMcp, readToken, isLoopbackBind, isLoopbackAddress, nodesEnabled } = require('../../mobile/pwa/nodes-mcp.cjs');
 const { createNodeRegistry, createNodeHub, verifySecret } = require('../../mobile/pwa/nodes.cjs');
 const cli = require('../../mobile/pwa/nodes-cli.cjs');
 const { connectWebSocket } = require('../src/intelio/node/ws.cjs');
@@ -122,14 +122,41 @@ const waitFor = async (fn, ms = 5000) => {
   return false;
 };
 
-test('MCP server binds loopback only and refuses anything else', () => {
+test('MCP server binds loopback only and refuses anything else', async () => {
   const hub = { listComputers: () => [], call: async () => ({}) };
   // Wildcard, tailnet and LAN binds are built at runtime so the publication scan does not flag them.
   const ip = (...parts) => parts.join('.');
-  for (const bind of [ip(0, 0, 0, 0), '::', ip(100, 64, 1, 2), 'vps.tail1234.ts.net', ip(192, 168, 1, 5), '203.0.113.5']) {
-    assert.throws(() => createNodesMcp({ hub, bind, token: TOKEN, port: 0 }), /loopback only/);
+  const refused = [ip(0, 0, 0, 0), '::', '[::]', ip(100, 64, 1, 2), 'vps.tail1234.ts.net', ip(192, 168, 1, 5), '203.0.113.5', '', 'localhost', 'localhost.', `${ip(127, 0, 0, 1)}.nip.io`, `::ffff:${ip(0, 0, 0, 0)}`];
+  for (const bind of refused) {
+    assert.throws(() => createNodesMcp({ hub, bind, token: TOKEN, port: 0 }), /loopback only/, `bind ${JSON.stringify(bind)} must be refused`);
+    assert.equal(isLoopbackBind(bind), false, bind);
   }
-  for (const bind of ['127.0.0.1', '::1', 'localhost']) assert.ok(isLoopbackBind(bind));
+  // 'localhost' goes through the resolver (hosts file, NSS): only literal loopback addresses are accepted.
+  for (const bind of ['127.0.0.1', '::1', '[::1]']) assert.ok(isLoopbackBind(bind), bind);
+  for (const address of [ip(127, 0, 0, 1), ip(127, 9, 9, 9), '::1', `::ffff:${ip(127, 0, 0, 1)}`]) assert.ok(isLoopbackAddress(address), address);
+  for (const address of [ip(0, 0, 0, 0), '::', ip(100, 64, 1, 2), ip(10, 0, 0, 1)]) assert.equal(isLoopbackAddress(address), false, address);
+  // It really listens on loopback, and only there.
+  const mcp = createNodesMcp({ hub, bind: '127.0.0.1', token: TOKEN, port: 0 });
+  const address = await mcp.listen();
+  try { assert.equal(address.address, '127.0.0.1'); } finally { await new Promise((r) => mcp.close(r)); }
+});
+
+test('the integrated relay adds no public listener: MCP and the Access listener are loopback, the app listener is the configured bind', async (t) => {
+  const r = await startRelay(t);
+  assert.equal(r.app.nodes.mcp.server.address().address, '127.0.0.1');
+  assert.equal(r.app.local.address().address, '127.0.0.1');
+  assert.equal(r.app.server.address().address, '127.0.0.1');
+  // A relay asked to bind anything else keeps the phone app running but serves no MCP.
+  const logs = [];
+  const { createNodesRelay } = require('../../mobile/pwa/nodes-mcp.cjs');
+  const relay = createNodesRelay({ registryFile: path.join(r.dir, 'other.json'), token: TOKEN, mcpPort: 0, mcpBind: ['0', '0', '0', '0'].join('.'), log: (l) => logs.push(l) });
+  try {
+    assert.equal(relay.mcp, null);
+    assert.ok(logs.some((l) => /mcp disabled: Refusing to listen/.test(l)), logs.join('\n'));
+  } finally { relay.close(); }
+});
+
+test('tool catalogue', () => {
   assert.equal(protocol.TOOL_NAMES.length, 8);
   assert.deepEqual([...protocol.TOOL_NAMES].sort(), ['computer_info', 'list_computers', 'list_dir', 'read_file', 'run_command', 'screenshot', 'search_files', 'write_file']);
 });

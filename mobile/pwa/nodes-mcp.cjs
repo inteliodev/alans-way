@@ -23,9 +23,19 @@ function defaultTokenFile(env = process.env) {
   return String(env.INTELIO_NODES_MCP_TOKEN_FILE || '').trim() || path.join(configDir(env), 'nodes-mcp.token');
 }
 
+/**
+ * Literal loopback addresses only. 'localhost' is refused: it goes through the
+ * resolver (hosts file, NSS), so it is a name we would have to trust, not an address.
+ */
 function isLoopbackBind(bind) {
   const host = String(bind || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
-  return host === '127.0.0.1' || host === '::1' || host === 'localhost';
+  return host === '127.0.0.1' || host === '::1';
+}
+
+/** What the socket actually bound to must be loopback too (defense in depth). */
+function isLoopbackAddress(address) {
+  const host = String(address || '').toLowerCase().replace(/^::ffff:/, '');
+  return host === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
 /** Reads the token file. Refuses group/world-readable files on POSIX and short tokens. */
@@ -55,6 +65,7 @@ function createNodesMcp({
 } = {}) {
   if (!hub) throw new Error('createNodesMcp needs a hub.');
   if (!isLoopbackBind(bind)) throw new Error('Refusing to listen: the intelio computers MCP server binds loopback only (127.0.0.1 or ::1).');
+  const host = String(bind).trim().replace(/^\[|\]$/g, '');
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('INTELIO_NODES_MCP_PORT must be 0-65535.');
   const secret = token || readToken(tokenFile);
 
@@ -154,7 +165,16 @@ function createNodesMcp({
     listen() {
       return new Promise((resolve, reject) => {
         server.once('error', reject);
-        server.listen(port, bind, () => { server.off('error', reject); resolve(server.address()); });
+        server.listen(port, host, () => {
+          server.off('error', reject);
+          const address = server.address();
+          if (!address || !isLoopbackAddress(address.address)) {
+            server.close();
+            reject(new Error('Refusing to serve: the intelio computers MCP server did not bind a loopback address.'));
+            return;
+          }
+          resolve(address);
+        });
       });
     },
     close(done) {
@@ -218,4 +238,4 @@ function createNodesRelay({
   };
 }
 
-module.exports = { DEFAULT_PORT, SUPPORTED_VERSIONS, LATEST_VERSION, defaultTokenFile, isLoopbackBind, readToken, createNodesMcp, nodesEnabled, createNodesRelay };
+module.exports = { DEFAULT_PORT, SUPPORTED_VERSIONS, LATEST_VERSION, defaultTokenFile, isLoopbackBind, isLoopbackAddress, readToken, createNodesMcp, nodesEnabled, createNodesRelay };
