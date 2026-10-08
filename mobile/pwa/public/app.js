@@ -2,9 +2,8 @@
 (function () {
   'use strict';
 
-  const VAD_START = 0.045;
-  const VAD_KEEP = 0.03;
-  const SILENCE_MS = 700;
+  // Turn-taking for calls lives in /ui/intelio/desktop-voice.cjs (shared with the desktop app).
+  const voiceKit = () => window.IntelioDesktopVoice || null;
   const app = document.getElementById('app');
   const state = {
     view: 'login',
@@ -68,6 +67,10 @@
   let speakQueue = [];
   let pumping = false;
   let sources = [];
+  let turns = null;
+  let replyMuted = false;
+  let callTurnBusy = false;
+  let queuedTurn = '';
   let timerHandle = 0;
   let webRec = null;
 
@@ -2374,7 +2377,8 @@
           const input = document.getElementById('ask');
           if (input) input.value = `${input.value ? `${input.value.trim()} ` : ''}${finalText.trim()}`;
           state.dictating = false;
-        } else sendTurn(finalText.trim());
+        } else if (state.call.active) callTurn(finalText.trim());
+        else sendTurn(finalText.trim());
       }
     };
     rec.onerror = () => { state.error = 'On-phone speech recognition stopped.'; };
@@ -2403,8 +2407,9 @@
   }
 
   function releaseMic() {
-    if (vadHandle) cancelAnimationFrame(vadHandle);
+    if (vadHandle) clearInterval(vadHandle);
     vadHandle = 0;
+    turns = null;
     if (!mic) return;
     try { if (mic.recorder && mic.recorder.state !== 'inactive') mic.recorder.stop(); } catch { /* ignore */ }
     mic.stream.getTracks().forEach((track) => track.stop());
@@ -2637,6 +2642,7 @@
   async function sendTurn(text) {
     const sessionId = (state.call.active && state.call.sessionId) || state.chatId;
     if (!sessionId || !text) return;
+    replyMuted = false;
     const api = window.IntelioBops;
     if (api) {
       const run = api.startRun({ text, profile: state.bot?.id || 'intelio', agentName: agentLabel(state.bot) });
@@ -2736,11 +2742,12 @@
         for (const part of peeled.chips) steps.push({ name: part.name, detail: part.detail || '', running: false, failed: false });
         placeSteps();
       } else paintThread();
-      if (spoken && state.call.active && state.call.speaker) feedSpeech(spoken);
+      // After a barge-in the rest of this reply stays on screen but is not spoken.
+      if (spoken && state.call.active && state.call.speaker && !replyMuted) feedSpeech(spoken);
     });
     pending.pending = false;
     placeSteps();
-    if (state.call.active && state.call.speaker && unspoken.trim()) {
+    if (state.call.active && state.call.speaker && !replyMuted && unspoken.trim()) {
       speakQueue.push(unspoken.trim());
       unspoken = '';
       pumpSpeech();
@@ -2808,6 +2815,8 @@
       pumping = false;
       state.speaking = false;
       paintLive();
+      // A barge-in while a sentence was loading leaves later sentences for the new token.
+      if (token !== ttsToken && speakQueue.length && state.call.active && state.call.speaker) pumpSpeech();
     }
   }
 
@@ -2859,38 +2868,100 @@
     }));
   }
 
-  function vadLoop() {
-    if (!mic || !state.call.active || state.call.paused || state.call.muted) {
-      vadHandle = requestAnimationFrame(vadLoop);
+  function agentAudible() {
+    return sources.length > 0 || Boolean(window.speechSynthesis && window.speechSynthesis.speaking);
+  }
+
+  // The recorder runs for the whole call so a turn keeps its first syllable;
+  // quiet stretches and the agent's own voice are dropped by starting fresh.
+  function freshRecording(now) {
+    if (!mic) return;
+    try {
+      if (mic.recorder && mic.recorder.state !== 'inactive') {
+        mic.recorder.ondataavailable = null;
+        mic.recorder.onstop = null;
+        mic.recorder.stop();
+      }
+    } catch { /* already stopped */ }
+    mic.recorder = null;
+    try { startRecorder(); } catch { /* the next tick retries */ }
+    mic.recordingSince = now;
+  }
+
+  async function finishTurn(now) {
+    const owner = mic;
+    if (!owner) return;
+    const blob = await stopRecorder();
+    if (mic === owner && state.call.active) freshRecording(now);
+    if (!blob || !state.call.active) return;
+    try {
+      const text = await transcribeBlob(blob);
+      if (text) callTurn(text);
+    } catch (error) {
+      state.error = error.message;
+    }
+  }
+
+  /** One spoken turn at a time per call: a turn said while the agent works waits for the reply. */
+  async function callTurn(text) {
+    const said = String(text || '').trim();
+    if (!said) return;
+    if (callTurnBusy) {
+      queuedTurn = queuedTurn ? `${queuedTurn} ${said}` : said;
       return;
     }
-    const data = new Uint8Array(mic.analyser.fftSize);
-    mic.analyser.getByteTimeDomainData(data);
-    const level = rms(data);
-    const now = performance.now();
-    if (level >= VAD_START) {
-      if (!mic.speaking) {
-        mic.speaking = true;
-        state.listening = true;
-        paintLive();
-        bargeIn();
-        startRecorder();
-      }
-      mic.quietSince = 0;
-    } else if (mic.speaking && level < VAD_KEEP) {
-      if (!mic.quietSince) mic.quietSince = now;
-      if (now - mic.quietSince > SILENCE_MS) {
-        mic.speaking = false;
-        state.listening = false;
-        paintLive();
-        mic.quietSince = 0;
-        const blobPromise = stopRecorder();
-        blobPromise.then((blob) => blob && transcribeBlob(blob).then((text) => { if (text) sendTurn(text); })).catch((error) => {
-          state.error = error.message;
-        });
-      }
+    callTurnBusy = true;
+    try {
+      await sendTurn(said);
+    } finally {
+      callTurnBusy = false;
+      const next = queuedTurn;
+      queuedTurn = '';
+      if (next && state.call.active) callTurn(next);
     }
-    vadHandle = requestAnimationFrame(vadLoop);
+  }
+
+  /** One mic check. A timer, not animation frames, so it keeps listening when the tab is in the background. */
+  function vadTick() {
+    if (!mic || !turns || !state.call.active || state.ptt || state.dictating) return;
+    const now = performance.now();
+    if (state.call.paused || state.call.muted) {
+      turns.reset();
+      return;
+    }
+    if (!mic.frame || mic.frame.length !== mic.analyser.fftSize) mic.frame = new Uint8Array(mic.analyser.fftSize);
+    mic.analyser.getByteTimeDomainData(mic.frame);
+    const level = rms(mic.frame);
+    const talking = agentAudible();
+    const event = turns.feed(level, now, { agentSpeaking: talking });
+    if (event === 'barge') {
+      bargeIn();
+      replyMuted = true;
+      freshRecording(now);
+      state.listening = true;
+      paintLive();
+    } else if (event === 'start') {
+      if (talking || pumping || speakQueue.length) { bargeIn(); replyMuted = true; }
+      state.listening = true;
+      paintLive();
+    } else if (event === 'end' || event === 'cancel') {
+      state.listening = false;
+      paintLive();
+      if (event === 'end') finishTurn(now).catch(() => {});
+    }
+    if (turns.phase === 'idle' && mic.recorder && mic.recorder.state === 'recording') {
+      if (talking !== Boolean(mic.agentWasTalking) || now - (mic.recordingSince || 0) > 8000) freshRecording(now);
+    }
+    mic.agentWasTalking = talking;
+  }
+
+  function startTurns() {
+    const kit = voiceKit();
+    if (!kit || !kit.createTurnDetector) throw new Error('Reload this page to finish updating intelio, then tap Call again.');
+    turns = kit.createTurnDetector();
+    freshRecording(performance.now());
+    if (vadHandle) clearInterval(vadHandle);
+    vadHandle = setInterval(vadTick, kit.VAD_TICK_MS || 30);
   }
 
   async function startCall(sessionId) {
@@ -2908,7 +2979,7 @@
       if (resolvedEngine() === 'web') startWebRecognizer(true);
       else {
         await openMic();
-        vadLoop();
+        startTurns();
       }
     } catch (error) {
       state.call.paused = true;

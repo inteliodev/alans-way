@@ -807,8 +807,9 @@
   }
 
   function releaseMic() {
-    if (ui.vad) root.cancelAnimationFrame?.(ui.vad);
+    if (ui.vad) clearInterval(ui.vad);
     ui.vad = 0;
+    ui.turns = null;
     const mic = ui.mic;
     ui.mic = null;
     if (!mic) return;
@@ -857,6 +858,11 @@
       type: blob.type || 'audio/webm',
     });
     return String(result?.text || '').trim();
+  }
+
+  /** True while the agent's voice is coming out of the speakers or queued to. */
+  function agentTalking() {
+    return Boolean((ui.sources || []).length || (ui.speakQueue || []).length || ui.pumping);
   }
 
   function bargeIn() {
@@ -913,49 +919,76 @@
       }
     } finally {
       ui.pumping = false;
+      // A barge-in while a sentence was loading leaves later sentences for the new token.
+      if (token !== ui.ttsToken && (ui.speakQueue || []).length && ui.call?.active && ui.call.speaker !== false) pumpSpeech();
     }
   }
 
-  function rms(bytes) {
-    if (!bytes || !bytes.length) return 0;
-    let sum = 0;
-    for (let i = 0; i < bytes.length; i++) {
-      const v = (bytes[i] - 128) / 128;
-      sum += v * v;
-    }
-    return Math.sqrt(sum / bytes.length);
-  }
-
-  function vadLoop() {
+  // The recorder runs for the whole conversation so a turn keeps its first
+  // syllable; quiet stretches and the agent's own voice are dropped by
+  // starting a fresh recording.
+  function freshRecording(now) {
     const mic = ui.mic;
-    if (!mic || !ui.call?.active) return;
-    const data = new Uint8Array(mic.analyser.fftSize);
-    mic.analyser.getByteTimeDomainData(data);
-    const level = rms(data);
-    const now = root.performance?.now?.() || Date.now();
-    if (level >= 0.045) {
-      if (!mic.speaking) {
-        mic.speaking = true;
-        bargeIn();
-        try { startRecorder(); } catch { /* the next quiet stretch retries */ }
-        showInline('composer-note', voiceApi().LISTENING);
-      }
-      mic.quietSince = 0;
-    } else if (mic.speaking && level < 0.03) {
-      if (!mic.quietSince) mic.quietSince = now;
-      if (now - mic.quietSince > 700) {
-        mic.speaking = false;
-        mic.quietSince = 0;
-        showInline('composer-note', '');
-        const pending = stopRecorder();
-        pending.then((blob) => blob && transcribeBlob(blob).then((text) => {
-          if (text && ui.call?.active) voiceTranscript(text);
-        })).catch((error) => {
-          showInline('composer-note', error?.code === 'VOICE_OFF' ? voiceApi().NOT_READY : (error?.message || voiceApi().NOT_READY));
-        });
-      }
+    if (!mic) return;
+    try { if (mic.recorder && mic.recorder.state !== 'inactive') { mic.recorder.ondataavailable = null; mic.recorder.onstop = null; mic.recorder.stop(); } } catch { /* already stopped */ }
+    mic.recorder = null;
+    try { startRecorder(); } catch { /* the next tick retries */ }
+    mic.recordingSince = now;
+  }
+
+  async function finishTurn(now) {
+    const mic = ui.mic;
+    if (!mic) return;
+    const blob = await stopRecorder();
+    if (ui.mic === mic && ui.call?.active) freshRecording(now);
+    if (!blob || !ui.call?.active) return;
+    try {
+      const text = await transcribeBlob(blob);
+      if (text && ui.call?.active) voiceTranscript(text);
+    } catch (error) {
+      showInline('composer-note', error?.code === 'VOICE_OFF' ? voiceApi().NOT_READY : (error?.message || voiceApi().NOT_READY));
     }
-    ui.vad = root.requestAnimationFrame?.(() => vadLoop()) || 0;
+  }
+
+  /** One mic check. Runs on a timer, not animation frames, so it keeps going when the window is in the background. */
+  function vadTick() {
+    const mic = ui.mic;
+    if (!mic || !ui.call?.active || !ui.turns) return;
+    if (!mic.frame || mic.frame.length !== mic.analyser.fftSize) mic.frame = new Uint8Array(mic.analyser.fftSize);
+    mic.analyser.getByteTimeDomainData(mic.frame);
+    const level = voiceApi().levelOf(mic.frame);
+    const now = root.performance?.now?.() || Date.now();
+    // Only audible speech counts as the agent talking (its echo is what the mic hears).
+    const talking = (ui.sources || []).length > 0;
+    const event = ui.turns.feed(level, now, { agentSpeaking: talking });
+    if (event === 'barge') {
+      // The user is talking over the agent: stop its voice and the rest of this reply.
+      bargeIn();
+      ui.replyMuted = true;
+      freshRecording(now);
+      showInline('composer-note', voiceApi().LISTENING);
+    } else if (event === 'start') {
+      if (agentTalking()) { bargeIn(); ui.replyMuted = true; }
+      showInline('composer-note', voiceApi().LISTENING);
+    } else if (event === 'end') {
+      showInline('composer-note', '');
+      finishTurn(now).catch(() => {});
+    } else if (event === 'cancel') {
+      showInline('composer-note', '');
+    }
+    if (ui.turns.phase === 'idle' && mic.recorder?.state === 'recording') {
+      // Keep only the last few quiet seconds, and none of the agent's own voice.
+      if (talking !== Boolean(mic.agentWasTalking) || now - (mic.recordingSince || 0) > 8000) freshRecording(now);
+    }
+    mic.agentWasTalking = talking;
+  }
+
+  function startTurns() {
+    const api = voiceApi();
+    ui.turns = api.createTurnDetector();
+    freshRecording(root.performance?.now?.() || Date.now());
+    if (ui.vad) clearInterval(ui.vad);
+    ui.vad = setInterval(vadTick, api.VAD_TICK_MS || 30);
   }
 
   async function dictate() {
@@ -1074,7 +1107,7 @@
     paintCall();
     try {
       await openMic();
-      vadLoop();
+      startTurns();
     } catch (error) {
       ui.call = api.endCall(ui.call, Date.now());
       stopMic();
@@ -1909,7 +1942,8 @@
           const prose = peeled.prose || '';
           const spoken = prose.startsWith(ui.spokenProse || '') ? prose.slice((ui.spokenProse || '').length) : '';
           ui.spokenProse = prose;
-          if (spoken) feedSpeech(spoken);
+          // After a barge-in the rest of this reply stays on screen but is not spoken.
+          if (spoken && !ui.replyMuted) feedSpeech(spoken);
         }
         if (!ui.toolEvents) {
           ui.liveSteps = peeled.chips.map((part) => ({ name: part.name, detail: part.detail || '', running: false, failed: false }));
@@ -2164,6 +2198,7 @@
       ui.sessionId = sessionId;
     }
     ui.busy = true;
+    ui.replyMuted = false;
     ui.readFor = text;
     ui.readAt = Date.now();
     if (fromInput && input) input.value = '';
@@ -2208,7 +2243,7 @@
       ui.bops = api.applyTaskResult(ui.bops, ui.bops.focusedId, { ok: false, error: error.message, code: error.code || '' });
       paintBops();
     } finally {
-      if (ui.call?.active && String(ui.unspoken || '').trim()) {
+      if (ui.call?.active && !ui.replyMuted && String(ui.unspoken || '').trim()) {
         ui.speakQueue = ui.speakQueue || [];
         ui.speakQueue.push(String(ui.unspoken).trim());
         ui.unspoken = '';
