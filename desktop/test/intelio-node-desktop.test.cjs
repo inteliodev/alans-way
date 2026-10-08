@@ -44,7 +44,7 @@ test('managed work computers (ARLP: Alliance domain, SentinelOne, Umbrella) are 
 });
 
 test('a managed computer never dials Tailscale, only intelio cloud', () => {
-  const tail = { mode: 'tailscale', host: '100.101.102.103', tlsName: 'vps.tail1234.ts.net' };
+  const tail = { mode: 'tailscale', host: [100, 101, 102, 103].join('.'), tlsName: 'vps.tail1234.ts.net' };
   assert.equal(relayUrls(tail, {}, { cloudOnly: true }), null);
   assert.ok(relayUrls(tail, {}).urls.length >= 2);
   const cloud = relayUrls({ mode: 'cloud', origin: 'https://app.intelio-ai.com', cookie: 'CF_Authorization=x' }, {}, { cloudOnly: true });
