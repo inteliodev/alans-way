@@ -1060,6 +1060,13 @@ html[data-theme="blue"] .session-filter-select { color-scheme: dark; background:
 html[data-theme="blue"] .session-filter-select:focus-visible { border-color: #cfdcff; box-shadow: 0 0 0 3px rgba(207, 220, 255, 0.3); }
 html[data-theme="blue"] .session-filter-select option { background: #0000e8; color: #ffffff; }
 html[data-theme="blue"] .thread-agent { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .login-card { background: #1414ee; border-color: rgba(255, 255, 255, 0.24); }
+html[data-theme="blue"] .login-card-mark, html[data-theme="blue"] .login-card-reveal { background: #2a2af2; color: #ffffff; }
+html[data-theme="blue"] .login-card-input { background: #0000c4; border-color: rgba(255, 255, 255, 0.28); color: #ffffff; }
+html[data-theme="blue"] .login-card-input:focus { border-color: #cfdcff; }
+html[data-theme="blue"] .login-card-remember input { accent-color: #cfdcff; }
+html[data-theme="blue"] .login-card-submit { background: #ffffff; color: #0000e8; }
+html[data-theme="blue"] .saved-login-delete { color: #ffc9c9; border-color: rgba(255, 255, 255, 0.4); }
 .theme-blue-dot { fill: #0000e8; stroke: currentColor; }
 .theme-picker { display: inline-flex; gap: 6px; padding: 4px; border-radius: 14px; background: var(--fill); border: 1px solid var(--line); }
 .theme-choice { min-height: 40px; padding: 0 16px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font-size: 15px; }

@@ -178,3 +178,26 @@ html[data-theme="blue"] .session-tools .session-agent-select { color-scheme: dar
 html[data-theme="blue"] .session-tools .session-agent-select:hover { background-color: #0000cf; border-color: rgba(255, 255, 255, 0.4); color: #ffffff; }
 html[data-theme="blue"] .session-tools .session-agent-select:focus-visible { border-color: #cfdcff; box-shadow: 0 0 0 2px rgba(207, 220, 255, 0.3); }
 html[data-theme="blue"] .session-tools .session-agent-select option { background: #0000e8; color: #ffffff; }
+/* Saved-login card under the chat (#27) and the Settings saved-logins list. */
+html[data-theme="blue"] .login-card { background: #1414ee; border-color: rgba(255, 255, 255, 0.24); color: #ffffff; box-shadow: 0 10px 28px rgba(0, 0, 70, 0.3); }
+html[data-theme="blue"] .login-card-mark { background: #2a2af2; color: #ffffff; }
+html[data-theme="blue"] .login-card-title { color: #ffffff; }
+html[data-theme="blue"] .login-card-sub, html[data-theme="blue"] .login-card-label { color: rgba(255, 255, 255, 0.78); }
+html[data-theme="blue"] .login-card-close { color: rgba(255, 255, 255, 0.78); }
+html[data-theme="blue"] .login-card-close:hover { background: #2a2af2; color: #ffffff; }
+html[data-theme="blue"] .login-card-input { background: #0000c4; border-color: rgba(255, 255, 255, 0.28); color: #ffffff; }
+html[data-theme="blue"] .login-card-input:focus { border-color: #cfdcff; box-shadow: 0 0 0 3px rgba(207, 220, 255, 0.3); background: #0000c4; }
+html[data-theme="blue"] .login-card-input::placeholder { color: rgba(255, 255, 255, 0.62); }
+html[data-theme="blue"] .login-card-reveal { background: #2a2af2; color: #ffffff; }
+html[data-theme="blue"] .login-card-reveal:hover { background: #3a3af4; }
+html[data-theme="blue"] .login-card-remember { color: #ffffff; }
+html[data-theme="blue"] .login-card-remember input { accent-color: #cfdcff; }
+html[data-theme="blue"] .login-card-error { color: #ffc9c9; }
+html[data-theme="blue"] .login-card-cancel { border-color: rgba(255, 255, 255, 0.4); background: transparent; color: #ffffff; }
+html[data-theme="blue"] .login-card-cancel:hover { background: #2a2af2; }
+html[data-theme="blue"] .login-card-submit { background: #ffffff; border-color: #ffffff; color: #0000e8; }
+html[data-theme="blue"] .login-card-submit:hover { background: #cfdcff; border-color: #cfdcff; }
+html[data-theme="blue"] .login-card-reveal:focus-visible, html[data-theme="blue"] .login-card-cancel:focus-visible, html[data-theme="blue"] .login-card-submit:focus-visible, html[data-theme="blue"] .login-card-close:focus-visible { outline-color: #cfdcff; }
+html[data-theme="blue"] .saved-login-site { color: #ffffff; }
+html[data-theme="blue"] .saved-login-meta { color: rgba(255, 255, 255, 0.74); }
+html[data-theme="blue"] .saved-logins .saved-login-row + .saved-login-row { border-top-color: rgba(255, 255, 255, 0.24); }

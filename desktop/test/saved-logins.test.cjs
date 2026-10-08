@@ -468,3 +468,18 @@ test('the Hermes plugin adds request_login without returning secrets', () => {
   assert.match(fill, /\/api\/vault\/prompt/);
   assert.match(fill, /PUBLIC_KEYS = \("ok", "filled", "saved", "pending", "status", "domain", "username", "error"\)/);
 });
+
+test('the sign-in card and the saved-logins list have Blue styling on desktop and phone', () => {
+  const fsx = require('node:fs');
+  const pathx = require('node:path');
+  const rootx = pathx.join(__dirname, '..', '..');
+  const blue = fsx.readFileSync(pathx.join(rootx, 'desktop/src/theme-blue.css'), 'utf8');
+  for (const sel of ['.login-card', '.login-card-input', '.login-card-submit', '.login-card-cancel', '.saved-login-meta']) {
+    assert.ok(blue.includes(`html[data-theme="blue"] ${sel} {`), `desktop blue rule for ${sel}`);
+  }
+  const phone = fsx.readFileSync(pathx.join(rootx, 'mobile/pwa/public/app.css'), 'utf8');
+  const at = phone.indexOf('/* Blue appearance');
+  for (const sel of ['.login-card', '.login-card-input', '.login-card-submit', '.saved-login-delete']) {
+    assert.ok(phone.indexOf(`html[data-theme="blue"] ${sel} {`, at) > at, `phone blue rule for ${sel}`);
+  }
+});
