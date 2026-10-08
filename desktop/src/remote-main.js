@@ -1653,6 +1653,7 @@
     if (ui.sample) {
       ui.allSessions = SAMPLE.sessions.slice().sort((a, b) => sessionAt(b) - sessionAt(a));
       paintAllSessions();
+      sessionsChanged();
       return;
     }
     if (!root.remoteHermes) return;
@@ -1661,9 +1662,31 @@
       ui.allSessions = Array.isArray(result?.data) ? result.data.slice().sort((a, b) => sessionAt(b) - sessionAt(a)) : [];
       paintAllSessions();
       paintAgents();
+      sessionsChanged();
     } catch (error) {
       if (ui.sidebar === 'sessions') setStatus(error.message);
     }
+  }
+
+  /** intelio home (home-ui.js) repaints from homeState() when every agent's sessions reload. */
+  function sessionsChanged() {
+    if (typeof root.onIntelioSessions === 'function') {
+      try { root.onIntelioSessions(); } catch { /* the home page never breaks the session list */ }
+    }
+  }
+
+  /** A read-only snapshot for intelio home, missions and the command bar. */
+  function homeState() {
+    return {
+      agents: ui.agents.slice(),
+      sessions: (ui.allSessions || []).slice(),
+      selected: ui.selected || '',
+      sessionId: ui.sessionId || '',
+      busy: Boolean(ui.busy),
+      sample: Boolean(ui.sample),
+      link: ui.link || '',
+      screens: (ui.screens || []).slice(),
+    };
   }
 
   async function openListed(session) {
@@ -2272,5 +2295,6 @@
     sync, filter, setSidebar, sidebar: () => ui.sidebar, refresh, mountSample, selectedName: () => { const agent = selectedAgent(); return agent ? shownAgent(agent.id, agent.name) : ''; }, selectedId: () => ui.selected || '',
     presentBops, focusBops, stopBops, actBops, pushFrame, toggleCall, applyLook, bopsEffect: () => ui.lastEffect,
     autoRefresh, startAutoRefresh, stopAutoRefresh, voiceTranscript, selectAgent, shownAgent, REFRESH_MS,
+    homeState, openListed, newChat, loadAllSessions,
   };
 });

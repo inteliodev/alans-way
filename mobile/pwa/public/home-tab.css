@@ -1,0 +1,39 @@
+/* intelio phone home tab. Rhythm adapted from Herald OS (MIT, Luke The Dev); see THIRD_PARTY.md.
+   Colors come from the theme (--text, --bg), so light, dark and Blue all work. */
+.ph-home { --ph-fg: var(--text); --ph-2: color-mix(in srgb, var(--text) 68%, transparent); --ph-3: color-mix(in srgb, var(--text) 48%, transparent); --ph-line: color-mix(in srgb, var(--text) 11%, transparent); --ph-card: color-mix(in srgb, var(--text) 4%, var(--bg)); display: flex; flex-direction: column; gap: 24px; padding: 8px 16px 28px; overflow: auto; height: 100%; color: var(--ph-fg); }
+.ph-hero { display: flex; flex-direction: column; gap: 10px; padding-top: 6px; }
+.ph-eyebrow { margin: 0; font-size: 12px; color: var(--ph-3); }
+.ph-greeting { margin: 0; font-size: 28px; line-height: 1.15; font-weight: 650; letter-spacing: -0.025em; }
+.ph-agents { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.ph-agent { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 4px; border-radius: 999px; border: 1px solid var(--ph-line); color: var(--ph-2); font-size: 13px; flex: none; background: transparent; }
+.ph-agent.on { border-color: var(--ph-fg); color: var(--ph-fg); background: var(--ph-card); }
+.ph-agent .avatar.xs, .ph-row .avatar.xs { width: 24px; height: 24px; flex: none; }
+.ph-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ph-action { height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--text) 20%, transparent); background: var(--ph-card); color: var(--ph-fg); font-size: 14px; font-weight: 600; }
+.ph-action.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+.ph-action:disabled { opacity: .45; }
+.ph-section { display: flex; flex-direction: column; gap: 10px; }
+.ph-section-head h2 { margin: 0; font-size: 15px; font-weight: 650; }
+.ph-section-head p { margin: 2px 0 0; font-size: 12px; color: var(--ph-3); }
+.ph-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.ph-card { display: flex; flex-direction: column; gap: 5px; text-align: left; padding: 14px; border-radius: 14px; border: 1px solid var(--ph-line); background: var(--ph-card); color: var(--ph-fg); width: 100%; }
+.ph-card strong { font-size: 14px; font-weight: 600; line-height: 1.35; }
+.ph-kind { font-size: 11px; font-weight: 600; color: var(--ph-3); letter-spacing: .02em; }
+.ph-sub { font-size: 13px; color: var(--ph-2); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.ph-meta { font-size: 12px; color: var(--ph-3); }
+.ph-mission + .ph-mission { margin-top: 0; }
+.ph-mission-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.ph-pill { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--ph-line); color: var(--ph-2); white-space: nowrap; }
+.ph-pill.live { border-color: var(--ph-fg); color: var(--ph-fg); }
+.ph-pill.open { border-style: dashed; border-color: var(--ph-2); color: var(--ph-fg); }
+.ph-pill.done { background: var(--text); color: var(--bg); border-color: var(--text); }
+.ph-list { border: 1px solid var(--ph-line); border-radius: 14px; overflow: hidden; background: var(--ph-card); }
+.ph-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 12px; text-align: left; background: transparent; border: 0; color: var(--ph-fg); }
+.ph-row + .ph-row { border-top: 1px solid var(--ph-line); }
+.ph-row-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.ph-row-copy strong { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ph-row-copy .ph-sub { -webkit-line-clamp: 1; font-size: 12.5px; }
+.ph-empty { border: 1px dashed color-mix(in srgb, var(--text) 20%, transparent); border-radius: 14px; padding: 16px; text-align: center; font-size: 13px; color: var(--ph-3); }
+.ph-empty p { margin: 0; }
+.ph-empty-title { color: var(--ph-2); font-weight: 600; margin-bottom: 2px !important; }
+.ph-setting { display: flex; align-items: center; gap: 10px; font-size: 14px; padding: 6px 0; }

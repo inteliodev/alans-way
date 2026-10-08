@@ -522,6 +522,49 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
     return pwaRequest(profile, key, pathname, body, { expectId });
   }
 
+  /**
+   * Paste-a-link skill install: the phone server on the VPS previews and writes
+   * (mobile/pwa/skills-install.cjs). Each install uses that profile's own key.
+   */
+  async function skillRequest(profile, pathname, body) {
+    const id = harnessId(profile) || 'intelio';
+    let cfg;
+    try { cfg = await config(); } catch { cfg = null; }
+    const base = pwaBase(cfg || {});
+    if (!base) throw new Error('Connect to the VPS first.');
+    const cloud = Boolean(cfg?.origin || cfg?.activeMode === 'cloud');
+    const key = await getKey(id).catch(() => '');
+    if (!key && !cloud) throw new Error(`No key is saved for ${id}.`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
+    try {
+      const doFetch = selectFetch(cfg, { fetchImpl: globalThis.fetch, sessionFor });
+      const response = await doFetch(`${base}${pathname}?profile=${encodeURIComponent(id)}`, {
+        method: 'POST',
+        headers: {
+          ...(key ? { Authorization: `Bearer ${key}` } : {}),
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Origin: base,
+          'x-intelio-profile': id,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+        redirect: 'error',
+      });
+      const text = await response.text();
+      let parsed = {};
+      try { parsed = JSON.parse(text); } catch { parsed = {}; }
+      if (!response.ok) throw new Error(String(parsed.error || 'The VPS could not do that.').slice(0, 300));
+      return parsed;
+    } catch (error) {
+      if (error?.name === 'AbortError') throw new Error('The VPS took too long to answer.');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function createAgent(value = {}) {
     let cfg;
     try { cfg = await config(); } catch { cfg = null; }
@@ -814,6 +857,11 @@ function setupRemoteHermes({ app, BrowserWindow, ipcMain, safeStorage, shell, ge
           case 'session-model': return await sessionModel(value.profile, value);
           case 'agent-model': return await agentModel(value.profile, value);
           case 'screens': return { data: await listRemoteScreens() };
+          case 'skill-preview': {
+            const targets = (Array.isArray(value.profiles) ? value.profiles : []).map((id) => harnessId(id)).filter(Boolean).slice(0, 12);
+            return await skillRequest(targets[0] || 'intelio', '/api/skills/preview', { url: String(value.url || '').slice(0, 600), profiles: targets, category: String(value.category || '').slice(0, 64) });
+          }
+          case 'skill-install': return await skillRequest(value.profile, '/api/skills/install', { token: String(value.token || '').slice(0, 64), profile: harnessId(value.profile), overwrite: value.overwrite === true });
           case 'send': {
             const id = String(value.id);
             const controller = new AbortController();
