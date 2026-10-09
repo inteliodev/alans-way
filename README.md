@@ -1,3 +1,5 @@
+> **Moved.** Development continues in the private repository `inteliodev/intelio-harness` (this repository is archived as of 2026-10-08).
+
 # Hermes — Alan's Way
 
 **Your AI agents live on a VPS. This gives them a window into your Mac — on your terms.**
